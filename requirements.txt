@@ -1,0 +1,5 @@
+pywin32
+pykefcontrol
+PySide6
+PySide6-Fluent-Widgets
+pyinstaller
