@@ -38,7 +38,6 @@ class TestInterface(ScrollArea):
         self._log = controller.log
         self._active_tests = 0
         self._active_label: Optional[str] = None
-        self._buttons: list[PushButton] = []
         self._buttons_by_label: dict[str, PushButton] = {}
         self._value_labels: dict[str, BodyLabel] = {}
 
@@ -110,7 +109,6 @@ class TestInterface(ScrollArea):
                 grid.addWidget(button, 2, 0, 1, 2)
             else:
                 grid.addWidget(button, index // 2, index % 2)
-            self._buttons.append(button)
             self._buttons_by_label[label] = button
 
         layout.addLayout(grid)

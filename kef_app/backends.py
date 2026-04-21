@@ -1,19 +1,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Protocol
 
 from pykefcontrol.kef_connector import KefConnector
 
 from .models import SpeakerIdentity, normalize_mac, normalize_model_label
-
-
-class KefBackend(Protocol):
-    backend_name: str
-
-    def create_connector(self, ip: str) -> KefConnector: ...
-
-    def capture_identity(self, connector: KefConnector, ip: str) -> SpeakerIdentity: ...
 
 
 class W2Backend:

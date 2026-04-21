@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from typing import Any
 
 from .config import AppConfig
+from .json_storage import write_json_atomic
 from ..discovery import normalize_mac
 from ..models import normalize_input_source, normalize_name
 
@@ -85,22 +85,7 @@ class UserConfigStore:
 
     def save(self, config: AppConfig) -> bool:
         try:
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
-            fd, tmp_path = tempfile.mkstemp(
-                prefix="user_config_",
-                suffix=".json",
-                dir=os.path.dirname(self.path),
-            )
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    json.dump(self._to_user_dict(config), f, ensure_ascii=False, indent=2)
-                os.replace(tmp_path, self.path)
-            except Exception:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
+            write_json_atomic(self.path, self._to_user_dict(config), prefix="user_config_")
             return True
         except Exception:
             return False

@@ -26,18 +26,13 @@ class KefTrayApp:
         runtime: HeadlessRuntime,
         log_handler: UILogHandler,
     ) -> None:
-        self._config = config
         self._controller = controller
-        self._config_store = config_store
         self._log = log
-        self._log_handler = log_handler
         self._app = app
         self._runtime = runtime
         self._is_exiting = False
 
-        self._window = KefMainWindow(
-            self._config, self._controller, self._config_store, self._log_handler
-        )
+        self._window = KefMainWindow(config, controller, config_store, log_handler)
 
         self._tray = QSystemTrayIcon(icon_disconnected())
         self._tray.setToolTip("KEF Controller")
@@ -49,9 +44,6 @@ class KefTrayApp:
         self._poll.timeout.connect(self._refresh_icon)
         self._poll.setInterval(5000)
 
-    def _get_window(self) -> KefMainWindow:
-        return self._window
-
     def _build_menu(self) -> QMenu:
         menu = QMenu()
 
@@ -61,7 +53,7 @@ class KefTrayApp:
         menu.addSeparator()
 
         self._open_action = QAction("Open Controller", menu)
-        self._open_action.triggered.connect(lambda: self._get_window().toggle())
+        self._open_action.triggered.connect(self._window.toggle)
         menu.addAction(self._open_action)
 
         menu.addSeparator()
@@ -82,19 +74,18 @@ class KefTrayApp:
 
         return menu
 
-    def _do_wake(self) -> None:
+    def _start_controller_action(self, desired_state: str, runner, reason: str, thread_name: str) -> None:
         def run():
-            gen = self._controller._new_generation("wake", "ui_tray")
-            self._controller.wake_kef(gen, "ui_tray")
+            generation = self._controller._new_generation(desired_state, reason)
+            runner(generation, reason)
 
-        threading.Thread(target=run, daemon=True, name="TrayWake").start()
+        threading.Thread(target=run, daemon=True, name=thread_name).start()
+
+    def _do_wake(self) -> None:
+        self._start_controller_action("wake", self._controller.wake_kef, "ui_tray", "TrayWake")
 
     def _do_standby(self) -> None:
-        def run():
-            gen = self._controller._new_generation("sleep", "ui_tray")
-            self._controller.standby_kef(gen, "ui_tray")
-
-        threading.Thread(target=run, daemon=True, name="TrayStandby").start()
+        self._start_controller_action("sleep", self._controller.standby_kef, "ui_tray", "TrayStandby")
 
     def start(self) -> None:
         thread = threading.Thread(target=self._runtime.run, daemon=True, name="HeadlessRuntime")
@@ -139,7 +130,7 @@ class KefTrayApp:
             QSystemTrayIcon.ActivationReason.Trigger,
             QSystemTrayIcon.ActivationReason.DoubleClick,
         ):
-            self._get_window().toggle()
+            self._window.toggle()
 
     def _on_exit(self) -> None:
         if self._is_exiting:

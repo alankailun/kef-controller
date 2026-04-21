@@ -25,15 +25,13 @@ class KefMainWindow(FluentWindow):
         log_handler: UILogHandler,
     ) -> None:
         super().__init__()
-        self._config = config
-        self._controller = controller
 
         self.setWindowTitle("KEF Controller")
         self.resize(self._DEFAULT_WIDTH, self._DEFAULT_HEIGHT)
         self.setMinimumSize(700, 560)
         self._has_positioned_once = False
 
-        self._home = HomeInterface(config, controller, config_store, log_handler, self)
+        self._home = HomeInterface(config, controller, config_store, self)
         self._test_iface = TestInterface(config, controller, self)
         self._log_iface = LogInterface(config, log_handler, self)
         self._settings_iface = SettingsInterface(config, config_store, self)
@@ -51,12 +49,6 @@ class KefMainWindow(FluentWindow):
         self._poll.setInterval(3000)
         self._poll.start()
         self._refresh_pages()
-
-    def _on_wake(self) -> None:
-        self._home.on_wake()
-
-    def _on_standby(self) -> None:
-        self._home.on_standby()
 
     def _refresh_pages(self) -> None:
         self._home.refresh()

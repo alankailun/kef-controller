@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Optional
+from typing import Callable, Optional
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
@@ -21,7 +21,6 @@ from qfluentwidgets import (
 from ..appdata import AppConfig, UserConfigStore
 from ..controller import KefPowerController
 from ..models import INPUT_SOURCE_OPTIONS, normalize_input_source
-from .logs import UILogHandler
 
 _INPUT_CHOICES = list(INPUT_SOURCE_OPTIONS)
 _INPUT_VALUES = [value for _, value in _INPUT_CHOICES]
@@ -41,7 +40,6 @@ class HomeInterface(QWidget):
         config: AppConfig,
         controller: KefPowerController,
         config_store: UserConfigStore,
-        log_handler: UILogHandler,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -332,30 +330,29 @@ class HomeInterface(QWidget):
             )
 
     def on_wake(self) -> None:
-        self._set_working(True)
-
-        def run():
-            ok = False
-            try:
-                gen = self._controller._new_generation("wake", "ui_button")
-                ok = self._controller.wake_kef(gen, "ui_button")
-            finally:
-                self._work_done.emit("wake", ok)
-
-        threading.Thread(target=run, daemon=True, name="UIWake").start()
+        self._run_power_action("wake", "wake", self._controller.wake_kef, "UIWake")
 
     def on_standby(self) -> None:
+        self._run_power_action("standby", "sleep", self._controller.standby_kef, "UIStandby")
+
+    def _run_power_action(
+        self,
+        action: str,
+        desired_state: str,
+        runner: Callable[[int, str], bool],
+        thread_name: str,
+    ) -> None:
         self._set_working(True)
 
         def run():
             ok = False
             try:
-                gen = self._controller._new_generation("sleep", "ui_button")
-                ok = self._controller.standby_kef(gen, "ui_button")
+                generation = self._controller._new_generation(desired_state, "ui_button")
+                ok = runner(generation, "ui_button")
             finally:
-                self._work_done.emit("standby", ok)
+                self._work_done.emit(action, ok)
 
-        threading.Thread(target=run, daemon=True, name="UIStandby").start()
+        threading.Thread(target=run, daemon=True, name=thread_name).start()
 
     def _on_work_done(self, action: str, ok: bool) -> None:
         if ok:

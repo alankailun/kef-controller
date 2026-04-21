@@ -56,12 +56,7 @@ class KefPowerController(
         self._last_resume_event_mono = 0.0
         self._session_ending = False
 
-        self._pending_unlock_wake = False
-        self._pending_unlock_deadline_mono = 0.0
-
         self._last_lock_standby_ok_mono = 0.0
-        self._lock_prestandby_pending_rewake = False
-        self._resume_seen_since_lock = False
 
 
 __all__ = ["KefPowerController", "temporary_socket_timeout"]

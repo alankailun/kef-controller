@@ -43,7 +43,6 @@ class SettingsInterface(ScrollArea):
     ) -> None:
         super().__init__(parent)
         self.setObjectName("settingsInterface")
-        self._config = config
         self._runtime_config = config
         self._config_store = config_store
         self._log = logging.getLogger("kef_controller")
@@ -70,7 +69,7 @@ class SettingsInterface(ScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
     def _build_device_group(self, container: QWidget, layout: QVBoxLayout) -> None:
-        config = self._config
+        config = self._runtime_config
         group = SettingCardGroup("Speaker", container)
 
         self._kef_ip = TextCard(
@@ -122,7 +121,7 @@ class SettingsInterface(ScrollArea):
         layout.addWidget(group)
 
     def _build_behavior_group(self, container: QWidget, layout: QVBoxLayout) -> None:
-        config = self._config
+        config = self._runtime_config
         group = SettingCardGroup("Speaker Power Behavior", container)
         icon_by_key = {
             "wake_on_startup": FIF.POWER_BUTTON,
@@ -145,7 +144,7 @@ class SettingsInterface(ScrollArea):
         layout.addWidget(group)
 
     def _build_discovery_group(self, container: QWidget, layout: QVBoxLayout) -> None:
-        config = self._config
+        config = self._runtime_config
         group = SettingCardGroup("Finding the Speaker", container)
 
         self._auto_mac = SwitchCard(
@@ -167,7 +166,7 @@ class SettingsInterface(ScrollArea):
         layout.addWidget(group)
 
     def _build_advanced_group(self, container: QWidget, layout: QVBoxLayout) -> None:
-        config = self._config
+        config = self._runtime_config
         group = SettingCardGroup("Advanced", container)
 
         self._startup_with_windows = SwitchCard(
@@ -217,7 +216,7 @@ class SettingsInterface(ScrollArea):
         layout.addLayout(row)
 
     def _apply_runtime_config(self, updated: AppConfig) -> None:
-        self._config = apply_runtime_config(self._runtime_config, updated, self._config_store.USER_EDITABLE_FIELDS)
+        apply_runtime_config(self._runtime_config, updated, self._config_store.USER_EDITABLE_FIELDS)
 
     def _log_power_behavior_state(self) -> None:
         self._log.info(log_power_behavior_state_message(self._runtime_config))
@@ -381,7 +380,7 @@ class SettingsInterface(ScrollArea):
         )
 
     def _refresh_startup_status(self) -> None:
-        status = get_startup_status_view(self._config, log=self._log, task_name=TASK_NAME)
+        status = get_startup_status_view(self._runtime_config, log=self._log, task_name=TASK_NAME)
         self._startup_status.setContent(
             f"Stale Task Found: {status.stale_text}\n{status.current_detail} Preferred method: {status.preferred_label}."
         )

@@ -15,9 +15,81 @@ _CHANGE_INPUT_VERIFY_TIMEOUT = 2.5
 
 
 class ControllerDeviceActionsMixin:
+    def _log_generation_abort(self, action: str, generation: int, reason: str, step: str) -> None:
+        self._log_structured(
+            "ABORT",
+            action=action,
+            gen=generation,
+            reason=reason,
+            step=step,
+            current_gen=self._current_generation(),
+            cause="generation_changed",
+            mono=f"{self.mono():.3f}",
+        )
+
+    def _run_generation_pre_delay(
+        self,
+        *,
+        action: str,
+        generation: int,
+        reason: str,
+        attempt: int,
+        delay: float,
+        sleep_label: str,
+    ) -> str | None:
+        if delay <= 0:
+            return None
+
+        self._log_structured(
+            "STEP",
+            action=action,
+            gen=generation,
+            reason=reason,
+            step="pre_delay",
+            attempt=attempt,
+            delay_s=f"{delay:.2f}",
+            mono=f"{self.mono():.3f}",
+        )
+        if not self._interruptible_sleep(delay, generation, sleep_label):
+            return "aborted_during_pre_delay"
+        return None
+
+    def _acquire_generation_action_lock(
+        self,
+        *,
+        action: str,
+        generation: int,
+        reason: str,
+        lock_timeout: float,
+        purpose: str,
+    ) -> str | None:
+        if self._should_abort_generation(generation):
+            self._log_generation_abort(action, generation, reason, "before_action_lock")
+            return "aborted_stale_generation_before_lock"
+
+        if not self._acquire_action_lock_interruptibly(lock_timeout, generation, reason, purpose):
+            return "aborted_action_lock_timeout_or_stale"
+
+        if self._should_abort_generation(generation):
+            self._log_generation_abort(action, generation, reason, "after_action_lock")
+            self._action_lock.release()
+            return "aborted_stale_generation_after_lock"
+
+        return None
+
     def _verify_player_source(self, expected_input: str) -> tuple[Optional[str], bool]:
         actual_player_source = self.get_player_source_hint(fresh=True)
         return actual_player_source, (not actual_player_source or actual_player_source == expected_input)
+
+    def _set_speaker_source(self, source: str, *, fresh: bool) -> None:
+        with temporary_socket_timeout(self.config.socket_timeout):
+            speaker = self.get_speaker(fresh=fresh)
+            speaker.source = source
+
+    def _request_shutdown(self, *, fresh: bool, timeout: float) -> None:
+        with temporary_socket_timeout(timeout):
+            speaker = self.get_speaker(fresh=fresh)
+            speaker.shutdown()
 
     def _extract_player_source_hint(self, player_data: dict) -> Optional[str]:
         candidates = [
@@ -91,9 +163,7 @@ class ControllerDeviceActionsMixin:
                 if attempt > 1:
                     time.sleep(0.6)
                 try:
-                    with temporary_socket_timeout(self.config.socket_timeout):
-                        speaker = self.get_speaker(fresh=True)
-                        speaker.source = new_input
+                    self._set_speaker_source(new_input, fresh=True)
                     actual_input = self._wait_for_input_source(new_input)
                     if actual_input != new_input:
                         self._log_structured(
@@ -309,58 +379,33 @@ class ControllerDeviceActionsMixin:
                 return False
 
             for attempt, delay in enumerate(c.wake_attempt_delays, start=1):
-                if delay > 0:
-                    self._log_structured(
-                        "STEP",
-                        action="WAKE",
-                        gen=generation,
-                        reason=reason,
-                        step="pre_delay",
-                        attempt=attempt,
-                        delay_s=f"{delay:.2f}",
-                        mono=f"{self.mono():.3f}",
-                    )
-                    if not self._interruptible_sleep(delay, generation, f"wake_pre_delay_attempt_{attempt}"):
-                        outcome = "aborted_during_pre_delay"
-                        return False
-
-                if self._should_abort_generation(generation):
-                    outcome = "aborted_stale_generation_before_lock"
-                    self._log_structured(
-                        "ABORT",
-                        action="WAKE",
-                        gen=generation,
-                        reason=reason,
-                        step="before_action_lock",
-                        current_gen=self._current_generation(),
-                        cause="generation_changed",
-                        mono=f"{self.mono():.3f}",
-                    )
+                outcome = self._run_generation_pre_delay(
+                    action="WAKE",
+                    generation=generation,
+                    reason=reason,
+                    attempt=attempt,
+                    delay=delay,
+                    sleep_label=f"wake_pre_delay_attempt_{attempt}",
+                )
+                if outcome is not None:
                     return False
 
-                if not self._acquire_action_lock_interruptibly(c.wake_action_lock_timeout, generation, reason, "wake"):
-                    outcome = "aborted_action_lock_timeout_or_stale"
+                outcome = self._acquire_generation_action_lock(
+                    action="WAKE",
+                    generation=generation,
+                    reason=reason,
+                    lock_timeout=c.wake_action_lock_timeout,
+                    purpose="wake",
+                )
+                if outcome is not None:
                     return False
 
                 try:
-                    if self._should_abort_generation(generation):
-                        outcome = "aborted_stale_generation_after_lock"
-                        self._log_structured(
-                            "ABORT",
-                            action="WAKE",
-                            gen=generation,
-                            reason=reason,
-                            step="after_action_lock",
-                            current_gen=self._current_generation(),
-                            cause="generation_changed",
-                            mono=f"{self.mono():.3f}",
-                        )
-                        return False
-
-                    with temporary_socket_timeout(c.socket_timeout):
-                        speaker = self.get_speaker(fresh=True)
-                        if target_input:
-                            speaker.source = target_input
+                    if target_input:
+                        self._set_speaker_source(target_input, fresh=True)
+                    else:
+                        with temporary_socket_timeout(c.socket_timeout):
+                            self.get_speaker(fresh=True)
 
                     self._clear_recent_lock_standby_marker()
                     self.capture_identity_from_current_ip(reason=reason, trigger=f"wake_success_attempt_{attempt}")
@@ -438,9 +483,7 @@ class ControllerDeviceActionsMixin:
                 return False
 
             try:
-                with temporary_socket_timeout(self.config.socket_timeout):
-                    speaker = self.get_speaker(fresh=False)
-                    speaker.shutdown()
+                self._request_shutdown(fresh=False, timeout=self.config.socket_timeout)
                 self._mark_lock_prestandby_success()
                 outcome = "success"
                 self._log_structured(
@@ -514,9 +557,7 @@ class ControllerDeviceActionsMixin:
                 return False
 
             try:
-                with temporary_socket_timeout(self.config.endsession_standby_socket_timeout):
-                    speaker = self.get_speaker(fresh=False)
-                    speaker.shutdown()
+                self._request_shutdown(fresh=False, timeout=self.config.endsession_standby_socket_timeout)
 
                 outcome = "success"
                 self._log_structured(
@@ -590,58 +631,30 @@ class ControllerDeviceActionsMixin:
                 return False
 
             for attempt, delay in enumerate(c.standby_attempt_delays, start=1):
-                if delay > 0:
-                    self._log_structured(
-                        "STEP",
-                        action="STANDBY",
-                        gen=generation,
-                        reason=reason,
-                        step="pre_delay",
-                        attempt=attempt,
-                        delay_s=f"{delay:.2f}",
-                        mono=f"{self.mono():.3f}",
-                    )
-                    if not self._interruptible_sleep(delay, generation, f"standby_pre_delay_attempt_{attempt}"):
-                        outcome = "aborted_during_pre_delay"
-                        return False
-
-                if self._should_abort_generation(generation):
-                    outcome = "aborted_stale_generation_before_lock"
-                    self._log_structured(
-                        "ABORT",
-                        action="STANDBY",
-                        gen=generation,
-                        reason=reason,
-                        step="before_action_lock",
-                        current_gen=self._current_generation(),
-                        cause="generation_changed",
-                        mono=f"{self.mono():.3f}",
-                    )
+                outcome = self._run_generation_pre_delay(
+                    action="STANDBY",
+                    generation=generation,
+                    reason=reason,
+                    attempt=attempt,
+                    delay=delay,
+                    sleep_label=f"standby_pre_delay_attempt_{attempt}",
+                )
+                if outcome is not None:
                     return False
 
-                if not self._acquire_action_lock_interruptibly(c.suspend_action_lock_timeout, generation, reason, "standby"):
-                    outcome = "aborted_action_lock_timeout_or_stale"
+                outcome = self._acquire_generation_action_lock(
+                    action="STANDBY",
+                    generation=generation,
+                    reason=reason,
+                    lock_timeout=c.suspend_action_lock_timeout,
+                    purpose="standby",
+                )
+                if outcome is not None:
                     return False
 
                 try:
-                    if self._should_abort_generation(generation):
-                        outcome = "aborted_stale_generation_after_lock"
-                        self._log_structured(
-                            "ABORT",
-                            action="STANDBY",
-                            gen=generation,
-                            reason=reason,
-                            step="after_action_lock",
-                            current_gen=self._current_generation(),
-                            cause="generation_changed",
-                            mono=f"{self.mono():.3f}",
-                        )
-                        return False
-
                     fresh = attempt > 1
-                    with temporary_socket_timeout(c.socket_timeout):
-                        speaker = self.get_speaker(fresh=fresh)
-                        speaker.shutdown()
+                    self._request_shutdown(fresh=fresh, timeout=c.socket_timeout)
 
                     outcome = f"success_attempt_{attempt}"
                     self._log_structured(

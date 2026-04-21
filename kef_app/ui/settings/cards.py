@@ -1,18 +1,8 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtWidgets import QDoubleSpinBox, QLabel
-from qfluentwidgets import ComboBox, LineEdit, PrimaryPushButton, SettingCard, SpinBox, SwitchButton
-
-
-class _SpinWheelFilter(QObject):
-    """Block wheel events when SpinBox has no focus so the parent ScrollArea scrolls instead."""
-
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.Wheel and not obj.hasFocus():
-            event.ignore()
-            return True
-        return False
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel
+from qfluentwidgets import ComboBox, LineEdit, PrimaryPushButton, SettingCard, SwitchButton
 
 
 class TextCard(SettingCard):
@@ -60,46 +50,6 @@ class ComboCard(SettingCard):
 
     def set_index(self, idx: int) -> None:
         self.combo.setCurrentIndex(idx)
-
-
-class DoubleSpinCard(SettingCard):
-    def __init__(self, icon, title: str, content: str, lo: float, hi: float, parent=None):
-        super().__init__(icon, title, content, parent)
-        self.spin = QDoubleSpinBox()
-        self.spin.setDecimals(1)
-        self.spin.setRange(lo, hi)
-        self.spin.setSingleStep(0.5)
-        self.spin.setFixedWidth(110)
-        self.spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self._wheel_filter = _SpinWheelFilter(self.spin)
-        self.spin.installEventFilter(self._wheel_filter)
-        self.hBoxLayout.addWidget(self.spin)
-        self.hBoxLayout.addSpacing(16)
-
-    def value(self) -> float:
-        return self.spin.value()
-
-    def set_value(self, value: float) -> None:
-        self.spin.setValue(value)
-
-
-class IntSpinCard(SettingCard):
-    def __init__(self, icon, title: str, content: str, lo: int, hi: int, parent=None):
-        super().__init__(icon, title, content, parent)
-        self.spin = SpinBox()
-        self.spin.setRange(lo, hi)
-        self.spin.setFixedWidth(110)
-        self.spin.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self._wheel_filter = _SpinWheelFilter(self.spin)
-        self.spin.installEventFilter(self._wheel_filter)
-        self.hBoxLayout.addWidget(self.spin)
-        self.hBoxLayout.addSpacing(16)
-
-    def value(self) -> int:
-        return self.spin.value()
-
-    def set_value(self, value: int) -> None:
-        self.spin.setValue(value)
 
 
 class ButtonCard(SettingCard):

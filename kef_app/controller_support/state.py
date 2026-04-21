@@ -18,40 +18,18 @@ class ControllerStateMixin:
     def _is_generation_current(self, generation: int) -> bool:
         return generation == self._current_generation()
 
-    def _clear_pending_unlock_wake(self):
-        with self._state_lock:
-            self._pending_unlock_wake = False
-            self._pending_unlock_deadline_mono = 0.0
-
-    def _clear_lock_only_rewake_state(self):
-        with self._state_lock:
-            self._lock_prestandby_pending_rewake = False
-            self._resume_seen_since_lock = False
-
     def _clear_recent_lock_standby_marker(self):
         with self._state_lock:
             self._last_lock_standby_ok_mono = 0.0
 
     def _mark_lock_prestandby_success(self):
         with self._state_lock:
-            now = self.mono()
-            self._last_lock_standby_ok_mono = now
-            self._lock_prestandby_pending_rewake = True
-            self._resume_seen_since_lock = False
-
-    def _mark_resume_seen_since_lock(self):
-        with self._state_lock:
-            self._resume_seen_since_lock = True
-            self._lock_prestandby_pending_rewake = False
+            self._last_lock_standby_ok_mono = self.mono()
 
     def _set_session_ending(self, ending: bool):
         with self._state_lock:
             self._session_ending = ending
             if ending:
-                self._pending_unlock_wake = False
-                self._pending_unlock_deadline_mono = 0.0
-                self._lock_prestandby_pending_rewake = False
-                self._resume_seen_since_lock = False
                 self._last_lock_standby_ok_mono = 0.0
 
     def _is_session_ending(self) -> bool:

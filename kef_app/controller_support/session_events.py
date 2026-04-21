@@ -48,7 +48,6 @@ class ControllerSessionEventsMixin:
         self.wake_kef(generation, "startup")
 
     def on_suspend(self, reason: str):
-        self._clear_pending_unlock_wake()
         if not self.config.standby_on_sleep:
             self._log_structured("SKIP", action="STANDBY", reason=reason, cause="sleep_standby_disabled", mono=f"{self.mono():.3f}")
             return
@@ -65,10 +64,8 @@ class ControllerSessionEventsMixin:
     def on_resume(self, reason: str):
         if self._should_dedupe_resume_and_mark(reason):
             return
-        self._mark_resume_seen_since_lock()
 
         if self.config.wake_on_unlock_only:
-            self._clear_pending_unlock_wake()
             self._log_structured("STEP", action="WAKE", reason=reason, step="resume", status="wait_for_any_unlock", mono=f"{self.mono():.3f}")
             return
 
@@ -84,14 +81,10 @@ class ControllerSessionEventsMixin:
             self._log_structured("SKIP", action="WAKE", reason=reason, cause="unlock_wake_disabled", mono=f"{self.mono():.3f}")
             return
 
-        self._clear_pending_unlock_wake()
-        self._clear_lock_only_rewake_state()
         generation = self._new_generation("wake", reason)
         self._schedule_delayed_wake(generation, reason, self.config.unlock_wake_delay, "unlock_delay", "UnlockWake")
 
     def on_query_end_session(self, wparam: int, lparam: int) -> bool:
-        self._clear_pending_unlock_wake()
-        self._clear_lock_only_rewake_state()
         self._set_session_ending(True)
         self._new_generation("sleep", "WM_QUERYENDSESSION")
         flags = decode_query_end_session_flags(lparam)
