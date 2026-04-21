@@ -1,8 +1,8 @@
-from kef_headless_split.appdata import AppConfig, UserConfigStore, SpeakerStateStore
-from kef_headless_split.controller import KefPowerController
-from kef_headless_split.headless_runtime import run_headless
-from kef_headless_split.logging_setup import build_logger
-from kef_headless_split.platform_windows import (
+from kef_app.appdata import AppConfig, UserConfigStore, SpeakerStateStore
+from kef_app.controller import KefPowerController
+from kef_app.headless_runtime import run_headless
+from kef_app.logging_setup import build_logger
+from kef_app.platform_windows import (
     ensure_single_instance,
     ensure_startup_registration,
     maybe_handle_startup_task_repair,

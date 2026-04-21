@@ -10,23 +10,16 @@ from .common import temporary_socket_timeout
 from ..models import normalize_input_source
 
 
+_CHANGE_INPUT_POLL_INTERVAL = 0.2
+_CHANGE_INPUT_VERIFY_TIMEOUT = 2.5
+
+
 class ControllerDeviceActionsMixin:
     def _verify_player_source(self, expected_input: str) -> tuple[Optional[str], bool]:
         actual_player_source = self.get_player_source_hint(fresh=True)
         return actual_player_source, (not actual_player_source or actual_player_source == expected_input)
 
-    def get_player_source_hint(self, fresh: bool = False) -> Optional[str]:
-        if not self.get_current_kef_ip():
-            return None
-        try:
-            with temporary_socket_timeout(self.config.socket_timeout):
-                speaker = self.get_speaker(fresh=fresh)
-                player_data = speaker._get_player_data()
-        except Exception as exc:
-            self.reset_speaker()
-            self._log_structured("WARN", action="GET_PLAYER_SOURCE", error=repr(exc), mono=f"{self.mono():.3f}")
-            return None
-
+    def _extract_player_source_hint(self, player_data: dict) -> Optional[str]:
         candidates = [
             player_data.get("mediaRoles", {}).get("mediaData", {}).get("metaData", {}).get("serviceID"),
             player_data.get("trackRoles", {}).get("mediaData", {}).get("metaData", {}).get("serviceID"),
@@ -41,6 +34,20 @@ class ControllerDeviceActionsMixin:
                 return normalized
         return None
 
+    def get_player_source_hint(self, fresh: bool = False) -> Optional[str]:
+        if not self.get_current_kef_ip():
+            return None
+        try:
+            with temporary_socket_timeout(self.config.socket_timeout):
+                speaker = self.get_speaker(fresh=fresh)
+                player_data = speaker._get_player_data()
+        except Exception as exc:
+            self.reset_speaker()
+            self._log_structured("WARN", action="GET_PLAYER_SOURCE", error=repr(exc), mono=f"{self.mono():.3f}")
+            return None
+
+        return self._extract_player_source_hint(player_data)
+
     def get_input_source(self, fresh: bool = False) -> Optional[str]:
         if not self.get_current_kef_ip():
             return None
@@ -53,7 +60,7 @@ class ControllerDeviceActionsMixin:
             self._log_structured("WARN", action="GET_INPUT_SOURCE", error=repr(exc), mono=f"{self.mono():.3f}")
             return None
 
-    def _wait_for_input_source(self, expected_input: str, timeout: float = 2.5) -> Optional[str]:
+    def _wait_for_input_source(self, expected_input: str, timeout: float = _CHANGE_INPUT_VERIFY_TIMEOUT) -> Optional[str]:
         expected = normalize_input_source(expected_input)
         deadline = self.mono() + timeout
         observed = None
@@ -61,7 +68,7 @@ class ControllerDeviceActionsMixin:
             observed = self.get_input_source(fresh=True)
             if observed == expected:
                 return observed
-            time.sleep(0.2)
+            time.sleep(_CHANGE_INPUT_POLL_INTERVAL)
         return observed
 
     def reset_speaker(self):
@@ -78,6 +85,7 @@ class ControllerDeviceActionsMixin:
         if not self._action_lock.acquire(timeout=2.0):
             self._log_structured("SKIP", action="CHANGE_INPUT", cause="action_lock_busy", mono=f"{self.mono():.3f}")
             return False
+
         try:
             for attempt in range(1, 3):
                 if attempt > 1:
@@ -100,6 +108,7 @@ class ControllerDeviceActionsMixin:
                         )
                         self.reset_speaker()
                         continue
+
                     actual_player_source, player_ok = self._verify_player_source(new_input)
                     if not player_ok:
                         self._log_structured(

@@ -25,7 +25,7 @@ Current speaker power features:
 ```text
 kef_controller/
   main_gui.py
-  main_headless.py
+  main_background.py
   README.md
   README.en.md
   README.zh-CN.md
@@ -33,7 +33,7 @@ kef_controller/
   requirements.txt
   installer/
     KEF_Controller.iss
-  kef_headless_split/
+  kef_app/
     __init__.py
     backends.py
     controller.py
@@ -88,7 +88,7 @@ Headless mode:
 ```bat
 cd /d "path\to\kef_controller"
 .venv\Scripts\activate
-python main_headless.py
+python main_background.py
 ```
 
 ## Build the EXE With PyInstaller

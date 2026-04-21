@@ -14,13 +14,13 @@ import sys
 from PySide6.QtWidgets import QApplication
 from qfluentwidgets import Theme, setTheme
 
-from kef_headless_split.appdata import AppConfig, UserConfigStore, SpeakerStateStore
-from kef_headless_split.controller import KefPowerController
-from kef_headless_split.headless_runtime import HeadlessRuntime
-from kef_headless_split.logging_setup import build_logger
-from kef_headless_split.ui import KefTrayApp
-from kef_headless_split.ui.logs import UILogHandler
-from kef_headless_split.platform_windows import (
+from kef_app.appdata import AppConfig, UserConfigStore, SpeakerStateStore
+from kef_app.controller import KefPowerController
+from kef_app.headless_runtime import HeadlessRuntime
+from kef_app.logging_setup import build_logger
+from kef_app.ui import KefTrayApp
+from kef_app.ui.logs import UILogHandler
+from kef_app.platform_windows import (
     ensure_single_instance,
     register_application_restart,
     ensure_startup_registration,
