@@ -78,6 +78,7 @@ class SpeakerIdentity:
     speaker_name: str = ""
     speaker_model: str = ""
     firmware_version: str = ""
+    available: bool = False
     backend: str = "w2"
     matched_by: str = ""
 

@@ -37,6 +37,9 @@ class UserSettings:
     unlock_wake_delay: float = 1.2
     reachability_wait_timeout: float = 4.0
     reachability_poll_interval: float = 0.25
+    home_external_poll_interval: float = 2.0
+    tray_identity_poll_interval: float = 20.0
+    identity_probe_failure_threshold: int = 2
 
     standby_attempt_delays: list[float] = field(default_factory=lambda: [0.00, 0.12, 0.25, 0.45, 0.80])
     wake_attempt_delays: list[float] = field(default_factory=lambda: [0.00, 0.60, 1.20, 2.00, 3.00])
@@ -51,6 +54,7 @@ class UserSettings:
     lock_standby_dedup_window: float = 8.0
 
     log_backup_days: int = 7
+    diagnostic_logging: bool = False
     persist_runtime_state: bool = True
 
     fast_exit_on_endsession: bool = True

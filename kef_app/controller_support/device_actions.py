@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import re
 import socket
 import time
-from typing import Optional
+from typing import Callable, Optional, TypeVar
 
 from pykefcontrol.kef_connector import KefConnector
 
@@ -12,9 +13,102 @@ from ..models import normalize_input_source
 
 _CHANGE_INPUT_POLL_INTERVAL = 0.2
 _CHANGE_INPUT_VERIFY_TIMEOUT = 2.5
+T = TypeVar("T")
 
 
 class ControllerDeviceActionsMixin:
+    @staticmethod
+    def _normalize_speaker_power_state(raw_status: object) -> Optional[bool]:
+        compact = re.sub(r"[^A-Za-z0-9]+", "", str(raw_status or "")).casefold()
+        if not compact:
+            return None
+        if compact in {"standby", "off", "poweredoff"}:
+            return False
+        if compact in {"poweron", "poweredon", "on"}:
+            return True
+        return None
+
+    def _read_ui_value(
+        self,
+        reason: str,
+        trigger: str,
+        *,
+        fresh: bool,
+        step: str,
+        reader: Callable[[KefConnector], T],
+    ) -> tuple[T | None, bool]:
+        try:
+            with temporary_socket_timeout(self.config.socket_timeout):
+                speaker = self.get_speaker(fresh=fresh)
+                return reader(speaker), True
+        except Exception as exc:
+            self.reset_speaker()
+            self._log_structured(
+                "WARN",
+                action="POLL_EXTERNAL_STATE",
+                reason=reason,
+                trigger=trigger,
+                step=step,
+                error=repr(exc),
+                mono=f"{self.mono():.3f}",
+            )
+            return None, False
+
+    def poll_external_ui_state(self, reason: str, trigger: str) -> tuple[Optional[str], Optional[int], Optional[bool]]:
+        if not self.get_current_kef_ip():
+            return None, None, None
+
+        speaker_on, power_ok = self._read_ui_value(
+            reason,
+            trigger,
+            fresh=True,
+            step="speaker_status",
+            reader=lambda speaker: self._normalize_speaker_power_state(speaker.status),
+        )
+        input_source, input_ok = self._read_ui_value(
+            reason,
+            trigger,
+            fresh=not power_ok,
+            step="input_source",
+            reader=lambda speaker: normalize_input_source(speaker.source),
+        )
+        volume, volume_ok = self._read_ui_value(
+            reason,
+            trigger,
+            fresh=not (power_ok or input_ok),
+            step="volume",
+            reader=lambda speaker: speaker.volume,
+        )
+        identity_seen = False
+        ip_refreshed = False
+        reachable = power_ok or input_ok or volume_ok
+
+        if reachable:
+            availability_changed = self._mark_identity_probe_success(source=trigger)
+            if availability_changed:
+                self._emit_identity_changed()
+        else:
+            identity_seen, ip_refreshed = self.probe_external_identity(reason=reason, trigger=trigger)
+            reachable = identity_seen or ip_refreshed
+
+        should_log_poll = not (reachable and power_ok and input_ok and volume_ok and not identity_seen and not ip_refreshed)
+        if should_log_poll:
+            self._log_structured(
+                "STEP",
+                action="POLL_EXTERNAL_STATE",
+                reason=reason,
+                trigger=trigger,
+                power_ok=power_ok,
+                speaker_on=speaker_on,
+                input_ok=input_ok,
+                volume_ok=volume_ok,
+                fallback_identity=identity_seen,
+                fallback_ip_refresh=ip_refreshed,
+                reachable=reachable,
+                mono=f"{self.mono():.3f}",
+            )
+        return input_source, volume, speaker_on
+
     def _log_generation_abort(self, action: str, generation: int, reason: str, step: str) -> None:
         self._log_structured(
             "ABORT",
@@ -90,6 +184,69 @@ class ControllerDeviceActionsMixin:
         with temporary_socket_timeout(timeout):
             speaker = self.get_speaker(fresh=fresh)
             speaker.shutdown()
+
+    def _run_generation_attempts(
+        self,
+        *,
+        action: str,
+        generation: int,
+        reason: str,
+        attempt_delays: list[float],
+        lock_timeout: float,
+        purpose: str,
+        execute_attempt: Callable[[int], None],
+        build_retry_fields: Callable[[int, Exception], dict[str, object]],
+    ) -> str:
+        for attempt, delay in enumerate(attempt_delays, start=1):
+            outcome = self._run_generation_pre_delay(
+                action=action,
+                generation=generation,
+                reason=reason,
+                attempt=attempt,
+                delay=delay,
+                sleep_label=f"{purpose}_pre_delay_attempt_{attempt}",
+            )
+            if outcome is not None:
+                return outcome
+
+            outcome = self._acquire_generation_action_lock(
+                action=action,
+                generation=generation,
+                reason=reason,
+                lock_timeout=lock_timeout,
+                purpose=purpose,
+            )
+            if outcome is not None:
+                return outcome
+
+            try:
+                execute_attempt(attempt)
+                return f"success_attempt_{attempt}"
+            except Exception as exc:
+                self.reset_speaker()
+                self._log_structured(
+                    "RETRY",
+                    action=action,
+                    gen=generation,
+                    reason=reason,
+                    attempt=attempt,
+                    error=repr(exc),
+                    mono=f"{self.mono():.3f}",
+                    **build_retry_fields(attempt, exc),
+                )
+            finally:
+                self._action_lock.release()
+
+        self._log_structured(
+            "STEP",
+            action=action,
+            gen=generation,
+            reason=reason,
+            step="attempt_loop",
+            status="exhausted",
+            mono=f"{self.mono():.3f}",
+        )
+        return "failed_all_attempts"
 
     def _extract_player_source_hint(self, player_data: dict) -> Optional[str]:
         candidates = [
@@ -349,6 +506,7 @@ class ControllerDeviceActionsMixin:
         start_mono = self._log_action_begin("WAKE", generation, reason)
         c = self.config
         target_input = normalize_input_source(c.kef_input)
+        self._emit_power_action_started("WAKE", reason)
 
         try:
             if self._is_session_ending():
@@ -378,84 +536,53 @@ class ControllerDeviceActionsMixin:
                 outcome = "aborted_before_attempts"
                 return False
 
-            for attempt, delay in enumerate(c.wake_attempt_delays, start=1):
-                outcome = self._run_generation_pre_delay(
+            def execute_attempt(attempt: int) -> None:
+                if target_input:
+                    self._set_speaker_source(target_input, fresh=True)
+                else:
+                    with temporary_socket_timeout(c.socket_timeout):
+                        self.get_speaker(fresh=True)
+
+                self._clear_recent_lock_standby_marker()
+                self.capture_identity_from_current_ip(reason=reason, trigger=f"wake_success_attempt_{attempt}")
+                self._log_structured(
+                    "STEP",
                     action="WAKE",
-                    generation=generation,
+                    gen=generation,
                     reason=reason,
+                    step="set_input_source",
                     attempt=attempt,
-                    delay=delay,
-                    sleep_label=f"wake_pre_delay_attempt_{attempt}",
+                    status="success",
+                    mono=f"{self.mono():.3f}",
                 )
-                if outcome is not None:
-                    return False
 
-                outcome = self._acquire_generation_action_lock(
-                    action="WAKE",
-                    generation=generation,
-                    reason=reason,
-                    lock_timeout=c.wake_action_lock_timeout,
-                    purpose="wake",
-                )
-                if outcome is not None:
-                    return False
+            def build_retry_fields(attempt: int, _exc: Exception) -> dict[str, object]:
+                refreshed = self.maybe_refresh_kef_ip(reason=reason, trigger=f"wake_attempt_{attempt}_exception")
+                return {
+                    "cause": "set_input_source_failed",
+                    "ip_refresh_attempted": refreshed,
+                    "target_ip": self.get_current_kef_ip(),
+                }
 
-                try:
-                    if target_input:
-                        self._set_speaker_source(target_input, fresh=True)
-                    else:
-                        with temporary_socket_timeout(c.socket_timeout):
-                            self.get_speaker(fresh=True)
-
-                    self._clear_recent_lock_standby_marker()
-                    self.capture_identity_from_current_ip(reason=reason, trigger=f"wake_success_attempt_{attempt}")
-                    outcome = f"success_attempt_{attempt}"
-                    self._log_structured(
-                        "STEP",
-                        action="WAKE",
-                        gen=generation,
-                        reason=reason,
-                        step="set_input_source",
-                        attempt=attempt,
-                        status="success",
-                        mono=f"{self.mono():.3f}",
-                    )
-                    return True
-                except Exception as exc:
-                    self.reset_speaker()
-                    refreshed = self.maybe_refresh_kef_ip(reason=reason, trigger=f"wake_attempt_{attempt}_exception")
-                    self._log_structured(
-                        "RETRY",
-                        action="WAKE",
-                        gen=generation,
-                        reason=reason,
-                        attempt=attempt,
-                        cause="set_input_source_failed",
-                        error=repr(exc),
-                        ip_refresh_attempted=refreshed,
-                        target_ip=self.get_current_kef_ip(),
-                        mono=f"{self.mono():.3f}",
-                    )
-                finally:
-                    self._action_lock.release()
-
-            outcome = "failed_all_attempts"
-            self._log_structured(
-                "STEP",
+            outcome = self._run_generation_attempts(
                 action="WAKE",
-                gen=generation,
+                generation=generation,
                 reason=reason,
-                step="attempt_loop",
-                status="exhausted",
-                mono=f"{self.mono():.3f}",
+                attempt_delays=c.wake_attempt_delays,
+                lock_timeout=c.wake_action_lock_timeout,
+                purpose="wake",
+                execute_attempt=execute_attempt,
+                build_retry_fields=build_retry_fields,
             )
-            return False
+            return outcome.startswith("success_attempt_")
         finally:
+            self._emit_power_action_finished("WAKE", reason, outcome)
             self._log_action_end("WAKE", generation, reason, outcome, start_mono)
 
     def standby_kef_preemptive(self, reason: str) -> bool:
         outcome = "unknown"
         start_mono = self._log_action_begin("LOCK_PRE_STANDBY", None, reason)
+        self._emit_power_action_started("LOCK_PRE_STANDBY", reason)
 
         try:
             self._log_structured("STEP", action="LOCK_PRE_STANDBY", reason=reason, step="shutdown_request", mono=f"{self.mono():.3f}")
@@ -511,11 +638,13 @@ class ControllerDeviceActionsMixin:
             finally:
                 self._action_lock.release()
         finally:
+            self._emit_power_action_finished("LOCK_PRE_STANDBY", reason, outcome)
             self._log_action_end("LOCK_PRE_STANDBY", None, reason, outcome, start_mono)
 
     def standby_kef_end_session(self, reason: str, flags: str) -> bool:
         outcome = "unknown"
         start_mono = self._log_action_begin("ENDSESSION_STANDBY", None, reason)
+        self._emit_power_action_started("ENDSESSION_STANDBY", reason)
 
         try:
             if not self.config.endsession_standby_on_shutdown:
@@ -589,6 +718,7 @@ class ControllerDeviceActionsMixin:
             finally:
                 self._action_lock.release()
         finally:
+            self._emit_power_action_finished("ENDSESSION_STANDBY", reason, outcome)
             self._log_action_end("ENDSESSION_STANDBY", None, reason, outcome, start_mono)
 
     def _recently_lock_standby_ok(self) -> bool:
@@ -602,6 +732,7 @@ class ControllerDeviceActionsMixin:
         outcome = "unknown"
         start_mono = self._log_action_begin("STANDBY", generation, reason)
         c = self.config
+        self._emit_power_action_started("STANDBY", reason)
 
         try:
             self._log_structured("STEP", action="STANDBY", gen=generation, reason=reason, step="shutdown_request", mono=f"{self.mono():.3f}")
@@ -630,71 +761,38 @@ class ControllerDeviceActionsMixin:
                 )
                 return False
 
-            for attempt, delay in enumerate(c.standby_attempt_delays, start=1):
-                outcome = self._run_generation_pre_delay(
+            def execute_attempt(attempt: int) -> None:
+                fresh = attempt > 1
+                self._request_shutdown(fresh=fresh, timeout=c.socket_timeout)
+                self._log_structured(
+                    "STEP",
                     action="STANDBY",
-                    generation=generation,
+                    gen=generation,
                     reason=reason,
+                    step="shutdown_request",
                     attempt=attempt,
-                    delay=delay,
-                    sleep_label=f"standby_pre_delay_attempt_{attempt}",
+                    fresh=fresh,
+                    status="success",
+                    mono=f"{self.mono():.3f}",
                 )
-                if outcome is not None:
-                    return False
 
-                outcome = self._acquire_generation_action_lock(
-                    action="STANDBY",
-                    generation=generation,
-                    reason=reason,
-                    lock_timeout=c.suspend_action_lock_timeout,
-                    purpose="standby",
-                )
-                if outcome is not None:
-                    return False
+            def build_retry_fields(attempt: int, _exc: Exception) -> dict[str, object]:
+                return {
+                    "fresh": attempt > 1,
+                    "cause": "shutdown_failed",
+                }
 
-                try:
-                    fresh = attempt > 1
-                    self._request_shutdown(fresh=fresh, timeout=c.socket_timeout)
-
-                    outcome = f"success_attempt_{attempt}"
-                    self._log_structured(
-                        "STEP",
-                        action="STANDBY",
-                        gen=generation,
-                        reason=reason,
-                        step="shutdown_request",
-                        attempt=attempt,
-                        fresh=fresh,
-                        status="success",
-                        mono=f"{self.mono():.3f}",
-                    )
-                    return True
-                except Exception as exc:
-                    self.reset_speaker()
-                    self._log_structured(
-                        "RETRY",
-                        action="STANDBY",
-                        gen=generation,
-                        reason=reason,
-                        attempt=attempt,
-                        fresh=(attempt > 1),
-                        cause="shutdown_failed",
-                        error=repr(exc),
-                        mono=f"{self.mono():.3f}",
-                    )
-                finally:
-                    self._action_lock.release()
-
-            outcome = "failed_all_attempts"
-            self._log_structured(
-                "STEP",
+            outcome = self._run_generation_attempts(
                 action="STANDBY",
-                gen=generation,
+                generation=generation,
                 reason=reason,
-                step="attempt_loop",
-                status="exhausted",
-                mono=f"{self.mono():.3f}",
+                attempt_delays=c.standby_attempt_delays,
+                lock_timeout=c.suspend_action_lock_timeout,
+                purpose="standby",
+                execute_attempt=execute_attempt,
+                build_retry_fields=build_retry_fields,
             )
-            return False
+            return outcome.startswith("success_attempt_")
         finally:
+            self._emit_power_action_finished("STANDBY", reason, outcome)
             self._log_action_end("STANDBY", generation, reason, outcome, start_mono)

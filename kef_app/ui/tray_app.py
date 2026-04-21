@@ -10,7 +10,8 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 from ..appdata import AppConfig, UserConfigStore
 from ..controller import KefPowerController
 from ..headless_runtime import HeadlessRuntime
-from .icons import icon_connected, icon_disconnected
+from .controller_bridge import ControllerEventBridge
+from .icons import icon_connected, icon_disconnected, icon_working
 from .logs import UILogHandler
 from .main_window import KefMainWindow
 
@@ -26,13 +27,22 @@ class KefTrayApp:
         runtime: HeadlessRuntime,
         log_handler: UILogHandler,
     ) -> None:
+        self._config = config
         self._controller = controller
         self._log = log
         self._app = app
         self._runtime = runtime
         self._is_exiting = False
+        self._active_power_actions = 0
+        self._active_action = ""
+        self._identity_poll_lock = threading.Lock()
+        self._controller_bridge = ControllerEventBridge(controller)
+        self._controller_bridge.identity_changed.connect(self._on_identity_changed)
+        self._controller_bridge.power_action_started.connect(self._on_power_action_started)
+        self._controller_bridge.power_action_finished.connect(self._on_power_action_finished)
 
-        self._window = KefMainWindow(config, controller, config_store, log_handler)
+        self._window = KefMainWindow(config, controller, config_store, self._controller_bridge, log_handler)
+        self._window.visibility_changed.connect(self._on_window_visibility_changed)
 
         self._tray = QSystemTrayIcon(icon_disconnected())
         self._tray.setToolTip("KEF Controller")
@@ -40,9 +50,9 @@ class KefTrayApp:
         self._tray.setContextMenu(self._menu)
         self._tray.activated.connect(self._on_activated)
 
-        self._poll = QTimer()
-        self._poll.timeout.connect(self._refresh_icon)
-        self._poll.setInterval(5000)
+        self._identity_poll = QTimer()
+        self._identity_poll.timeout.connect(self._poll_external_identity)
+        self._apply_polling_config()
 
     def _build_menu(self) -> QMenu:
         menu = QMenu()
@@ -98,12 +108,19 @@ class KefTrayApp:
         threading.Thread(target=_watch, daemon=True, name="RuntimeWatcher").start()
 
         self._tray.show()
-        self._poll.start()
         self._refresh_icon()
 
     def _refresh_icon(self) -> None:
+        if self._active_power_actions > 0:
+            action_label = self._format_action_label(self._active_action)
+            self._status_action.setText(f"{action_label}...")
+            self._tray.setIcon(icon_working())
+            self._tray.setToolTip(f"KEF Controller - Working ({action_label})")
+            return
+
         identity = self._controller.get_current_identity()
         ip = identity.ip
+        available = identity.available
         name = identity.speaker_name
         model = identity.speaker_model
 
@@ -116,14 +133,69 @@ class KefTrayApp:
         else:
             display = "No device found"
 
-        self._status_action.setText(display)
+        status_text = display if available or not ip else f"{display} (Offline)"
+        self._status_action.setText(status_text)
 
-        if ip:
+        if ip and available:
             self._tray.setIcon(icon_connected())
             self._tray.setToolTip(f"KEF Controller - {display} ({ip})")
         else:
             self._tray.setIcon(icon_disconnected())
-            self._tray.setToolTip("KEF Controller - Disconnected")
+            if ip:
+                self._tray.setToolTip(f"KEF Controller - Offline ({ip})")
+            else:
+                self._tray.setToolTip("KEF Controller - Disconnected")
+
+    @staticmethod
+    def _format_action_label(action: str) -> str:
+        return {
+            "WAKE": "Waking Speaker",
+            "STANDBY": "Putting Speaker in Standby",
+            "LOCK_PRE_STANDBY": "Preparing Standby",
+            "ENDSESSION_STANDBY": "Processing Shutdown Standby",
+        }.get(action, action or "Working")
+
+    def _on_identity_changed(self, _identity: object) -> None:
+        self._refresh_icon()
+
+    def _on_power_action_started(self, action: str, _reason: str) -> None:
+        self._active_power_actions += 1
+        self._active_action = action
+        self._refresh_icon()
+
+    def _on_power_action_finished(self, action: str, _reason: str, _success: bool, _outcome: str) -> None:
+        self._active_power_actions = max(0, self._active_power_actions - 1)
+        if self._active_power_actions == 0:
+            self._active_action = ""
+        self._refresh_icon()
+
+    def _poll_external_identity(self) -> None:
+        if not self._window.isVisible():
+            return
+        if self._active_power_actions > 0:
+            return
+        if not self._controller.get_current_kef_ip():
+            return
+        if not self._identity_poll_lock.acquire(blocking=False):
+            return
+
+        def run() -> None:
+            try:
+                self._controller.probe_external_identity("ui_tray_poll", "ui_tray_poll")
+            finally:
+                self._identity_poll_lock.release()
+
+        threading.Thread(target=run, daemon=True, name="TrayIdentityPoll").start()
+
+    def _apply_polling_config(self) -> None:
+        self._identity_poll.setInterval(max(1000, int(self._config.tray_identity_poll_interval * 1000)))
+
+    def _on_window_visibility_changed(self, visible: bool) -> None:
+        if visible:
+            self._identity_poll.start()
+            self._refresh_icon()
+            return
+        self._identity_poll.stop()
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in (
@@ -138,7 +210,7 @@ class KefTrayApp:
 
         self._is_exiting = True
         self._log.info("Exit was requested from the tray menu; stopping the runtime and closing the UI")
-        self._poll.stop()
+        self._identity_poll.stop()
         self._tray.hide()
         self._window.hide()
         self._runtime.request_stop()

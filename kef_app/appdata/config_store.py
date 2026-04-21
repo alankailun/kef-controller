@@ -2,12 +2,55 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import Any, Callable
 
 from .config import AppConfig
 from .json_storage import write_json_atomic
 from ..discovery import normalize_mac
 from ..models import normalize_input_source, normalize_name
+
+
+def _coerce_string(value: Any) -> str:
+    return str(value or "")
+
+
+def _coerce_startup_mode(value: Any) -> str:
+    mode = str(value or "registry").strip().lower()
+    if mode not in {"auto", "task", "registry"}:
+        raise ValueError(f"unsupported startup mode: {mode!r}")
+    return mode
+
+
+def _coerce_float_list(value: Any) -> list[float]:
+    if not isinstance(value, list):
+        raise TypeError("expected a list")
+    return [float(item) for item in value]
+
+
+def _coerce_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        raise TypeError("expected a list")
+    return [str(item) for item in value]
+
+
+def _coerce_model_list(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise TypeError("expected a list")
+    return tuple(str(item) for item in value)
+
+
+def _coerce_positive_float(value: Any) -> float:
+    result = float(value)
+    if result <= 0:
+        raise ValueError("expected a positive number")
+    return result
+
+
+def _coerce_positive_int(value: Any) -> int:
+    result = int(value)
+    if result < 1:
+        raise ValueError("expected an integer >= 1")
+    return result
 
 
 class UserConfigStore:
@@ -31,6 +74,9 @@ class UserConfigStore:
         "unlock_wake_delay",
         "reachability_wait_timeout",
         "reachability_poll_interval",
+        "home_external_poll_interval",
+        "tray_identity_poll_interval",
+        "identity_probe_failure_threshold",
         "standby_attempt_delays",
         "wake_attempt_delays",
         "suspend_action_lock_timeout",
@@ -41,6 +87,7 @@ class UserConfigStore:
         "lock_standby_action_lock_timeout",
         "lock_standby_dedup_window",
         "log_backup_days",
+        "diagnostic_logging",
         "persist_runtime_state",
         "enable_application_restart",
         "fast_exit_on_endsession",
@@ -49,6 +96,48 @@ class UserConfigStore:
         "endsession_standby_socket_timeout",
         "supported_w2_models",
     )
+    FIELD_COERCERS: dict[str, Callable[[Any], Any]] = {
+        "backend_name": _coerce_string,
+        "kef_ip": _coerce_string,
+        "kef_mac": lambda value: normalize_mac(_coerce_string(value)),
+        "expected_speaker_name": lambda value: normalize_name(_coerce_string(value)),
+        "expected_speaker_mac": lambda value: normalize_mac(_coerce_string(value)),
+        "auto_discover_kef_ip_by_mac": lambda value: UserConfigStore._coerce_bool(value),
+        "auto_discover_kef_ip_blind": lambda value: UserConfigStore._coerce_bool(value),
+        "mac_discovery_subnet_prefix": int,
+        "mac_discovery_extra_cidrs": _coerce_string_list,
+        "kef_input": lambda value: normalize_input_source(_coerce_string(value)),
+        "startup_registration_mode": _coerce_startup_mode,
+        "wake_on_startup": lambda value: UserConfigStore._coerce_bool(value),
+        "startup_delay": float,
+        "resume_wake_delay": float,
+        "socket_timeout": float,
+        "wake_on_unlock_only": lambda value: UserConfigStore._coerce_bool(value),
+        "unlock_wake_delay": float,
+        "reachability_wait_timeout": float,
+        "reachability_poll_interval": float,
+        "home_external_poll_interval": _coerce_positive_float,
+        "tray_identity_poll_interval": _coerce_positive_float,
+        "identity_probe_failure_threshold": _coerce_positive_int,
+        "standby_attempt_delays": _coerce_float_list,
+        "wake_attempt_delays": _coerce_float_list,
+        "suspend_action_lock_timeout": float,
+        "wake_action_lock_timeout": float,
+        "resume_dedup_window": float,
+        "standby_on_sleep": lambda value: UserConfigStore._coerce_bool(value),
+        "standby_on_lock": lambda value: UserConfigStore._coerce_bool(value),
+        "lock_standby_action_lock_timeout": float,
+        "lock_standby_dedup_window": float,
+        "log_backup_days": int,
+        "diagnostic_logging": lambda value: UserConfigStore._coerce_bool(value),
+        "persist_runtime_state": lambda value: UserConfigStore._coerce_bool(value),
+        "enable_application_restart": lambda value: UserConfigStore._coerce_bool(value),
+        "fast_exit_on_endsession": lambda value: UserConfigStore._coerce_bool(value),
+        "endsession_standby_on_shutdown": lambda value: UserConfigStore._coerce_bool(value),
+        "endsession_standby_action_lock_timeout": float,
+        "endsession_standby_socket_timeout": float,
+        "supported_w2_models": _coerce_model_list,
+    }
 
     def __init__(self, base_config: AppConfig):
         self._base_config = base_config
@@ -110,62 +199,25 @@ class UserConfigStore:
             if key not in data:
                 continue
 
-            value = data[key]
+            coerce = self.FIELD_COERCERS.get(key)
+            if coerce is None:
+                continue
+
             try:
-                if key in {"kef_ip", "backend_name"}:
-                    setattr(config, key, str(value or ""))
-                elif key == "kef_input":
-                    setattr(config, key, normalize_input_source(str(value or "")))
-                elif key == "startup_registration_mode":
-                    mode = str(value or "registry").strip().lower()
-                    setattr(config, key, mode if mode in {"auto", "task", "registry"} else "registry")
-                elif key in {"kef_mac", "expected_speaker_mac"}:
-                    setattr(config, key, normalize_mac(str(value or "")))
-                elif key == "expected_speaker_name":
-                    setattr(config, key, normalize_name(str(value or "")))
-                elif key in {
-                    "auto_discover_kef_ip_by_mac",
-                    "auto_discover_kef_ip_blind",
-                    "wake_on_startup",
-                    "wake_on_unlock_only",
-                    "standby_on_sleep",
-                    "standby_on_lock",
-                    "persist_runtime_state",
-                    "enable_application_restart",
-                    "fast_exit_on_endsession",
-                    "endsession_standby_on_shutdown",
-                }:
-                    setattr(config, key, self._coerce_bool(value))
-                elif key in {"mac_discovery_subnet_prefix", "log_backup_days"}:
-                    setattr(config, key, int(value))
-                elif key in {
-                    "startup_delay",
-                    "resume_wake_delay",
-                    "socket_timeout",
-                    "unlock_wake_delay",
-                    "reachability_wait_timeout",
-                    "reachability_poll_interval",
-                    "suspend_action_lock_timeout",
-                    "wake_action_lock_timeout",
-                    "resume_dedup_window",
-                    "lock_standby_action_lock_timeout",
-                    "lock_standby_dedup_window",
-                    "endsession_standby_action_lock_timeout",
-                    "endsession_standby_socket_timeout",
-                }:
-                    setattr(config, key, float(value))
-                elif key in {"mac_discovery_extra_cidrs", "standby_attempt_delays", "wake_attempt_delays"}:
-                    if isinstance(value, list):
-                        if key == "mac_discovery_extra_cidrs":
-                            setattr(config, key, [str(v) for v in value])
-                        else:
-                            setattr(config, key, [float(v) for v in value])
-                elif key == "supported_w2_models":
-                    if isinstance(value, list):
-                        setattr(config, key, tuple(str(v) for v in value))
-            except Exception:
-                pass
+                setattr(config, key, coerce(data[key]))
+            except Exception as exc:
+                self._startup_messages.append(
+                    "Ignored invalid user config field | "
+                    f"field={key} value={self._format_value_for_log(data[key])} | {exc}"
+                )
         return config
+
+    @staticmethod
+    def _format_value_for_log(value: Any, limit: int = 120) -> str:
+        text = repr(value)
+        if len(text) > limit:
+            return text[: limit - 3] + "..."
+        return text
 
     @staticmethod
     def _coerce_bool(value: Any) -> bool:

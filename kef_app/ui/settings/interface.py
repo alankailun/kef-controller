@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QMessageBox, QVBoxLayout, QWidget
 from qfluentwidgets import (
     FluentIcon as FIF,
@@ -35,6 +35,8 @@ from .shared import (
 
 
 class SettingsInterface(ScrollArea):
+    settings_saved = Signal()
+
     def __init__(
         self,
         config: AppConfig,
@@ -202,6 +204,14 @@ class SettingsInterface(ScrollArea):
         self._enable_restart.set_checked(config.enable_application_restart)
         group.addSettingCard(self._enable_restart)
 
+        self._diagnostic_logging = SwitchCard(
+            FIF.DOCUMENT,
+            "Diagnostic Logging",
+            "Write detailed internal logs for troubleshooting. Leave this off unless you are debugging a problem.",
+        )
+        self._diagnostic_logging.set_checked(config.diagnostic_logging)
+        group.addSettingCard(self._diagnostic_logging)
+
         self._refresh_startup_status()
         layout.addWidget(group)
 
@@ -217,6 +227,10 @@ class SettingsInterface(ScrollArea):
 
     def _apply_runtime_config(self, updated: AppConfig) -> None:
         apply_runtime_config(self._runtime_config, updated, self._config_store.USER_EDITABLE_FIELDS)
+        self._apply_runtime_logging()
+
+    def _apply_runtime_logging(self) -> None:
+        self._log.setLevel(logging.DEBUG if self._runtime_config.diagnostic_logging else logging.INFO)
 
     def _log_power_behavior_state(self) -> None:
         self._log.info(log_power_behavior_state_message(self._runtime_config))
@@ -269,6 +283,7 @@ class SettingsInterface(ScrollArea):
             auto_discover_kef_ip_by_mac=self._auto_mac.is_checked(),
             auto_discover_kef_ip_blind=self._auto_blind.is_checked(),
             enable_application_restart=self._enable_restart.is_checked(),
+            diagnostic_logging=self._diagnostic_logging.is_checked(),
         )
 
         desired_startup = self._startup_with_windows.is_checked()
@@ -292,6 +307,7 @@ class SettingsInterface(ScrollArea):
         if config_ok:
             self._apply_runtime_config(updated)
             self._log_power_behavior_state()
+            self.settings_saved.emit()
         if startup_changed:
             self._refresh_startup_status()
 
@@ -359,6 +375,7 @@ class SettingsInterface(ScrollArea):
         self._startup_with_windows.set_checked(True)
         if config_ok:
             self._apply_runtime_config(updated)
+            self.settings_saved.emit()
         self._refresh_startup_status()
 
         if config_ok:

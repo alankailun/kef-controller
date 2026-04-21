@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QTimer
-from PySide6.QtCore import QSize
-from PySide6.QtGui import QCloseEvent, QGuiApplication, QShowEvent
+from PySide6.QtCore import QSize, Signal
+from PySide6.QtGui import QCloseEvent, QGuiApplication, QHideEvent, QShowEvent
 from qfluentwidgets import FluentIcon as FIF, FluentWindow, NavigationItemPosition
 
 from ..appdata import AppConfig, UserConfigStore
 from ..controller import KefPowerController
+from .controller_bridge import ControllerEventBridge
 from .home_interface import HomeInterface
 from .logs import LogInterface, UILogHandler
 from .settings import SettingsInterface
@@ -14,6 +15,7 @@ from .test_interface import TestInterface
 
 
 class KefMainWindow(FluentWindow):
+    visibility_changed = Signal(bool)
     _DEFAULT_WIDTH = 980
     _DEFAULT_HEIGHT = 720
 
@@ -22,6 +24,7 @@ class KefMainWindow(FluentWindow):
         config: AppConfig,
         controller: KefPowerController,
         config_store: UserConfigStore,
+        controller_bridge: ControllerEventBridge,
         log_handler: UILogHandler,
     ) -> None:
         super().__init__()
@@ -31,10 +34,11 @@ class KefMainWindow(FluentWindow):
         self.setMinimumSize(700, 560)
         self._has_positioned_once = False
 
-        self._home = HomeInterface(config, controller, config_store, self)
+        self._home = HomeInterface(config, controller, config_store, controller_bridge, self)
         self._test_iface = TestInterface(config, controller, self)
         self._log_iface = LogInterface(config, log_handler, self)
         self._settings_iface = SettingsInterface(config, config_store, self)
+        self._settings_iface.settings_saved.connect(self._on_settings_saved)
 
         self.addSubInterface(self._home, FIF.HOME, "Home")
         self.addSubInterface(self._test_iface, FIF.SPEED_HIGH, "Tests")
@@ -44,22 +48,23 @@ class KefMainWindow(FluentWindow):
             NavigationItemPosition.BOTTOM,
         )
 
-        self._poll = QTimer(self)
-        self._poll.timeout.connect(self._refresh_pages)
-        self._poll.setInterval(3000)
-        self._poll.start()
-        self._refresh_pages()
+        self._test_iface.refresh()
 
-    def _refresh_pages(self) -> None:
-        self._home.refresh()
+    def _on_settings_saved(self) -> None:
+        self._home.request_state_refresh()
         self._test_iface.refresh()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         event.ignore()
         self.hide()
 
+    def hideEvent(self, event: QHideEvent) -> None:
+        super().hideEvent(event)
+        self.visibility_changed.emit(False)
+
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
+        self.visibility_changed.emit(True)
         if not self._has_positioned_once:
             self._has_positioned_once = True
             QTimer.singleShot(0, lambda: self._restore_reasonable_geometry(force=True))
@@ -105,6 +110,8 @@ class KefMainWindow(FluentWindow):
                 self.showNormal()
             else:
                 self.show()
+            self._home.request_state_refresh()
+            self._test_iface.refresh()
             self._restore_reasonable_geometry()
             self.raise_()
             self.activateWindow()

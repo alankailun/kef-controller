@@ -9,7 +9,7 @@ from qfluentwidgets import FluentIcon as FIF, PushButton, SubtitleLabel
 
 from ...appdata import AppConfig
 from .handler import UILogHandler
-from .history import merge_recent_lines, read_log_tail_lines
+from .history import merge_recent_lines, read_log_tail_lines, should_hide_from_ui_log
 
 _LOG_STYLE = """
 QPlainTextEdit {
@@ -71,9 +71,12 @@ class LogInterface(QWidget):
             self._log_handler.snapshot_lines(),
             max_lines=500,
         )
+        lines = [line for line in lines if not should_hide_from_ui_log(line)]
         self._log_view.setPlainText("\n".join(lines))
         self._log_view.moveCursor(QTextCursor.MoveOperation.End)
 
     def _append(self, line: str) -> None:
+        if should_hide_from_ui_log(line):
+            return
         self._log_view.appendPlainText(line)
         self._log_view.moveCursor(QTextCursor.MoveOperation.End)

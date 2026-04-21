@@ -1,11 +1,44 @@
 from __future__ import annotations
 
+import logging
 import time
 
 
 class ControllerLoggingMixin:
+    _INFO_STEP_ACTIONS = frozenset({"CHANGE_INPUT"})
+    _INFO_STEP_PAIRS = frozenset(
+        {
+            ("DISCOVER_IP", "update_current_ip"),
+            ("DISCOVER_IP", "update_target_mac"),
+            ("DISCOVER_IP", "update_speaker_name"),
+            ("DISCOVER_IP", "update_speaker_model"),
+            ("DISCOVER_IP", "update_firmware_version"),
+            ("IDENTITY_PROBE", "mark_available"),
+        }
+    )
+
     def mono(self) -> float:
         return time.monotonic()
+
+    def _is_diagnostic_logging_enabled(self) -> bool:
+        return bool(getattr(self.config, "diagnostic_logging", False))
+
+    def _get_structured_log_level(self, tag: str, fields: dict[str, object]) -> int:
+        if tag in {"WARN", "RETRY", "ABORT"}:
+            return logging.WARNING
+        if tag in {"BEGIN", "END", "EVENT", "STATE"}:
+            return logging.INFO
+        if self._is_diagnostic_logging_enabled():
+            return logging.INFO
+        if tag == "SKIP":
+            return logging.DEBUG
+        if tag == "STEP":
+            action = str(fields.get("action") or "")
+            step = str(fields.get("step") or "")
+            if action in self._INFO_STEP_ACTIONS or (action, step) in self._INFO_STEP_PAIRS:
+                return logging.INFO
+            return logging.DEBUG
+        return logging.INFO
 
     def _log_structured(self, tag: str, **fields):
         parts = []
@@ -13,13 +46,15 @@ class ControllerLoggingMixin:
             if value is None:
                 continue
             parts.append(f"{key}={value}")
+        level = self._get_structured_log_level(tag, fields)
         if parts:
-            self.log.info(f"{tag} " + " | ".join(parts))
+            self.log.log(level, f"{tag} " + " | ".join(parts))
         else:
-            self.log.info(tag)
+            self.log.log(level, tag)
 
     def _log_separator(self):
-        self.log.info("-" * 100)
+        if self._is_diagnostic_logging_enabled():
+            self.log.info("-" * 100)
 
     def _log_action_begin(self, action: str, generation: int | None, reason: str) -> float:
         start_mono = self.mono()
@@ -54,54 +89,65 @@ class ControllerLoggingMixin:
         configured_expected_mac = c.expected_speaker_mac or c.kef_mac
 
         self.log.info("=" * 64)
-        self.log.info(f"  {c.speaker_model_label} power controller")
-        self.log.info(f"  Backend: {c.backend_name} / pykefcontrol")
-        self.log.info(f"  Config IP: {c.kef_ip or '<empty>'}")
-        self.log.info(f"  Last remembered IP: {self._loaded_state.last_ip or '<empty>'}")
-        self.log.info(f"  Current speaker IP: {self.get_current_kef_ip() or '<empty>'}")
-        self.log.info(f"  Expected name: {c.expected_speaker_name or '<empty>'}")
-        self.log.info(f"  Expected MAC: {configured_expected_mac or '<empty>'}")
-        self.log.info(f"  Last remembered MAC: {self._loaded_state.last_mac or '<empty>'}")
-        self.log.info(f"  Current target MAC: {self.get_target_kef_mac() or '<empty>'}")
-        self.log.info(f"  Current speaker name: {self._speaker_name or '<empty>'}")
-        self.log.info(f"  Current speaker model: {self._speaker_model or '<empty>'}")
-        self.log.info(f"  Default input: {c.kef_input}")
+        self.log.info(f"  {c.speaker_model_label} power controller | backend={c.backend_name} / pykefcontrol")
         self.log.info(
-            "  MAC recovery discovery: "
-            f"{c.auto_discover_kef_ip_by_mac} | configured_mac={c.kef_mac or '<empty>'} | "
-            f"current_mac={self.get_target_kef_mac() or '<empty>'} | "
-            f"subnet_prefix=/{c.mac_discovery_subnet_prefix} | extra_cidrs={c.mac_discovery_extra_cidrs}"
+            "  Speaker target: "
+            f"ip={self.get_current_kef_ip() or c.kef_ip or '<empty>'} | "
+            f"expected_name={c.expected_speaker_name or '<empty>'} | "
+            f"expected_mac={configured_expected_mac or '<empty>'}"
         )
         self.log.info(
-            "  Full network scan: "
-            f"{c.auto_discover_kef_ip_blind} | http_timeout={c.blind_discovery_http_timeout:.2f}s | "
-            f"cooldown={c.blind_discovery_cooldown:.1f}s | workers={c.blind_discovery_max_workers}"
+            "  Startup / wake: "
+            f"wake_on_startup={c.wake_on_startup} | startup_delay={c.startup_delay}s | "
+            f"resume_delay={c.resume_wake_delay}s | unlock_delay={c.unlock_wake_delay}s"
         )
-        self.log.info(f"  Wake on app start: {c.wake_on_startup}")
-        self.log.info(f"  Startup delay: {c.startup_delay}s")
-        self.log.info(f"  Resume wake delay: {c.resume_wake_delay}s")
-        self.log.info(f"  Unlock wake delay: {c.unlock_wake_delay}s")
-        self.log.info(f"  Wake only after unlock: {c.wake_on_unlock_only}")
-        self.log.info(f"  Reachability wait timeout: {c.reachability_wait_timeout}s")
-        self.log.info(f"  Socket timeout: {c.socket_timeout}s")
-        self.log.info(f"  Standby retry delays: {c.standby_attempt_delays}")
-        self.log.info(f"  Wake retry delays: {c.wake_attempt_delays}")
-        self.log.info(f"  Standby action-lock timeout: {c.suspend_action_lock_timeout}s")
-        self.log.info(f"  Wake action-lock timeout: {c.wake_action_lock_timeout}s")
-        self.log.info(f"  Standby when Windows sleeps: {c.standby_on_sleep}")
         self.log.info(
-            "  Standby on screen lock: "
-            f"{c.standby_on_lock} | lock_timeout={c.lock_standby_action_lock_timeout}s | "
-            f"dedupe_window={c.lock_standby_dedup_window}s"
+            "  Polling / logging: "
+            f"home_poll={c.home_external_poll_interval}s | tray_poll={c.tray_identity_poll_interval}s | "
+            f"offline_threshold={c.identity_probe_failure_threshold} | diagnostic_logging={c.diagnostic_logging}"
         )
-        self.log.info(f"  Standby during shutdown/sign-out: {c.endsession_standby_on_shutdown}")
-        self.log.info(f"  User config file: {c.config_file}")
-        self.log.info(f"  Log file: {c.log_file} | retention_days={c.log_backup_days}")
-        self.log.info(f"  Runtime state persistence: {c.persist_runtime_state} | state_file={c.state_file}")
-        self.log.info(f"  Fast exit during end-session: {c.fast_exit_on_endsession}")
         self.log.info(
-            f"  Application auto-restart: {c.enable_application_restart} | flags=0x{c.application_restart_flags:02X}"
+            "  Files: "
+            f"config={c.config_file} | state={c.state_file} | log={c.log_file}"
         )
+        if self._is_diagnostic_logging_enabled():
+            self.log.info(f"  Last remembered IP: {self._loaded_state.last_ip or '<empty>'}")
+            self.log.info(f"  Last remembered MAC: {self._loaded_state.last_mac or '<empty>'}")
+            self.log.info(f"  Current target MAC: {self.get_target_kef_mac() or '<empty>'}")
+            self.log.info(f"  Current speaker name: {self._speaker_name or '<empty>'}")
+            self.log.info(f"  Current speaker model: {self._speaker_model or '<empty>'}")
+            self.log.info(f"  Default input: {c.kef_input}")
+            self.log.info(
+                "  MAC recovery discovery: "
+                f"{c.auto_discover_kef_ip_by_mac} | configured_mac={c.kef_mac or '<empty>'} | "
+                f"current_mac={self.get_target_kef_mac() or '<empty>'} | "
+                f"subnet_prefix=/{c.mac_discovery_subnet_prefix} | extra_cidrs={c.mac_discovery_extra_cidrs}"
+            )
+            self.log.info(
+                "  Full network scan: "
+                f"{c.auto_discover_kef_ip_blind} | http_timeout={c.blind_discovery_http_timeout:.2f}s | "
+                f"cooldown={c.blind_discovery_cooldown:.1f}s | workers={c.blind_discovery_max_workers}"
+            )
+            self.log.info(f"  Wake only after unlock: {c.wake_on_unlock_only}")
+            self.log.info(f"  Reachability wait timeout: {c.reachability_wait_timeout}s")
+            self.log.info(f"  Socket timeout: {c.socket_timeout}s")
+            self.log.info(f"  Standby retry delays: {c.standby_attempt_delays}")
+            self.log.info(f"  Wake retry delays: {c.wake_attempt_delays}")
+            self.log.info(f"  Standby action-lock timeout: {c.suspend_action_lock_timeout}s")
+            self.log.info(f"  Wake action-lock timeout: {c.wake_action_lock_timeout}s")
+            self.log.info(f"  Standby when Windows sleeps: {c.standby_on_sleep}")
+            self.log.info(
+                "  Standby on screen lock: "
+                f"{c.standby_on_lock} | lock_timeout={c.lock_standby_action_lock_timeout}s | "
+                f"dedupe_window={c.lock_standby_dedup_window}s"
+            )
+            self.log.info(f"  Standby during shutdown/sign-out: {c.endsession_standby_on_shutdown}")
+            self.log.info(f"  Log retention days: {c.log_backup_days}")
+            self.log.info(f"  Runtime state persistence: {c.persist_runtime_state}")
+            self.log.info(f"  Fast exit during end-session: {c.fast_exit_on_endsession}")
+            self.log.info(
+                f"  Application auto-restart: {c.enable_application_restart} | flags=0x{c.application_restart_flags:02X}"
+            )
         self.log.info("=" * 64)
 
     def log_power_event(self, name: str, wparam: int, lparam: int):

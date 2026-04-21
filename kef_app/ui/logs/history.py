@@ -3,6 +3,13 @@ from __future__ import annotations
 from collections import deque
 from typing import Iterable
 
+_UI_HIDDEN_LOG_MARKERS = ("ui_home_poll", "ui_tray_poll")
+
+
+def should_hide_from_ui_log(line: str) -> bool:
+    text = line or ""
+    return any(marker in text for marker in _UI_HIDDEN_LOG_MARKERS)
+
 
 def read_log_tail_lines(path: str, max_lines: int = 400, chunk_size: int = 4096) -> list[str]:
     if max_lines <= 0:

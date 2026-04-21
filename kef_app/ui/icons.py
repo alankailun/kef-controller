@@ -25,5 +25,9 @@ def icon_connected() -> QIcon:
     return _make_icon("#27ae60")   # Green: connected
 
 
+def icon_working() -> QIcon:
+    return _make_icon("#e67e22")   # Orange: busy
+
+
 def icon_disconnected() -> QIcon:
     return _make_icon("#7f8c8d")   # Gray: disconnected

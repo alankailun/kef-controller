@@ -14,6 +14,10 @@ from .common import temporary_socket_timeout
 
 
 class ControllerDiscoveryMixin:
+    @staticmethod
+    def _is_ui_poll_trigger(trigger: str) -> bool:
+        return str(trigger).startswith(("ui_home_poll", "ui_tray_poll"))
+
     def get_current_kef_ip(self) -> str:
         with self._ip_lock:
             return self._current_kef_ip
@@ -37,9 +41,61 @@ class ControllerDiscoveryMixin:
                 speaker_name=self._speaker_name,
                 speaker_model=self._speaker_model,
                 firmware_version=self._speaker_firmware,
+                available=bool(self._current_kef_ip) and self._identity_available,
                 backend=self.config.backend_name,
                 matched_by=self._last_matched_by,
             )
+
+    def _mark_identity_probe_success(self, source: str) -> bool:
+        with self._ip_lock:
+            current_ip = self._current_kef_ip
+            previous_failures = self._identity_probe_failures
+            availability_changed = bool(current_ip) and not self._identity_available
+            self._identity_probe_failures = 0
+            self._identity_available = bool(current_ip)
+
+        if previous_failures or availability_changed:
+            self._log_structured(
+                "STEP",
+                action="IDENTITY_PROBE",
+                step="mark_available",
+                source=source,
+                current_ip=current_ip or "<empty>",
+                previous_failures=previous_failures,
+                mono=f"{self.mono():.3f}",
+            )
+        return availability_changed
+
+    def record_identity_probe_failure(self, source: str, trigger: str, cause: str) -> bool:
+        threshold = max(1, int(self.config.identity_probe_failure_threshold))
+        with self._ip_lock:
+            current_ip = self._current_kef_ip
+            if not current_ip:
+                return False
+
+            self._identity_probe_failures += 1
+            failures = self._identity_probe_failures
+            offline = failures >= threshold
+            availability_changed = offline and self._identity_available
+            if offline:
+                self._identity_available = False
+
+        self._log_structured(
+            "WARN",
+            action="IDENTITY_PROBE",
+            step="mark_failure",
+            source=source,
+            trigger=trigger,
+            cause=cause,
+            current_ip=current_ip,
+            failures=failures,
+            threshold=threshold,
+            offline=offline,
+            mono=f"{self.mono():.3f}",
+        )
+        if availability_changed:
+            self._emit_identity_changed()
+        return availability_changed
 
     def _identity_matches_expectation(self, identity: SpeakerIdentity) -> tuple[bool, str]:
         expected_name = normalize_name(self.get_expected_speaker_name())
@@ -110,8 +166,11 @@ class ControllerDiscoveryMixin:
                     **{kw_old: old_val or "<empty>", kw_new: display_val},
                     mono=f"{self.mono():.3f}",
                 )
+        availability_changed = self._mark_identity_probe_success(source=f"identity:{source}")
         if changed:
             self._persist_runtime_state(source=f"identity:{source}")
+        if changed or availability_changed:
+            self._emit_identity_changed()
         return changed
 
     def capture_identity_from_current_ip(self, reason: str, trigger: str) -> bool:
@@ -144,20 +203,22 @@ class ControllerDiscoveryMixin:
 
         changed = self.update_identity_from_device_info(info, source=trigger)
         matched, match_reason = self._identity_matches_expectation(info)
-        self._log_structured(
-            "STEP",
-            action="DISCOVER_IP",
-            reason=reason,
-            step="capture_identity_from_current_ip",
-            trigger=trigger,
-            current_ip=current_ip,
-            changed=changed,
-            speaker_model=info.speaker_model or "",
-            speaker_name=info.speaker_name or "",
-            matched=matched,
-            match_reason=match_reason,
-            mono=f"{self.mono():.3f}",
-        )
+        should_log_success = changed or not matched or not self._is_ui_poll_trigger(trigger)
+        if should_log_success:
+            self._log_structured(
+                "STEP",
+                action="DISCOVER_IP",
+                reason=reason,
+                step="capture_identity_from_current_ip",
+                trigger=trigger,
+                current_ip=current_ip,
+                changed=changed,
+                speaker_model=info.speaker_model or "",
+                speaker_name=info.speaker_name or "",
+                matched=matched,
+                match_reason=match_reason,
+                mono=f"{self.mono():.3f}",
+            )
         if not matched:
             self._log_structured(
                 "WARN",
@@ -174,22 +235,49 @@ class ControllerDiscoveryMixin:
             )
         return True
 
+    def probe_external_identity(self, reason: str, trigger: str) -> tuple[bool, bool]:
+        identity_seen = self.capture_identity_from_current_ip(reason=reason, trigger=f"{trigger}_identity")
+        ip_refreshed = False
+        if not identity_seen:
+            ip_refreshed = self.maybe_refresh_kef_ip(reason=reason, trigger=f"{trigger}_refresh")
+        reachable = identity_seen or ip_refreshed
+        if not reachable:
+            self.record_identity_probe_failure(source=reason, trigger=trigger, cause="identity_refresh_failed")
+
+        if not (self._is_ui_poll_trigger(trigger) and identity_seen and not ip_refreshed):
+            self._log_structured(
+                "STEP",
+                action="IDENTITY_PROBE",
+                reason=reason,
+                trigger=trigger,
+                fallback_identity=identity_seen,
+                fallback_ip_refresh=ip_refreshed,
+                reachable=reachable,
+                mono=f"{self.mono():.3f}",
+            )
+        return identity_seen, ip_refreshed
+
     def update_kef_ip(self, new_ip: str, source: str) -> bool:
         if not is_routable_ipv4(new_ip):
             return False
         with self._ip_lock:
             old_ip = self._current_kef_ip
-            if old_ip == new_ip:
-                self._log_structured(
-                    "STEP",
-                    action="DISCOVER_IP",
-                    step="confirm_current_ip",
-                    source=source,
-                    ip=new_ip,
-                    mono=f"{self.mono():.3f}",
-                )
-                return False
-            self._current_kef_ip = new_ip
+            if old_ip != new_ip:
+                self._current_kef_ip = new_ip
+
+        availability_changed = self._mark_identity_probe_success(source=f"ip:{source}")
+        if old_ip == new_ip:
+            self._log_structured(
+                "STEP",
+                action="DISCOVER_IP",
+                step="confirm_current_ip",
+                source=source,
+                ip=new_ip,
+                mono=f"{self.mono():.3f}",
+            )
+            if availability_changed:
+                self._emit_identity_changed()
+            return False
 
         self.reset_speaker()
         self._persist_runtime_state(source=f"ip:{source}")
@@ -202,6 +290,7 @@ class ControllerDiscoveryMixin:
             new_ip=new_ip,
             mono=f"{self.mono():.3f}",
         )
+        self._emit_identity_changed()
         return True
 
     def maybe_refresh_kef_ip_by_mac(self, reason: str, trigger: str, force: bool = False) -> bool:
