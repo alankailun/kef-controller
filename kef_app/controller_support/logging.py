@@ -14,6 +14,8 @@ class ControllerLoggingMixin:
             ("DISCOVER_IP", "update_speaker_model"),
             ("DISCOVER_IP", "update_firmware_version"),
             ("IDENTITY_PROBE", "mark_available"),
+            ("LOCK_PRE_STANDBY", "verify_standby"),
+            ("STANDBY", "verify_standby"),
         }
     )
 

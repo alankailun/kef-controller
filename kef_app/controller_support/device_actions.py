@@ -13,7 +13,16 @@ from ..models import normalize_input_source
 
 _CHANGE_INPUT_POLL_INTERVAL = 0.2
 _CHANGE_INPUT_VERIFY_TIMEOUT = 2.5
+_STANDBY_VERIFY_POLL_INTERVAL = 0.15
+_STANDBY_VERIFY_READ_TIMEOUT = 0.35
+_STANDBY_VERIFY_TIMEOUT = 1.6
+_LOCK_PRE_STANDBY_VERIFY_TIMEOUT = 0.75
+_STANDBY_VERIFY_OFFLINE_FAILURES = 2
 T = TypeVar("T")
+
+
+class StandbyVerificationError(RuntimeError):
+    pass
 
 
 class ControllerDeviceActionsMixin:
@@ -184,6 +193,120 @@ class ControllerDeviceActionsMixin:
         with temporary_socket_timeout(timeout):
             speaker = self.get_speaker(fresh=fresh)
             speaker.shutdown()
+
+    @staticmethod
+    def _format_power_state(value: Optional[bool]) -> str:
+        if value is True:
+            return "on"
+        if value is False:
+            return "standby"
+        return "<unknown>"
+
+    def _read_standby_snapshot(self, *, fresh: bool) -> tuple[Optional[bool], Optional[str], Optional[str]]:
+        read_timeout = min(self.config.socket_timeout, _STANDBY_VERIFY_READ_TIMEOUT)
+        try:
+            with temporary_socket_timeout(read_timeout):
+                speaker = self.get_speaker(fresh=fresh)
+                power_state = self._normalize_speaker_power_state(speaker.status)
+                if power_state is False:
+                    return power_state, "standby", None
+                input_source = normalize_input_source(speaker.source)
+                return power_state, input_source, None
+        except Exception as exc:
+            self.reset_speaker()
+            return None, None, repr(exc)
+
+    def _wait_for_standby_confirmation(self, *, timeout: float) -> tuple[bool, dict[str, object]]:
+        deadline = self.mono() + timeout
+        last_power_state = None
+        last_input_source = None
+        last_error = None
+        consecutive_failures = 0
+
+        while True:
+            power_state, input_source, error = self._read_standby_snapshot(fresh=True)
+            if error is None:
+                consecutive_failures = 0
+                last_power_state = power_state
+                last_input_source = input_source
+                if power_state is False or input_source == "standby":
+                    return True, {
+                        "verified_by": "speaker_state",
+                        "actual_power": self._format_power_state(power_state),
+                        "actual_input": input_source or "<unknown>",
+                    }
+            else:
+                consecutive_failures += 1
+                last_error = error
+                if consecutive_failures >= _STANDBY_VERIFY_OFFLINE_FAILURES:
+                    return True, {
+                        "verified_by": "device_unreachable",
+                        "consecutive_failures": consecutive_failures,
+                        "last_error": last_error,
+                    }
+
+            remaining = deadline - self.mono()
+            if remaining <= 0:
+                break
+            time.sleep(min(_STANDBY_VERIFY_POLL_INTERVAL, remaining))
+
+        return False, {
+            "verified_by": "not_confirmed",
+            "actual_power": self._format_power_state(last_power_state),
+            "actual_input": last_input_source or "<unknown>",
+            "consecutive_failures": consecutive_failures,
+            "last_error": last_error,
+        }
+
+    def _ensure_standby_confirmed(
+        self,
+        *,
+        action: str,
+        generation: int | None,
+        reason: str,
+        timeout: float,
+    ) -> None:
+        self._log_structured(
+            "STEP",
+            action=action,
+            gen=generation,
+            reason=reason,
+            step="verify_standby",
+            status="begin",
+            timeout_s=f"{timeout:.2f}",
+            mono=f"{self.mono():.3f}",
+        )
+        verified, details = self._wait_for_standby_confirmation(timeout=timeout)
+        if verified:
+            self._log_structured(
+                "STEP",
+                action=action,
+                gen=generation,
+                reason=reason,
+                step="verify_standby",
+                status="confirmed",
+                mono=f"{self.mono():.3f}",
+                **details,
+            )
+            return
+
+        self._log_structured(
+            "WARN",
+            action=action,
+            gen=generation,
+            reason=reason,
+            step="verify_standby",
+            status="failed",
+            mono=f"{self.mono():.3f}",
+            **details,
+        )
+        raise StandbyVerificationError(
+            "standby_not_verified "
+            f"power={details.get('actual_power')} "
+            f"input={details.get('actual_input')} "
+            f"failures={details.get('consecutive_failures')} "
+            f"last_error={details.get('last_error')}"
+        )
 
     def _run_generation_attempts(
         self,
@@ -611,16 +734,22 @@ class ControllerDeviceActionsMixin:
 
             try:
                 self._request_shutdown(fresh=False, timeout=self.config.socket_timeout)
-                self._mark_lock_prestandby_success()
-                outcome = "success"
                 self._log_structured(
                     "STEP",
                     action="LOCK_PRE_STANDBY",
                     reason=reason,
                     step="shutdown_request",
-                    status="success",
+                    status="sent",
                     mono=f"{self.mono():.3f}",
                 )
+                self._ensure_standby_confirmed(
+                    action="LOCK_PRE_STANDBY",
+                    generation=None,
+                    reason=reason,
+                    timeout=_LOCK_PRE_STANDBY_VERIFY_TIMEOUT,
+                )
+                self._mark_lock_prestandby_success()
+                outcome = "success"
                 return True
             except Exception as exc:
                 self.reset_speaker()
@@ -630,7 +759,7 @@ class ControllerDeviceActionsMixin:
                     action="LOCK_PRE_STANDBY",
                     reason=reason,
                     attempt=1,
-                    cause="shutdown_failed",
+                    cause=("standby_not_verified" if isinstance(exc, StandbyVerificationError) else "shutdown_failed"),
                     error=repr(exc),
                     mono=f"{self.mono():.3f}",
                 )
@@ -772,14 +901,20 @@ class ControllerDeviceActionsMixin:
                     step="shutdown_request",
                     attempt=attempt,
                     fresh=fresh,
-                    status="success",
+                    status="sent",
                     mono=f"{self.mono():.3f}",
+                )
+                self._ensure_standby_confirmed(
+                    action="STANDBY",
+                    generation=generation,
+                    reason=reason,
+                    timeout=_STANDBY_VERIFY_TIMEOUT,
                 )
 
             def build_retry_fields(attempt: int, _exc: Exception) -> dict[str, object]:
                 return {
                     "fresh": attempt > 1,
-                    "cause": "shutdown_failed",
+                    "cause": ("standby_not_verified" if isinstance(_exc, StandbyVerificationError) else "shutdown_failed"),
                 }
 
             outcome = self._run_generation_attempts(
