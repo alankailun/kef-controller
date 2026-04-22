@@ -13,10 +13,11 @@ from ..models import normalize_input_source
 
 _CHANGE_INPUT_POLL_INTERVAL = 0.2
 _CHANGE_INPUT_VERIFY_TIMEOUT = 2.5
-_STANDBY_VERIFY_POLL_INTERVAL = 0.15
-_STANDBY_VERIFY_READ_TIMEOUT = 0.35
-_STANDBY_VERIFY_TIMEOUT = 1.6
-_LOCK_PRE_STANDBY_VERIFY_TIMEOUT = 0.75
+_STANDBY_VERIFY_POLL_INTERVAL = 0.08
+_STANDBY_VERIFY_READ_TIMEOUT = 0.20
+_STANDBY_VERIFY_TIMEOUT = 0.40
+_LOCK_PRE_STANDBY_VERIFY_TIMEOUT = 0.40
+_LOCK_PRE_STANDBY_ATTEMPT_DELAYS = (0.0, 0.15)
 _STANDBY_VERIFY_OFFLINE_FAILURES = 2
 T = TypeVar("T")
 
@@ -193,6 +194,35 @@ class ControllerDeviceActionsMixin:
         with temporary_socket_timeout(timeout):
             speaker = self.get_speaker(fresh=fresh)
             speaker.shutdown()
+
+    def _perform_standby_request(
+        self,
+        *,
+        action: str,
+        generation: int | None,
+        reason: str,
+        attempt: int,
+        fresh: bool,
+        verify_timeout: float,
+    ) -> None:
+        self._request_shutdown(fresh=fresh, timeout=self.config.socket_timeout)
+        self._log_structured(
+            "STEP",
+            action=action,
+            gen=generation,
+            reason=reason,
+            step="shutdown_request",
+            attempt=attempt,
+            fresh=fresh,
+            status="sent",
+            mono=f"{self.mono():.3f}",
+        )
+        self._ensure_standby_confirmed(
+            action=action,
+            generation=generation,
+            reason=reason,
+            timeout=verify_timeout,
+        )
 
     @staticmethod
     def _format_power_state(value: Optional[bool]) -> str:
@@ -706,6 +736,7 @@ class ControllerDeviceActionsMixin:
         outcome = "unknown"
         start_mono = self._log_action_begin("LOCK_PRE_STANDBY", None, reason)
         self._emit_power_action_started("LOCK_PRE_STANDBY", reason)
+        attempt_count = len(_LOCK_PRE_STANDBY_ATTEMPT_DELAYS)
 
         try:
             self._log_structured("STEP", action="LOCK_PRE_STANDBY", reason=reason, step="shutdown_request", mono=f"{self.mono():.3f}")
@@ -720,52 +751,98 @@ class ControllerDeviceActionsMixin:
                 )
                 return False
 
-            if not self._action_lock.acquire(timeout=self.config.lock_standby_action_lock_timeout):
-                outcome = "skipped_action_lock_busy"
-                self._log_structured(
-                    "SKIP",
-                    action="LOCK_PRE_STANDBY",
-                    reason=reason,
-                    cause="action_lock_busy",
-                    timeout_s=f"{self.config.lock_standby_action_lock_timeout:.2f}",
-                    mono=f"{self.mono():.3f}",
-                )
-                return False
+            for attempt, delay in enumerate(_LOCK_PRE_STANDBY_ATTEMPT_DELAYS, start=1):
+                if delay > 0:
+                    self._log_structured(
+                        "STEP",
+                        action="LOCK_PRE_STANDBY",
+                        reason=reason,
+                        step="pre_delay",
+                        attempt=attempt,
+                        delay_s=f"{delay:.2f}",
+                        mono=f"{self.mono():.3f}",
+                    )
+                    time.sleep(delay)
 
-            try:
-                self._request_shutdown(fresh=False, timeout=self.config.socket_timeout)
-                self._log_structured(
-                    "STEP",
-                    action="LOCK_PRE_STANDBY",
-                    reason=reason,
-                    step="shutdown_request",
-                    status="sent",
-                    mono=f"{self.mono():.3f}",
-                )
-                self._ensure_standby_confirmed(
-                    action="LOCK_PRE_STANDBY",
-                    generation=None,
-                    reason=reason,
-                    timeout=_LOCK_PRE_STANDBY_VERIFY_TIMEOUT,
-                )
-                self._mark_lock_prestandby_success()
-                outcome = "success"
-                return True
-            except Exception as exc:
-                self.reset_speaker()
-                outcome = "failed_will_fallback_to_apmsuspend"
-                self._log_structured(
-                    "RETRY",
-                    action="LOCK_PRE_STANDBY",
-                    reason=reason,
-                    attempt=1,
-                    cause=("standby_not_verified" if isinstance(exc, StandbyVerificationError) else "shutdown_failed"),
-                    error=repr(exc),
-                    mono=f"{self.mono():.3f}",
-                )
-                return False
-            finally:
-                self._action_lock.release()
+                if self._is_session_ending():
+                    outcome = "skipped_session_ending"
+                    self._log_structured(
+                        "SKIP",
+                        action="LOCK_PRE_STANDBY",
+                        reason=reason,
+                        cause="session_ending",
+                        attempt=attempt,
+                        mono=f"{self.mono():.3f}",
+                    )
+                    return False
+
+                if not self._action_lock.acquire(timeout=self.config.lock_standby_action_lock_timeout):
+                    cause = "action_lock_busy"
+                    if attempt < attempt_count:
+                        self._log_structured(
+                            "RETRY",
+                            action="LOCK_PRE_STANDBY",
+                            reason=reason,
+                            attempt=attempt,
+                            cause=cause,
+                            timeout_s=f"{self.config.lock_standby_action_lock_timeout:.2f}",
+                            mono=f"{self.mono():.3f}",
+                        )
+                        continue
+
+                    outcome = "skipped_action_lock_busy"
+                    self._log_structured(
+                        "SKIP",
+                        action="LOCK_PRE_STANDBY",
+                        reason=reason,
+                        cause=cause,
+                        attempt=attempt,
+                        timeout_s=f"{self.config.lock_standby_action_lock_timeout:.2f}",
+                        mono=f"{self.mono():.3f}",
+                    )
+                    return False
+
+                try:
+                    self._perform_standby_request(
+                        action="LOCK_PRE_STANDBY",
+                        generation=None,
+                        reason=reason,
+                        attempt=attempt,
+                        fresh=attempt > 1,
+                        verify_timeout=_LOCK_PRE_STANDBY_VERIFY_TIMEOUT,
+                    )
+                    self._mark_lock_prestandby_success()
+                    outcome = f"success_attempt_{attempt}"
+                    return True
+                except Exception as exc:
+                    self.reset_speaker()
+                    cause = "standby_not_verified" if isinstance(exc, StandbyVerificationError) else "shutdown_failed"
+                    if attempt < attempt_count:
+                        self._log_structured(
+                            "RETRY",
+                            action="LOCK_PRE_STANDBY",
+                            reason=reason,
+                            attempt=attempt,
+                            cause=cause,
+                            error=repr(exc),
+                            mono=f"{self.mono():.3f}",
+                        )
+                        continue
+
+                    outcome = "failed_will_fallback_to_apmsuspend"
+                    self._log_structured(
+                        "WARN",
+                        action="LOCK_PRE_STANDBY",
+                        reason=reason,
+                        attempt=attempt,
+                        cause=cause,
+                        status="fallback_to_apmsuspend",
+                        error=repr(exc),
+                        mono=f"{self.mono():.3f}",
+                    )
+                    return False
+                finally:
+                    self._action_lock.release()
         finally:
             self._emit_power_action_finished("LOCK_PRE_STANDBY", reason, outcome)
             self._log_action_end("LOCK_PRE_STANDBY", None, reason, outcome, start_mono)
@@ -890,44 +967,44 @@ class ControllerDeviceActionsMixin:
                 )
                 return False
 
-            def execute_attempt(attempt: int) -> None:
-                fresh = attempt > 1
-                self._request_shutdown(fresh=fresh, timeout=c.socket_timeout)
-                self._log_structured(
-                    "STEP",
-                    action="STANDBY",
-                    gen=generation,
-                    reason=reason,
-                    step="shutdown_request",
-                    attempt=attempt,
-                    fresh=fresh,
-                    status="sent",
-                    mono=f"{self.mono():.3f}",
-                )
-                self._ensure_standby_confirmed(
-                    action="STANDBY",
-                    generation=generation,
-                    reason=reason,
-                    timeout=_STANDBY_VERIFY_TIMEOUT,
-                )
-
-            def build_retry_fields(attempt: int, _exc: Exception) -> dict[str, object]:
-                return {
-                    "fresh": attempt > 1,
-                    "cause": ("standby_not_verified" if isinstance(_exc, StandbyVerificationError) else "shutdown_failed"),
-                }
-
-            outcome = self._run_generation_attempts(
+            outcome = self._acquire_generation_action_lock(
                 action="STANDBY",
                 generation=generation,
                 reason=reason,
-                attempt_delays=c.standby_attempt_delays,
                 lock_timeout=c.suspend_action_lock_timeout,
                 purpose="standby",
-                execute_attempt=execute_attempt,
-                build_retry_fields=build_retry_fields,
             )
-            return outcome.startswith("success_attempt_")
+            if outcome is not None:
+                return False
+
+            try:
+                self._perform_standby_request(
+                    action="STANDBY",
+                    generation=generation,
+                    reason=reason,
+                    attempt=1,
+                    fresh=False,
+                    verify_timeout=_STANDBY_VERIFY_TIMEOUT,
+                )
+                outcome = "success_attempt_1"
+                return True
+            except Exception as exc:
+                self.reset_speaker()
+                outcome = "failed_no_retry_before_suspend"
+                self._log_structured(
+                    "WARN",
+                    action="STANDBY",
+                    gen=generation,
+                    reason=reason,
+                    attempt=1,
+                    cause=("standby_not_verified" if isinstance(exc, StandbyVerificationError) else "shutdown_failed"),
+                    status="no_retry_before_suspend",
+                    error=repr(exc),
+                    mono=f"{self.mono():.3f}",
+                )
+                return False
+            finally:
+                self._action_lock.release()
         finally:
             self._emit_power_action_finished("STANDBY", reason, outcome)
             self._log_action_end("STANDBY", generation, reason, outcome, start_mono)
