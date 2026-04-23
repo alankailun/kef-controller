@@ -166,13 +166,23 @@ class ControllerDeviceActionsMixin:
         reason: str,
         lock_timeout: float,
         purpose: str,
+        log_timeout: bool = True,
     ) -> str | None:
         if self._should_abort_generation(generation):
             self._log_generation_abort(action, generation, reason, "before_action_lock")
             return "aborted_stale_generation_before_lock"
 
-        if not self._acquire_action_lock_interruptibly(lock_timeout, generation, reason, purpose):
-            return "aborted_action_lock_timeout_or_stale"
+        lock_outcome = self._acquire_action_lock_interruptibly(
+            lock_timeout,
+            generation,
+            reason,
+            purpose,
+            log_timeout=log_timeout,
+        )
+        if lock_outcome == "action_lock_timeout":
+            return "aborted_action_lock_timeout"
+        if lock_outcome == "stale_generation":
+            return "aborted_stale_generation_while_waiting_lock"
 
         if self._should_abort_generation(generation):
             self._log_generation_abort(action, generation, reason, "after_action_lock")
@@ -732,19 +742,27 @@ class ControllerDeviceActionsMixin:
             self._emit_power_action_finished("WAKE", reason, outcome)
             self._log_action_end("WAKE", generation, reason, outcome, start_mono)
 
-    def standby_kef_preemptive(self, reason: str) -> bool:
+    def standby_kef_preemptive(self, generation: int, reason: str) -> bool:
         outcome = "unknown"
-        start_mono = self._log_action_begin("LOCK_PRE_STANDBY", None, reason)
+        start_mono = self._log_action_begin("LOCK_PRE_STANDBY", generation, reason)
         self._emit_power_action_started("LOCK_PRE_STANDBY", reason)
         attempt_count = len(_LOCK_PRE_STANDBY_ATTEMPT_DELAYS)
 
         try:
-            self._log_structured("STEP", action="LOCK_PRE_STANDBY", reason=reason, step="shutdown_request", mono=f"{self.mono():.3f}")
+            self._log_structured(
+                "STEP",
+                action="LOCK_PRE_STANDBY",
+                gen=generation,
+                reason=reason,
+                step="shutdown_request",
+                mono=f"{self.mono():.3f}",
+            )
             if self._is_session_ending():
                 outcome = "skipped_session_ending"
                 self._log_structured(
                     "SKIP",
                     action="LOCK_PRE_STANDBY",
+                    gen=generation,
                     reason=reason,
                     cause="session_ending",
                     mono=f"{self.mono():.3f}",
@@ -752,23 +770,23 @@ class ControllerDeviceActionsMixin:
                 return False
 
             for attempt, delay in enumerate(_LOCK_PRE_STANDBY_ATTEMPT_DELAYS, start=1):
-                if delay > 0:
-                    self._log_structured(
-                        "STEP",
-                        action="LOCK_PRE_STANDBY",
-                        reason=reason,
-                        step="pre_delay",
-                        attempt=attempt,
-                        delay_s=f"{delay:.2f}",
-                        mono=f"{self.mono():.3f}",
-                    )
-                    time.sleep(delay)
+                outcome = self._run_generation_pre_delay(
+                    action="LOCK_PRE_STANDBY",
+                    generation=generation,
+                    reason=reason,
+                    attempt=attempt,
+                    delay=delay,
+                    sleep_label=f"lock_pre_standby_pre_delay_attempt_{attempt}",
+                )
+                if outcome is not None:
+                    return False
 
                 if self._is_session_ending():
                     outcome = "skipped_session_ending"
                     self._log_structured(
                         "SKIP",
                         action="LOCK_PRE_STANDBY",
+                        gen=generation,
                         reason=reason,
                         cause="session_ending",
                         attempt=attempt,
@@ -776,41 +794,56 @@ class ControllerDeviceActionsMixin:
                     )
                     return False
 
-                if not self._action_lock.acquire(timeout=self.config.lock_standby_action_lock_timeout):
-                    cause = "action_lock_busy"
-                    if attempt < attempt_count:
+                outcome = self._acquire_generation_action_lock(
+                    action="LOCK_PRE_STANDBY",
+                    generation=generation,
+                    reason=reason,
+                    lock_timeout=self.config.lock_standby_action_lock_timeout,
+                    purpose="lock_pre_standby",
+                    log_timeout=False,
+                )
+                if outcome is not None:
+                    if outcome == "aborted_action_lock_timeout":
+                        cause = "action_lock_busy"
+                        if attempt < attempt_count:
+                            self._log_structured(
+                                "RETRY",
+                                action="LOCK_PRE_STANDBY",
+                                gen=generation,
+                                reason=reason,
+                                attempt=attempt,
+                                cause=cause,
+                                timeout_s=f"{self.config.lock_standby_action_lock_timeout:.2f}",
+                                mono=f"{self.mono():.3f}",
+                            )
+                            continue
+
+                        outcome = "skipped_action_lock_busy"
                         self._log_structured(
-                            "RETRY",
+                            "SKIP",
                             action="LOCK_PRE_STANDBY",
+                            gen=generation,
                             reason=reason,
-                            attempt=attempt,
                             cause=cause,
+                            attempt=attempt,
                             timeout_s=f"{self.config.lock_standby_action_lock_timeout:.2f}",
                             mono=f"{self.mono():.3f}",
                         )
-                        continue
-
-                    outcome = "skipped_action_lock_busy"
-                    self._log_structured(
-                        "SKIP",
-                        action="LOCK_PRE_STANDBY",
-                        reason=reason,
-                        cause=cause,
-                        attempt=attempt,
-                        timeout_s=f"{self.config.lock_standby_action_lock_timeout:.2f}",
-                        mono=f"{self.mono():.3f}",
-                    )
                     return False
 
                 try:
                     self._perform_standby_request(
                         action="LOCK_PRE_STANDBY",
-                        generation=None,
+                        generation=generation,
                         reason=reason,
                         attempt=attempt,
                         fresh=attempt > 1,
                         verify_timeout=_LOCK_PRE_STANDBY_VERIFY_TIMEOUT,
                     )
+                    if self._should_abort_generation(generation):
+                        outcome = "aborted_stale_generation_after_standby_request"
+                        self._log_generation_abort("LOCK_PRE_STANDBY", generation, reason, "after_standby_request")
+                        return False
                     self._mark_lock_prestandby_success()
                     outcome = f"success_attempt_{attempt}"
                     return True
@@ -821,6 +854,7 @@ class ControllerDeviceActionsMixin:
                         self._log_structured(
                             "RETRY",
                             action="LOCK_PRE_STANDBY",
+                            gen=generation,
                             reason=reason,
                             attempt=attempt,
                             cause=cause,
@@ -833,6 +867,7 @@ class ControllerDeviceActionsMixin:
                     self._log_structured(
                         "WARN",
                         action="LOCK_PRE_STANDBY",
+                        gen=generation,
                         reason=reason,
                         attempt=attempt,
                         cause=cause,
@@ -845,7 +880,7 @@ class ControllerDeviceActionsMixin:
                     self._action_lock.release()
         finally:
             self._emit_power_action_finished("LOCK_PRE_STANDBY", reason, outcome)
-            self._log_action_end("LOCK_PRE_STANDBY", None, reason, outcome, start_mono)
+            self._log_action_end("LOCK_PRE_STANDBY", generation, reason, outcome, start_mono)
 
     def standby_kef_end_session(self, reason: str, flags: str) -> bool:
         outcome = "unknown"

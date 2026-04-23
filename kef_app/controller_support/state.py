@@ -58,7 +58,15 @@ class ControllerStateMixin:
                 return True
             time.sleep(min(step, remaining))
 
-    def _acquire_action_lock_interruptibly(self, timeout: float, generation: int, reason: str, purpose: str) -> bool:
+    def _acquire_action_lock_interruptibly(
+        self,
+        timeout: float,
+        generation: int,
+        reason: str,
+        purpose: str,
+        *,
+        log_timeout: bool = True,
+    ) -> str:
         deadline = self.mono() + timeout
         while True:
             if self._should_abort_generation(generation):
@@ -71,23 +79,24 @@ class ControllerStateMixin:
                     cause="generation_changed_while_waiting_action_lock",
                     mono=f"{self.mono():.3f}",
                 )
-                return False
+                return "stale_generation"
 
             remaining = deadline - self.mono()
             if remaining <= 0:
-                self._log_structured(
-                    "SKIP",
-                    action=purpose.upper(),
-                    gen=generation,
-                    reason=reason,
-                    cause="action_lock_timeout",
-                    timeout_s=f"{timeout:.2f}",
-                    mono=f"{self.mono():.3f}",
-                )
-                return False
+                if log_timeout:
+                    self._log_structured(
+                        "SKIP",
+                        action=purpose.upper(),
+                        gen=generation,
+                        reason=reason,
+                        cause="action_lock_timeout",
+                        timeout_s=f"{timeout:.2f}",
+                        mono=f"{self.mono():.3f}",
+                    )
+                return "action_lock_timeout"
 
             if self._action_lock.acquire(timeout=min(0.1, remaining)):
-                return True
+                return "acquired"
 
     def _should_dedupe_resume_and_mark(self, reason: str) -> bool:
         with self._state_lock:

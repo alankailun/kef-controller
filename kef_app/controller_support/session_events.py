@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 import threading
-import time
+import traceback
 
 from ..platform_windows import ENDSESSION_CLOSEAPP, ENDSESSION_CRITICAL, ENDSESSION_LOGOFF, decode_query_end_session_flags
 
 
 class ControllerSessionEventsMixin:
+    def _start_controller_thread(self, target, thread_name: str):
+        def guarded():
+            try:
+                target()
+            except Exception:
+                self.log.error("%s hit an unhandled exception:\n%s", thread_name, traceback.format_exc())
+
+        threading.Thread(target=guarded, daemon=True, name=thread_name).start()
+
     def _schedule_delayed_wake(self, generation: int, reason: str, delay: float, step_label: str, thread_name: str):
         def worker():
             self._log_structured(
@@ -22,7 +31,7 @@ class ControllerSessionEventsMixin:
                 return
             self.wake_kef(generation, reason)
 
-        threading.Thread(target=worker, daemon=True, name=f"{thread_name}-{generation}").start()
+        self._start_controller_thread(worker, f"{thread_name}-{generation}")
 
     def on_startup(self):
         if not self.config.wake_on_startup:
@@ -35,6 +44,7 @@ class ControllerSessionEventsMixin:
             )
             return
 
+        generation = self._new_generation("wake", "startup")
         self._log_structured(
             "STEP",
             action="WAKE",
@@ -43,23 +53,27 @@ class ControllerSessionEventsMixin:
             delay_s=f"{self.config.startup_delay:.2f}",
             mono=f"{self.mono():.3f}",
         )
-        time.sleep(self.config.startup_delay)
-        generation = self._new_generation("wake", "startup")
+        if not self._interruptible_sleep(self.config.startup_delay, generation, "startup_delay"):
+            return
         self.wake_kef(generation, "startup")
 
     def on_suspend(self, reason: str):
+        generation = self._new_generation("sleep", reason)
         if not self.config.standby_on_sleep:
             self._log_structured("SKIP", action="STANDBY", reason=reason, cause="sleep_standby_disabled", mono=f"{self.mono():.3f}")
             return
-        generation = self._new_generation("sleep", reason)
-        self.standby_kef(generation, reason)
+        self._start_controller_thread(lambda: self.standby_kef(generation, reason), f"SuspendStandby-{generation}")
 
     def on_lock(self, reason: str):
         if not self.config.standby_on_lock:
             return
         if self._is_session_ending():
             return
-        self.standby_kef_preemptive(reason)
+        generation = self._new_generation("sleep", reason)
+        self._start_controller_thread(
+            lambda: self.standby_kef_preemptive(generation, reason),
+            f"LockPreStandby-{generation}",
+        )
 
     def on_resume(self, reason: str):
         if self._should_dedupe_resume_and_mark(reason):
