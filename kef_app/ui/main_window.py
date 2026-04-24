@@ -5,13 +5,14 @@ from PySide6.QtCore import QSize, Signal
 from PySide6.QtGui import QCloseEvent, QGuiApplication, QHideEvent, QShowEvent
 from qfluentwidgets import FluentIcon as FIF, FluentWindow, NavigationItemPosition
 
-from ..appdata import AppConfig, UserConfigStore
+from ..config import AppConfig
+from ..storage import UserConfigStore
 from ..controller import KefPowerController
-from .controller_bridge import ControllerEventBridge
-from .home_interface import HomeInterface
+from .controller_events import ControllerEventBridge
+from .home_view import HomeInterface
 from .logs import LogInterface, UILogHandler
 from .settings import SettingsInterface
-from .test_interface import TestInterface
+from .event_test_view import TestInterface
 
 
 class KefMainWindow(FluentWindow):
@@ -37,7 +38,7 @@ class KefMainWindow(FluentWindow):
         self._home = HomeInterface(config, controller, config_store, controller_bridge, self)
         self._test_iface = TestInterface(config, controller, self)
         self._log_iface = LogInterface(config, log_handler, self)
-        self._settings_iface = SettingsInterface(config, config_store, self)
+        self._settings_iface = SettingsInterface(config, controller, config_store, self)
         self._settings_iface.settings_saved.connect(self._on_settings_saved)
 
         self.addSubInterface(self._home, FIF.HOME, "Home")

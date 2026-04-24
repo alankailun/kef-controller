@@ -1,5 +1,4 @@
-from .interface import SettingsInterface
-from .shared import (
+from .settings_service import (
     INPUTS,
     SPEAKER_POWER_OPTIONS,
     TASK_NAME,
@@ -9,6 +8,7 @@ from .shared import (
     log_power_behavior_state_message,
     save_settings_and_sync_startup,
 )
+from .settings_view import SettingsInterface
 
 __all__ = [
     "INPUTS",

@@ -4,7 +4,7 @@ import logging
 import unittest
 from unittest.mock import Mock
 
-from kef_app.appdata import AppConfig
+from kef_app.config import AppConfig
 from kef_app.controller import KefPowerController
 
 
@@ -70,6 +70,48 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertEqual(len(perform_calls), 1)
         self.assertEqual(perform_calls[0]["generation"], generation)
         self.assertFalse(controller._recently_lock_standby_ok())
+
+    def test_apply_configured_device_target_updates_runtime_ip_and_mac(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
+
+        controller.config.kef_ip = "192.168.1.20"
+        controller.config.kef_mac = "AA:BB:CC:DD:EE:02"
+
+        changed = controller.apply_configured_device_target(source="unit_test")
+
+        self.assertTrue(changed)
+        self.assertEqual(controller.get_current_kef_ip(), "192.168.1.20")
+        self.assertEqual(controller.get_target_kef_mac(), "AABBCCDDEE02")
+
+    def test_apply_configured_device_target_ignores_invalid_ip(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
+
+        controller.config.kef_ip = "not-an-ip"
+        controller.config.kef_mac = "AA:BB:CC:DD:EE:02"
+
+        changed = controller.apply_configured_device_target(source="unit_test")
+
+        self.assertTrue(changed)
+        self.assertEqual(controller.get_current_kef_ip(), "192.168.1.10")
+        self.assertEqual(controller.get_target_kef_mac(), "AABBCCDDEE02")
+
+    def test_live_input_rejects_empty_or_unsupported_source(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+
+        self.assertFalse(controller.change_input_live(""))
+        self.assertFalse(controller.change_input_live("standby"))
+
+    def test_set_volume_rejects_non_numeric_level_without_connector_call(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+
+        self.assertFalse(controller.set_volume("loud"))  # type: ignore[arg-type]
+
+    def test_wake_rejects_unsupported_configured_input(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_input="standby")
+        controller.wait_until_reachable = Mock(return_value=True)
+
+        self.assertFalse(controller.wake_kef(0, "unit_test"))
+        controller.wait_until_reachable.assert_not_called()
 
 
 if __name__ == "__main__":

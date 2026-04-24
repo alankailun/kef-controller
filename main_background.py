@@ -1,5 +1,5 @@
-from kef_app.bootstrap import build_runtime_context, exit_if_startup_task_repair_requested
-from kef_app.headless_runtime import run_headless
+from kef_app.runtime.bootstrap import build_runtime_context, exit_if_startup_task_repair_requested
+from kef_app.runtime.headless_service import run_headless
 
 
 def main():

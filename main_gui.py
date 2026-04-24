@@ -14,8 +14,8 @@ import sys
 from PySide6.QtWidgets import QApplication
 from qfluentwidgets import Theme, setTheme
 
-from kef_app.bootstrap import build_runtime_context, exit_if_startup_task_repair_requested
-from kef_app.headless_runtime import HeadlessRuntime
+from kef_app.runtime.bootstrap import build_runtime_context, exit_if_startup_task_repair_requested
+from kef_app.runtime.headless_service import HeadlessRuntime
 from kef_app.ui import KefTrayApp
 from kef_app.ui.logs import UILogHandler
 

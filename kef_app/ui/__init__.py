@@ -1,3 +1,3 @@
-from .tray_app import KefTrayApp
+from .tray_application import KefTrayApp
 
 __all__ = ["KefTrayApp"]
