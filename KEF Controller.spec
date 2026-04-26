@@ -31,6 +31,7 @@ exe = EXE(
     [],
     name='KEF Controller',
     debug=False,
+    icon='installer/assets/setup-icon.ico',
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
