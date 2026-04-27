@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     FluentIcon as FIF,
     InfoBar,
@@ -24,15 +24,18 @@ from ...platform.windows import (
     remove_startup_task_with_uac,
     repair_task_startup_with_uac,
 )
-from .settings_cards import ButtonCard, ComboCard, StatusCard, SwitchCard, TextCard
+from .settings_cards import ComboCard, StatusCard, SwitchCard, TextCard
 from .settings_service import (
     INPUTS,
     SPEAKER_POWER_OPTIONS,
+    STARTUP_METHOD_OPTIONS,
+    STARTUP_METHOD_VALUES,
     TASK_NAME,
     apply_runtime_config,
     get_startup_status_view,
     log_power_behavior_state_message,
     save_settings_and_sync_startup,
+    startup_mode_for_ui,
 )
 
 
@@ -175,14 +178,21 @@ class SettingsInterface(ScrollArea):
         config = self._runtime_config
         group = SettingCardGroup("Advanced", container)
 
-        self._startup_with_windows = SwitchCard(
-            FIF.POWER_BUTTON,
-            "Start with Windows",
-            "Launch KEF Controller automatically when you sign in to Windows.",
-        )
         self._startup_initial_checked = is_startup_registered(TASK_NAME)
-        self._startup_with_windows.set_checked(self._startup_initial_checked)
-        group.addSettingCard(self._startup_with_windows)
+
+        self._startup_method = ComboCard(
+            FIF.POWER_BUTTON,
+            "Startup Method",
+            "Off removes both startup entries. Task Scheduler may ask for administrator approval. Registry Run is simpler.",
+            [label for label, _ in STARTUP_METHOD_OPTIONS],
+        )
+        current_mode = (
+            startup_mode_for_ui(self._runtime_config.startup_registration_mode)
+            if self._startup_initial_checked
+            else "off"
+        )
+        self._startup_method.set_index(STARTUP_METHOD_VALUES.index(current_mode))
+        group.addSettingCard(self._startup_method)
 
         self._startup_status = StatusCard(
             FIF.INFO,
@@ -190,15 +200,6 @@ class SettingsInterface(ScrollArea):
             "Shows which Windows startup method is active right now.",
         )
         group.addSettingCard(self._startup_status)
-
-        self._repair_fast_startup = ButtonCard(
-            FIF.SPEED_HIGH,
-            "Use Faster Startup",
-            "Optional. Recreate Windows startup with Task Scheduler. This may ask for administrator approval.",
-            "Use Task Scheduler",
-        )
-        self._repair_fast_startup.button.clicked.connect(self._on_repair_fast_startup)
-        group.addSettingCard(self._repair_fast_startup)
 
         self._enable_restart = SwitchCard(
             FIF.ROTATE,
@@ -241,18 +242,6 @@ class SettingsInterface(ScrollArea):
         self._log.info(log_power_behavior_state_message(self._runtime_config))
 
     def _try_elevated_startup_disable(self) -> bool:
-        prompt = QMessageBox(self.window())
-        prompt.setIcon(QMessageBox.Icon.Question)
-        prompt.setWindowTitle("Remove Windows Startup?")
-        prompt.setText(
-            "Windows blocked removal of the Task Scheduler startup entry.\n\n"
-            "Do you want KEF Controller to retry this step with administrator approval now?"
-        )
-        prompt.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        prompt.setDefaultButton(QMessageBox.StandardButton.Yes)
-        if prompt.exec() != int(QMessageBox.StandardButton.Yes):
-            return False
-
         ok, detail = remove_startup_task_with_uac(TASK_NAME, log=self._log)
         if ok:
             InfoBar.success(
@@ -273,7 +262,12 @@ class SettingsInterface(ScrollArea):
         )
         return False
 
+    def _try_elevated_startup_enable(self) -> bool:
+        ok, _detail = repair_task_startup_with_uac(TASK_NAME, log=self._log)
+        return ok
+
     def _on_save(self) -> None:
+        selected_startup_mode = STARTUP_METHOD_VALUES[self._startup_method.current_index()]
         updated = self._runtime_config.with_updates(
             kef_ip=self._kef_ip.text(),
             kef_mac=self._kef_mac.text(),
@@ -287,19 +281,25 @@ class SettingsInterface(ScrollArea):
             endsession_standby_on_shutdown=self._power_behavior_cards["endsession_standby_on_shutdown"].is_checked(),
             auto_discover_kef_ip_by_mac=self._auto_mac.is_checked(),
             auto_discover_kef_ip_blind=self._auto_blind.is_checked(),
+            startup_registration_mode=selected_startup_mode,
             enable_application_restart=self._enable_restart.is_checked(),
             diagnostic_logging=self._diagnostic_logging.is_checked(),
         )
 
-        desired_startup = self._startup_with_windows.is_checked()
+        desired_startup = selected_startup_mode != "off"
+        startup_mode_changed = updated.startup_registration_mode != startup_mode_for_ui(
+            self._runtime_config.startup_registration_mode
+        )
         save_result = save_settings_and_sync_startup(
             updated,
             config_store=self._config_store,
             desired_startup=desired_startup,
             startup_initial_checked=self._startup_initial_checked,
+            startup_mode_changed=startup_mode_changed,
             log=self._log,
             task_name=TASK_NAME,
             retry_disable_with_uac=self._try_elevated_startup_disable,
+            retry_enable_task_with_uac=self._try_elevated_startup_enable,
         )
         updated = save_result.updated
         config_ok = save_result.config_ok
@@ -307,14 +307,13 @@ class SettingsInterface(ScrollArea):
         startup_changed = save_result.startup_changed
         startup_detail = save_result.startup_detail
         self._startup_initial_checked = save_result.startup_initial_checked
-        if startup_changed:
-            self._startup_with_windows.set_checked(save_result.actual_startup_registered)
+        if startup_changed and not save_result.actual_startup_registered:
+            self._startup_method.set_index(STARTUP_METHOD_VALUES.index("off"))
         if config_ok:
             self._apply_runtime_config(updated)
             self._log_power_behavior_state()
             self.settings_saved.emit()
-        if startup_changed:
-            self._refresh_startup_status()
+        self._refresh_startup_status()
 
         win = self.window()
         if config_ok and startup_ok:
@@ -338,7 +337,7 @@ class SettingsInterface(ScrollArea):
                     if not startup_detail
                     else (
                         "Your settings were saved, but the Windows auto-start entry could not be changed. "
-                        f"Reason: {startup_detail} If you want the faster Task Scheduler method, use 'Use Faster Startup' in Advanced."
+                        f"Reason: {startup_detail}"
                     )
                 ),
                 duration=5000,
@@ -362,50 +361,11 @@ class SettingsInterface(ScrollArea):
                 position=InfoBarPosition.TOP_RIGHT,
             )
 
-    def _on_repair_fast_startup(self) -> None:
-        ok, detail = repair_task_startup_with_uac(TASK_NAME, log=self._log)
-        win = self.window()
-        if not ok:
-            InfoBar.warning(
-                "Startup Repair Failed",
-                detail,
-                duration=5000,
-                parent=win,
-                position=InfoBarPosition.TOP_RIGHT,
-            )
-            return
-
-        updated = self._runtime_config.with_updates(startup_registration_mode="task")
-        config_ok = self._config_store.save(updated)
-        self._startup_with_windows.set_checked(True)
-        if config_ok:
-            self._apply_runtime_config(updated)
-            self.settings_saved.emit()
-        self._refresh_startup_status()
-
-        if config_ok:
-            InfoBar.success(
-                "Startup Repair Completed",
-                "Future launches will prefer Task Scheduler at sign-in.",
-                duration=5000,
-                parent=win,
-                position=InfoBarPosition.TOP_RIGHT,
-            )
-            return
-
-        InfoBar.warning(
-            "Startup Repaired, but Not Saved",
-            "Task Scheduler startup was repaired, but the preferred startup mode could not be written to config.json.",
-            duration=5000,
-            parent=win,
-            position=InfoBarPosition.TOP_RIGHT,
-        )
-
     def _refresh_startup_status(self) -> None:
         status = get_startup_status_view(self._runtime_config, log=self._log, task_name=TASK_NAME)
-        self._startup_status.setContent(
-            f"Stale Task Found: {status.stale_text}\n{status.current_detail} Preferred method: {status.preferred_label}."
-        )
+        lines = [f"Selected: {status.preferred_label}"]
+        if status.cleanup_needed:
+            lines.append(f"Cleanup: {status.cleanup_text}")
+        lines.append(status.current_detail)
+        self._startup_status.setContent("\n".join(lines))
         self._startup_status.set_value(status.current_label)
-        self._repair_fast_startup.button.setText(status.repair_button_text)
-        self._repair_fast_startup.button.setEnabled(not status.task_is_healthy)

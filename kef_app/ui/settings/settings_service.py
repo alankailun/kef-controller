@@ -12,12 +12,32 @@ from ...platform.windows import (
     get_effective_startup_registration_mode,
     get_last_startup_error,
     is_startup_registered,
+    normalize_startup_mode,
     set_startup_registered,
     startup_error_suggests_repair,
 )
 
 TASK_NAME = "KEF Controller"
 INPUTS = [value for _, value in INPUT_SOURCE_OPTIONS]
+STARTUP_METHOD_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("Off", "off"),
+    ("Task Scheduler", "task"),
+    ("Registry Run", "registry"),
+)
+STARTUP_METHOD_LABEL_BY_VALUE = {value: label for label, value in STARTUP_METHOD_OPTIONS}
+STARTUP_METHOD_VALUES = [value for _, value in STARTUP_METHOD_OPTIONS]
+
+
+def startup_mode_for_ui(value: str) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"off", "none", "disabled", "disable"}:
+        return "off"
+    normalized = normalize_startup_mode(value)
+    if normalized == "registry":
+        return "registry"
+    if normalized == "off":
+        return "off"
+    return "task"
 
 
 @dataclass(frozen=True)
@@ -74,11 +94,10 @@ class SettingsSaveResult:
 class StartupStatusView:
     current_label: str
     current_detail: str
-    stale_task_found: bool
-    task_is_healthy: bool
+    cleanup_needed: bool
+    current_is_healthy: bool
     preferred_label: str
-    repair_button_text: str
-    stale_text: str
+    cleanup_text: str
 
 
 def apply_runtime_config(
@@ -112,23 +131,62 @@ def save_settings_and_sync_startup(
     config_store: UserConfigStore,
     desired_startup: bool,
     startup_initial_checked: bool,
+    startup_mode_changed: bool,
     log: logging.Logger,
     task_name: str = TASK_NAME,
     retry_disable_with_uac: Optional[Callable[[], bool]] = None,
+    retry_enable_task_with_uac: Optional[Callable[[], bool]] = None,
 ) -> SettingsSaveResult:
     config_ok = config_store.save(updated)
     startup_ok = True
-    startup_changed = desired_startup != startup_initial_checked
+    _status_label, _status_detail, cleanup_needed, current_is_healthy = describe_startup_registration_status(
+        task_name,
+        log=log,
+    )
+    actual_startup_registered_before = is_startup_registered(task_name)
+    actual_startup_mode_before = (
+        get_effective_startup_registration_mode(task_name, log=log)
+        if actual_startup_registered_before
+        else "none"
+    )
+    selected_mode = startup_mode_for_ui(updated.startup_registration_mode)
+    actual_mode_matches_selection = startup_mode_for_ui(actual_startup_mode_before) == selected_mode
+    startup_changed = (
+        desired_startup != actual_startup_registered_before
+        or (
+            desired_startup
+            and (
+                startup_mode_changed
+                or cleanup_needed
+                or not current_is_healthy
+                or not actual_mode_matches_selection
+            )
+        )
+    )
 
     if startup_changed:
         startup_ok = set_startup_registered(
             desired_startup,
             task_name=task_name,
             log=log,
-            mode="auto" if desired_startup else updated.startup_registration_mode,
+            mode=updated.startup_registration_mode,
         )
 
     startup_detail = get_last_startup_error()
+
+    if (
+        startup_changed
+        and desired_startup
+        and selected_mode == "task"
+        and not startup_ok
+        and startup_error_suggests_repair(startup_detail)
+        and retry_enable_task_with_uac
+    ):
+        if retry_enable_task_with_uac():
+            startup_ok = True
+            startup_detail = ""
+        else:
+            startup_detail = get_last_startup_error() or startup_detail
 
     if (
         startup_changed
@@ -140,9 +198,11 @@ def save_settings_and_sync_startup(
     ):
         startup_ok = True
         startup_detail = ""
+    elif startup_changed and not desired_startup and not startup_ok and retry_disable_with_uac:
+        startup_detail = get_last_startup_error() or startup_detail
 
     actual_startup_registered = is_startup_registered(task_name)
-    next_startup_initial_checked = actual_startup_registered if startup_changed else startup_initial_checked
+    next_startup_initial_checked = actual_startup_registered
     actual_startup_mode = (
         get_effective_startup_registration_mode(task_name, log=log)
         if actual_startup_registered and startup_ok
@@ -153,7 +213,7 @@ def save_settings_and_sync_startup(
         actual_startup_registered
         and startup_ok
         and actual_startup_mode == "registry"
-        and updated.startup_registration_mode != "registry"
+        and startup_mode_for_ui(updated.startup_registration_mode) != "registry"
     ):
         updated = updated.with_updates(startup_registration_mode="registry")
         if config_ok:
@@ -179,17 +239,17 @@ def get_startup_status_view(
     log: logging.Logger,
     task_name: str = TASK_NAME,
 ) -> StartupStatusView:
-    current_label, current_detail, stale_task_found, task_is_healthy = describe_startup_registration_status(
+    current_label, current_detail, cleanup_needed, current_is_healthy = describe_startup_registration_status(
         task_name,
         log=log,
     )
-    preferred_label = "Task Scheduler / At log on" if config.startup_registration_mode == "task" else "Registry Run"
+    preferred_mode = startup_mode_for_ui(config.startup_registration_mode)
+    preferred_label = STARTUP_METHOD_LABEL_BY_VALUE.get(preferred_mode, "Task Scheduler")
     return StartupStatusView(
         current_label=current_label,
         current_detail=current_detail,
-        stale_task_found=stale_task_found,
-        task_is_healthy=task_is_healthy,
+        cleanup_needed=cleanup_needed,
+        current_is_healthy=current_is_healthy,
         preferred_label=preferred_label,
-        repair_button_text="Faster Startup Is Active" if task_is_healthy else "Use Task Scheduler",
-        stale_text="Yes" if stale_task_found else "No",
+        cleanup_text="Needed" if cleanup_needed else "Clean",
     )

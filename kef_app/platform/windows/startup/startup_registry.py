@@ -1,8 +1,33 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import winreg
 
 from .startup_common import STARTUP_KEY
+
+
+@dataclass(frozen=True, slots=True)
+class RegistryStartupEntry:
+    name: str
+    command: str
+
+
+def read_registry_commands() -> tuple[RegistryStartupEntry, ...]:
+    entries: list[RegistryStartupEntry] = []
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_KEY, 0, winreg.KEY_READ) as key:
+            index = 0
+            while True:
+                try:
+                    name, value, _value_type = winreg.EnumValue(key, index)
+                except OSError:
+                    break
+                entries.append(RegistryStartupEntry(name=str(name), command=str(value or "")))
+                index += 1
+    except (FileNotFoundError, OSError):
+        return ()
+    return tuple(entries)
 
 
 def read_registry_command(task_name: str) -> str:
@@ -15,12 +40,17 @@ def read_registry_command(task_name: str) -> str:
 
 
 def delete_registry_command(task_name: str) -> None:
+    delete_registry_commands((task_name,))
+
+
+def delete_registry_commands(value_names: tuple[str, ...]) -> None:
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_KEY, 0, winreg.KEY_SET_VALUE) as key:
-            try:
-                winreg.DeleteValue(key, task_name)
-            except FileNotFoundError:
-                pass
+            for name in value_names:
+                try:
+                    winreg.DeleteValue(key, name)
+                except FileNotFoundError:
+                    pass
     except OSError:
         pass
 

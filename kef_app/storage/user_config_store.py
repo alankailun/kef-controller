@@ -22,7 +22,9 @@ def _coerce_string(value: Any) -> str:
 
 def _coerce_startup_mode(value: Any) -> str:
     mode = str(value or "registry").strip().lower()
-    if mode not in {"auto", "task", "registry"}:
+    if mode == "auto":
+        return "task"
+    if mode not in {"off", "task", "registry"}:
         raise ValueError(f"unsupported startup mode: {mode!r}")
     return mode
 

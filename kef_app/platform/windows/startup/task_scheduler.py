@@ -1,9 +1,25 @@
 from __future__ import annotations
 
+import csv
+import io
+from dataclasses import dataclass
 import xml.etree.ElementTree as ET
 from typing import Optional
 
-from .startup_common import TASK_XML_NS, StartupLaunchSpec, format_process_error, hidden_run, strip_wrapping_quotes
+from .startup_common import (
+    TASK_XML_NS,
+    StartupLaunchSpec,
+    format_process_error,
+    hidden_run,
+    split_run_value,
+    strip_wrapping_quotes,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduledTaskEntry:
+    name: str
+    spec: Optional[StartupLaunchSpec]
 
 
 def task_exists(task_name: str) -> bool:
@@ -30,6 +46,25 @@ def read_task_launch_spec(task_name: str) -> Optional[StartupLaunchSpec]:
         return StartupLaunchSpec(command=command, arguments=arguments)
     except Exception:
         return None
+
+
+def list_task_launch_specs() -> tuple[ScheduledTaskEntry, ...]:
+    try:
+        completed = hidden_run(["schtasks", "/query", "/fo", "CSV", "/v"], timeout=25)
+        if completed.returncode != 0:
+            return ()
+
+        entries: list[ScheduledTaskEntry] = []
+        reader = csv.DictReader(io.StringIO(completed.stdout))
+        for row in reader:
+            name = str(row.get("TaskName") or "").strip()
+            run_value = str(row.get("Task To Run") or "").strip()
+            if not name or not run_value or run_value.upper() == "N/A":
+                continue
+            entries.append(ScheduledTaskEntry(name=name, spec=split_run_value(run_value)))
+        return tuple(entries)
+    except Exception:
+        return ()
 
 
 def delete_task(task_name: str, log=None) -> tuple[bool, str]:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -7,7 +8,7 @@ from dataclasses import dataclass
 
 STARTUP_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 TASK_XML_NS = {"task": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
-VALID_STARTUP_MODES = {"auto", "task", "registry"}
+VALID_STARTUP_MODES = {"off", "task", "registry"}
 REPAIR_TASK_FLAG = "--repair-startup-task"
 REMOVE_TASK_FLAG = "--remove-startup-task"
 TASK_NAME_FLAG = "--startup-task-name"
@@ -80,8 +81,10 @@ def hidden_run(args: list[str], timeout: int) -> subprocess.CompletedProcess[str
 
 
 def normalize_startup_mode(mode: str) -> str:
-    normalized = str(mode or "auto").strip().lower()
-    return normalized if normalized in VALID_STARTUP_MODES else "auto"
+    normalized = str(mode or "task").strip().lower()
+    if normalized == "auto":
+        return "task"
+    return normalized if normalized in VALID_STARTUP_MODES else "task"
 
 
 def quote_ps(value: str) -> str:
@@ -93,6 +96,39 @@ def strip_wrapping_quotes(value: str) -> str:
     if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
         return text[1:-1]
     return text
+
+
+def split_run_value(run_value: str) -> StartupLaunchSpec:
+    text = str(run_value or "").strip()
+    if not text:
+        return StartupLaunchSpec(command="")
+
+    if text[0] in {'"', "'"}:
+        quote = text[0]
+        end = text.find(quote, 1)
+        if end >= 0:
+            return StartupLaunchSpec(command=text[1:end], arguments=text[end + 1 :].strip())
+
+    parts = text.split(maxsplit=1)
+    command = parts[0] if parts else ""
+    arguments = parts[1].strip() if len(parts) > 1 else ""
+    return StartupLaunchSpec(command=strip_wrapping_quotes(command), arguments=arguments)
+
+
+def startup_specs_match(left: StartupLaunchSpec | None, right: StartupLaunchSpec | None) -> bool:
+    if left is None or right is None:
+        return False
+    if not left.command or not right.command:
+        return False
+    left_command = os.path.normcase(os.path.abspath(strip_wrapping_quotes(left.command)))
+    right_command = os.path.normcase(os.path.abspath(strip_wrapping_quotes(right.command)))
+    return left_command == right_command and left.arguments.strip() == right.arguments.strip()
+
+
+def launch_spec_matches_app(spec: StartupLaunchSpec | None, app_name: str) -> bool:
+    if spec is None or not spec.command:
+        return False
+    return os.path.basename(strip_wrapping_quotes(spec.command)).lower() == f"{app_name.lower()}.exe"
 
 
 def cli_flag_value(argv: list[str], flag: str) -> str:

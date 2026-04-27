@@ -18,9 +18,8 @@ from .startup_common import (
     set_last_startup_error,
 )
 from .startup_launch import ensure_preferred_executable, launch_helper_spec, runtime_launch_spec
-from .startup_registry import delete_registry_command
 from .startup_service import set_startup_registered
-from .task_scheduler import delete_task, read_task_launch_spec, task_exists
+from .task_scheduler import read_task_launch_spec, task_exists
 
 
 def maybe_handle_startup_task_repair(log=None) -> Optional[int]:
@@ -32,14 +31,8 @@ def maybe_handle_startup_task_repair(log=None) -> Optional[int]:
         ok = set_startup_registered(True, task_name=task_name, launch_spec=launch_spec, log=logger, mode="task")
         return 0 if ok else 1
     if REMOVE_TASK_FLAG in argv:
-        delete_registry_command(task_name)
-        deleted, detail = delete_task(task_name, logger)
-        if not deleted:
-            set_last_startup_error(f"Could not remove the Task Scheduler entry: {detail}")
-            log_startup_failure(logger, "disable", task_name, get_last_startup_error())
-        else:
-            clear_last_startup_error()
-        return 0 if deleted else 1
+        ok = set_startup_registered(False, task_name=task_name, log=logger)
+        return 0 if ok else 1
     return None
 
 
@@ -48,8 +41,9 @@ def repair_task_startup_with_uac(task_name: str, log=None) -> tuple[bool, str]:
     desired = ensure_preferred_executable(task_name, logger) if getattr(sys, "frozen", False) else runtime_launch_spec()
     current_task = read_task_launch_spec(task_name)
     if current_task is not None and current_task.run_value == desired.run_value:
-        delete_registry_command(task_name)
-        return True, "Task Scheduler startup is already configured."
+        ok = set_startup_registered(True, task_name=task_name, launch_spec=desired, log=logger, mode="task")
+        if ok:
+            return True, "Task Scheduler startup is already configured."
 
     helper = launch_helper_spec([REPAIR_TASK_FLAG, TASK_NAME_FLAG, task_name])
     powershell = (
@@ -87,9 +81,9 @@ def repair_task_startup_with_uac(task_name: str, log=None) -> tuple[bool, str]:
 def remove_startup_task_with_uac(task_name: str, log=None) -> tuple[bool, str]:
     logger = log or NullLogger()
     if not task_exists(task_name):
-        delete_registry_command(task_name)
-        clear_last_startup_error()
-        return True, "Windows startup task is already removed."
+        ok = set_startup_registered(False, task_name=task_name, log=logger)
+        if ok:
+            return True, "Windows startup task is already removed."
 
     helper = launch_helper_spec([REMOVE_TASK_FLAG, TASK_NAME_FLAG, task_name])
     powershell = (
@@ -110,7 +104,6 @@ def remove_startup_task_with_uac(task_name: str, log=None) -> tuple[bool, str]:
         return False, f"Failed to start elevated startup removal helper: {exc}"
 
     if completed.returncode == 0:
-        delete_registry_command(task_name)
         clear_last_startup_error()
         return True, "Windows startup entry was removed."
 
