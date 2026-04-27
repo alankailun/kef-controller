@@ -9,7 +9,7 @@ from typing import Any, Callable
 from ..config import AppConfig, UserSettings
 from .json_file import write_json_atomic
 from ..devices.speaker_discovery import normalize_mac
-from ..devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source, normalize_name
+from ..devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source
 
 
 _USER_SETTINGS_FIELD_NAMES = tuple(field.name for field in dataclass_fields(UserSettings))
@@ -102,11 +102,7 @@ class UserConfigStore:
         "backend_name": _coerce_string,
         "kef_ip": _coerce_string,
         "kef_mac": lambda value: normalize_mac(_coerce_string(value)),
-        "expected_speaker_name": lambda value: normalize_name(_coerce_string(value)),
-        "expected_speaker_mac": lambda value: normalize_mac(_coerce_string(value)),
         "supported_w2_models": _coerce_model_list,
-        "auto_discover_kef_ip_by_mac": lambda value: UserConfigStore._coerce_bool(value),
-        "auto_discover_kef_ip_blind": lambda value: UserConfigStore._coerce_bool(value),
         "mac_discovery_subnet_prefix": _coerce_ipv4_prefix,
         "mac_discovery_extra_cidrs": _coerce_string_list,
         "mac_discovery_tcp_port": _coerce_tcp_port,
@@ -170,6 +166,7 @@ class UserConfigStore:
                 raise ValueError("config.json root must be an object")
 
             loaded = self._apply_to_config(self._base_config.clone(), data)
+            loaded = self._migrate_legacy_device_target(loaded, data)
             if "log_dir" in data:
                 self._startup_messages.append(
                     f"Ignored legacy custom log_dir and kept the default log folder | log_dir={loaded.log_dir}"
@@ -220,6 +217,21 @@ class UserConfigStore:
                     "Ignored invalid user config field | "
                     f"field={key} value={self._format_value_for_log(data[key])} | {exc}"
                 )
+        return config
+
+    def _migrate_legacy_device_target(self, config: AppConfig, data: dict[str, Any]) -> AppConfig:
+        legacy_expected_mac = normalize_mac(_coerce_string(data.get("expected_speaker_mac")))
+        if legacy_expected_mac and not normalize_mac(config.kef_mac):
+            config.kef_mac = legacy_expected_mac
+            self._startup_messages.append(
+                "Migrated legacy Expected MAC to Target Speaker MAC"
+            )
+
+        if data.get("expected_speaker_name") or data.get("expected_speaker_mac"):
+            self._startup_messages.append(
+                "Cleared legacy Expected Device Name and Expected MAC fields"
+            )
+
         return config
 
     @staticmethod

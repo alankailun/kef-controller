@@ -4,12 +4,14 @@ import logging
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QDialog, QLabel, QHBoxLayout, QScrollArea as QtScrollArea, QVBoxLayout, QWidget
 from qfluentwidgets import (
     FluentIcon as FIF,
     InfoBar,
     InfoBarPosition,
+    LineEdit,
     PrimaryPushButton,
+    PushButton,
     ScrollArea,
     SettingCardGroup,
     TitleLabel,
@@ -18,13 +20,15 @@ from qfluentwidgets import (
 from ...config import AppConfig
 from ...storage import UserConfigStore
 from ...controller import KefPowerController
-from ...devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source
+from ...devices.speaker_discovery import is_routable_ipv4
+from ...devices.speaker_models import INPUT_SOURCE_OPTIONS, SpeakerIdentity, normalize_input_source, normalize_mac
 from ...platform.windows import (
     is_startup_registered,
     remove_startup_task_with_uac,
     repair_task_startup_with_uac,
 )
-from .settings_cards import ComboCard, StatusCard, SwitchCard, TextCard
+from ..background_tasks import start_background_task
+from .settings_cards import ButtonCard, ComboCard, StatusCard, SwitchCard
 from .settings_service import (
     INPUTS,
     SPEAKER_POWER_OPTIONS,
@@ -39,8 +43,137 @@ from .settings_service import (
 )
 
 
+class SpeakerSelectionDialog(QDialog):
+    def __init__(
+        self,
+        speakers: list[SpeakerIdentity],
+        *,
+        current_ip: str,
+        current_mac: str,
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.selected_speaker: Optional[SpeakerIdentity] = None
+        self.setWindowTitle("Select Speaker")
+        self.setMinimumWidth(680)
+        self.setMinimumHeight(360)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 16, 20, 16)
+        root.setSpacing(12)
+
+        title = TitleLabel("Select Speaker")
+        root.addWidget(title)
+
+        hint = QLabel("Choose the KEF speaker this app should control.")
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+
+        scroll = QtScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtScrollArea.Shape.NoFrame)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(8)
+
+        normalized_current_mac = normalize_mac(current_mac)
+        for speaker in speakers:
+            selected = self._speaker_is_selected(speaker, current_ip, normalized_current_mac)
+            card = ButtonCard(
+                FIF.IOT,
+                self._speaker_title(speaker),
+                self._speaker_content(speaker),
+                "Selected" if selected else "Select",
+            )
+            card.button.setEnabled(not selected)
+            card.button.clicked.connect(lambda _checked=False, item=speaker: self._select(item))
+            content_layout.addWidget(card)
+
+        content_layout.addStretch()
+        scroll.setWidget(content)
+        root.addWidget(scroll, stretch=1)
+
+        close_row = QHBoxLayout()
+        close_row.addStretch()
+        close_btn = PushButton("Close")
+        close_btn.clicked.connect(self.reject)
+        close_row.addWidget(close_btn)
+        root.addLayout(close_row)
+
+    def _select(self, speaker: SpeakerIdentity) -> None:
+        self.selected_speaker = speaker
+        self.accept()
+
+    @staticmethod
+    def _speaker_title(speaker: SpeakerIdentity) -> str:
+        if speaker.speaker_name and speaker.speaker_model:
+            return f"{speaker.speaker_name} - {speaker.speaker_model}"
+        return speaker.speaker_name or speaker.speaker_model or speaker.ip or "KEF Speaker"
+
+    @staticmethod
+    def _speaker_content(speaker: SpeakerIdentity) -> str:
+        mac = speaker.mac_display or speaker.mac or "Not reported"
+        return f"IP: {speaker.ip or 'Unknown'}    MAC: {mac}"
+
+    @staticmethod
+    def _speaker_is_selected(speaker: SpeakerIdentity, current_ip: str, current_mac: str) -> bool:
+        speaker_mac = normalize_mac(speaker.mac or speaker.mac_display or "")
+        if speaker_mac and current_mac:
+            return speaker_mac == current_mac
+        return bool(current_ip and speaker.ip == current_ip)
+
+
+class ManualTargetDialog(QDialog):
+    def __init__(self, *, ip: str, mac: str, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Manual Target Details")
+        self.setMinimumWidth(520)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 16, 20, 16)
+        root.setSpacing(12)
+
+        root.addWidget(TitleLabel("Manual Target Details"))
+
+        hint = QLabel("Use these fields only when you want to type the target address by hand.")
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+
+        self.ip_edit = LineEdit()
+        self.ip_edit.setPlaceholderText("192.168.1.xxx")
+        self.ip_edit.setText(ip)
+        self.mac_edit = LineEdit()
+        self.mac_edit.setPlaceholderText("AA:BB:CC:DD:EE:FF")
+        self.mac_edit.setText(mac)
+
+        root.addWidget(QLabel("Speaker IP Address"))
+        root.addWidget(self.ip_edit)
+        root.addWidget(QLabel("Target Speaker MAC"))
+        root.addWidget(self.mac_edit)
+
+        row = QHBoxLayout()
+        row.addStretch()
+        cancel_btn = PushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        save_btn = PrimaryPushButton("Apply")
+        save_btn.clicked.connect(self.accept)
+        row.addWidget(cancel_btn)
+        row.addWidget(save_btn)
+        root.addLayout(row)
+
+    def values(self) -> tuple[str, str, str]:
+        raw_mac = self.mac_edit.text().strip()
+        return self.ip_edit.text().strip(), raw_mac, normalize_mac(raw_mac)
+
+
 class SettingsInterface(ScrollArea):
     settings_saved = Signal()
+    _speaker_scan_finished = Signal(object)
+    _speaker_scan_failed = Signal(str)
+    _manual_target_apply_finished = Signal(object)
+    _manual_target_apply_failed = Signal(str)
 
     def __init__(
         self,
@@ -55,6 +188,13 @@ class SettingsInterface(ScrollArea):
         self._controller = controller
         self._config_store = config_store
         self._log = logging.getLogger("kef_controller")
+        self._last_scanned_speakers: list[SpeakerIdentity] = []
+        self._pending_manual_target: tuple[str, str] | None = None
+
+        self._speaker_scan_finished.connect(self._on_speaker_scan_finished)
+        self._speaker_scan_failed.connect(self._on_speaker_scan_failed)
+        self._manual_target_apply_finished.connect(self._on_manual_target_apply_finished)
+        self._manual_target_apply_failed.connect(self._on_manual_target_apply_failed)
 
         container = QWidget()
         container.setObjectName("settingsContainer")
@@ -66,8 +206,8 @@ class SettingsInterface(ScrollArea):
         layout.addSpacing(4)
 
         self._build_device_group(container, layout)
-        self._build_behavior_group(container, layout)
         self._build_discovery_group(container, layout)
+        self._build_behavior_group(container, layout)
         self._build_advanced_group(container, layout)
         self._build_save_row(layout)
 
@@ -80,42 +220,6 @@ class SettingsInterface(ScrollArea):
     def _build_device_group(self, container: QWidget, layout: QVBoxLayout) -> None:
         config = self._runtime_config
         group = SettingCardGroup("Speaker", container)
-
-        self._kef_ip = TextCard(
-            FIF.WIFI,
-            "Speaker IP Address",
-            "Optional. Leave this blank if you want the app to find the speaker automatically.",
-            placeholder="192.168.1.xxx",
-        )
-        self._kef_ip.set_text(config.kef_ip)
-        group.addSettingCard(self._kef_ip)
-
-        self._kef_mac = TextCard(
-            FIF.TAG,
-            "Speaker MAC Address",
-            "Optional. Helps the app recover the speaker IP after router or DHCP changes.",
-            placeholder="AA:BB:CC:DD:EE:FF",
-        )
-        self._kef_mac.set_text(config.kef_mac)
-        group.addSettingCard(self._kef_mac)
-
-        self._expected_name = TextCard(
-            FIF.SEARCH,
-            "Expected Device Name",
-            "Optional. Use this when you have more than one KEF device and want this app to choose a specific one.",
-            placeholder="Leave blank if not needed",
-        )
-        self._expected_name.set_text(config.expected_speaker_name)
-        group.addSettingCard(self._expected_name)
-
-        self._expected_mac = TextCard(
-            FIF.FINGERPRINT,
-            "Expected MAC",
-            "Optional. Use this only if you want to lock the app to one exact device.",
-            placeholder="Leave blank if not needed",
-        )
-        self._expected_mac.set_text(config.expected_speaker_mac)
-        group.addSettingCard(self._expected_mac)
 
         self._kef_input = ComboCard(
             FIF.MUSIC,
@@ -153,25 +257,34 @@ class SettingsInterface(ScrollArea):
         layout.addWidget(group)
 
     def _build_discovery_group(self, container: QWidget, layout: QVBoxLayout) -> None:
-        config = self._runtime_config
         group = SettingCardGroup("Finding the Speaker", container)
 
-        self._auto_mac = SwitchCard(
-            FIF.IOT,
-            "Recover IP from MAC Address",
-            "If the speaker IP changes, use the MAC address to find it again.",
-        )
-        self._auto_mac.set_checked(config.auto_discover_kef_ip_by_mac)
-        group.addSettingCard(self._auto_mac)
-
-        self._auto_blind = SwitchCard(
+        self._scan_speakers = ButtonCard(
             FIF.SEARCH,
-            "Search the Local Network",
-            "If needed, scan your local network to look for a supported KEF speaker.",
+            "Select Speaker",
+            "Scan the local network and choose the speaker this app should control.",
+            "Select Speaker...",
         )
-        self._auto_blind.set_checked(config.auto_discover_kef_ip_blind)
-        group.addSettingCard(self._auto_blind)
+        self._scan_speakers.button.clicked.connect(self._on_scan_speakers)
+        group.addSettingCard(self._scan_speakers)
 
+        self._target_summary = StatusCard(
+            FIF.INFO,
+            "Current Target",
+            "The MAC is the speaker identity. The IP is only the current address hint.",
+        )
+        group.addSettingCard(self._target_summary)
+
+        self._manual_target = ButtonCard(
+            FIF.TAG,
+            "Manual Target Details",
+            "Edit the target IP and MAC directly. Apply validates before saving.",
+            "Edit...",
+        )
+        self._manual_target.button.clicked.connect(self._on_edit_manual_target)
+        group.addSettingCard(self._manual_target)
+
+        self._refresh_target_summary()
         layout.addWidget(group)
 
     def _build_advanced_group(self, container: QWidget, layout: QVBoxLayout) -> None:
@@ -269,18 +382,14 @@ class SettingsInterface(ScrollArea):
     def _on_save(self) -> None:
         selected_startup_mode = STARTUP_METHOD_VALUES[self._startup_method.current_index()]
         updated = self._runtime_config.with_updates(
-            kef_ip=self._kef_ip.text(),
-            kef_mac=self._kef_mac.text(),
-            expected_speaker_name=self._expected_name.text(),
-            expected_speaker_mac=self._expected_mac.text(),
+            kef_ip=self._runtime_config.kef_ip,
+            kef_mac=self._runtime_config.kef_mac,
             kef_input=INPUTS[self._kef_input.current_index()],
             wake_on_startup=self._power_behavior_cards["wake_on_startup"].is_checked(),
             wake_on_unlock_only=self._power_behavior_cards["wake_on_unlock_only"].is_checked(),
             standby_on_sleep=self._power_behavior_cards["standby_on_sleep"].is_checked(),
             standby_on_lock=self._power_behavior_cards["standby_on_lock"].is_checked(),
             endsession_standby_on_shutdown=self._power_behavior_cards["endsession_standby_on_shutdown"].is_checked(),
-            auto_discover_kef_ip_by_mac=self._auto_mac.is_checked(),
-            auto_discover_kef_ip_blind=self._auto_blind.is_checked(),
             startup_registration_mode=selected_startup_mode,
             enable_application_restart=self._enable_restart.is_checked(),
             diagnostic_logging=self._diagnostic_logging.is_checked(),
@@ -312,6 +421,7 @@ class SettingsInterface(ScrollArea):
         if config_ok:
             self._apply_runtime_config(updated)
             self._log_power_behavior_state()
+            self._refresh_target_summary()
             self.settings_saved.emit()
         self._refresh_startup_status()
 
@@ -369,3 +479,298 @@ class SettingsInterface(ScrollArea):
         lines.append(status.current_detail)
         self._startup_status.setContent("\n".join(lines))
         self._startup_status.set_value(status.current_label)
+
+    def _refresh_target_summary(self) -> None:
+        identity = self._controller.get_current_identity()
+        ip = self._runtime_config.kef_ip or identity.ip
+        mac = self._runtime_config.kef_mac or identity.mac or identity.mac_display
+        name = identity.speaker_name or identity.speaker_model
+
+        if name and ip:
+            value = f"{name} / {ip}"
+        elif ip:
+            value = ip
+        elif mac:
+            value = f"MAC {mac}"
+        else:
+            value = "Not selected"
+        self._target_summary.set_value(value)
+
+    def _on_edit_manual_target(self) -> None:
+        dialog = ManualTargetDialog(
+            ip=self._runtime_config.kef_ip,
+            mac=self._runtime_config.kef_mac,
+            parent=self.window(),
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        ip, raw_mac, mac = dialog.values()
+        if raw_mac and len(mac) != 12:
+            InfoBar.error(
+                "Target Not Saved",
+                "Target Speaker MAC must contain exactly 12 hexadecimal characters.",
+                duration=4000,
+                parent=self.window(),
+                position=InfoBarPosition.TOP_RIGHT,
+            )
+            return
+        if ip and not is_routable_ipv4(ip):
+            InfoBar.error(
+                "Target Not Saved",
+                "Speaker IP Address must be a usable IPv4 address.",
+                duration=4000,
+                parent=self.window(),
+                position=InfoBarPosition.TOP_RIGHT,
+            )
+            return
+
+        if not ip and not mac:
+            saved = self._save_manual_target("", "")
+            self._show_manual_target_saved(
+                "Target Cleared",
+                "No speaker is selected. Use Select Speaker before controlling a device.",
+                saved=saved,
+                warning=True,
+            )
+            return
+
+        self._pending_manual_target = (ip, mac)
+        self._manual_target.button.setEnabled(False)
+        self._manual_target.button.setText("Applying...")
+
+        start_background_task(
+            "ApplyManualTarget",
+            lambda: self._controller.validate_manual_target(
+                ip,
+                raw_mac,
+                reason="settings_manual_target",
+                trigger="manual_target_dialog",
+            ),
+            on_success=self._manual_target_apply_finished.emit,
+            on_error=lambda exc: self._manual_target_apply_failed.emit(str(exc)),
+            log=self._log,
+        )
+
+    def _save_manual_target(self, ip: str, mac: str) -> bool:
+        self._runtime_config.kef_ip = ip
+        self._runtime_config.kef_mac = mac
+        self._controller.apply_configured_device_target(source="manual_target_dialog")
+        saved = self._config_store.save(self._runtime_config)
+        self._refresh_target_summary()
+        self.settings_saved.emit()
+        return saved
+
+    def _show_manual_target_saved(self, title: str, message: str, *, saved: bool, warning: bool = False) -> None:
+        if not saved:
+            InfoBar.warning(
+                title,
+                f"{message} The target changed for this session, but config.json could not be saved.",
+                duration=5000,
+                parent=self.window(),
+                position=InfoBarPosition.TOP_RIGHT,
+            )
+            return
+
+        bar = InfoBar.warning if warning else InfoBar.success
+        bar(
+            title,
+            message,
+            duration=5000 if warning else 4000,
+            parent=self.window(),
+            position=InfoBarPosition.TOP_RIGHT,
+        )
+
+    def _finish_manual_target_apply_ui(self) -> None:
+        self._manual_target.button.setEnabled(True)
+        self._manual_target.button.setText("Edit...")
+        self._pending_manual_target = None
+
+    def _on_manual_target_apply_finished(self, result: object) -> None:
+        pending = self._pending_manual_target
+        self._finish_manual_target_apply_ui()
+        if pending is None:
+            return
+
+        status = str(getattr(result, "status", "failed"))
+        requested_ip = str(getattr(result, "requested_ip", ""))
+        requested_mac = normalize_mac(str(getattr(result, "requested_mac", "")))
+        identity = getattr(result, "identity", None) or SpeakerIdentity()
+        if pending != (requested_ip, requested_mac):
+            return
+
+        if status == "mac_mismatch":
+            actual = identity.mac_display or identity.mac or "not reported"
+            InfoBar.error(
+                "Target Not Saved",
+                f"That IP belongs to a KEF speaker with a different MAC ({actual}).",
+                duration=6000,
+                parent=self.window(),
+                position=InfoBarPosition.TOP_RIGHT,
+            )
+            return
+
+        if status == "not_kef":
+            InfoBar.error(
+                "Target Not Saved",
+                "That IP responded, but it did not look like a supported KEF speaker.",
+                duration=5000,
+                parent=self.window(),
+                position=InfoBarPosition.TOP_RIGHT,
+            )
+            return
+
+        if status in {"invalid_ip", "invalid_mac", "failed"}:
+            InfoBar.error(
+                "Target Not Saved",
+                "The target details could not be applied.",
+                duration=4000,
+                parent=self.window(),
+                position=InfoBarPosition.TOP_RIGHT,
+            )
+            return
+
+        save_ip = requested_ip
+        save_mac = requested_mac
+        if status in {"verified", "recovered", "mac_unverified"}:
+            save_ip = identity.ip or save_ip
+            save_mac = identity.mac or save_mac
+
+        saved = self._save_manual_target(save_ip, save_mac)
+
+        if status == "verified":
+            self._show_manual_target_saved(
+                "Manual Target Saved",
+                "The target was verified and saved.",
+                saved=saved,
+            )
+        elif status == "recovered":
+            self._show_manual_target_saved(
+                "Manual Target Saved",
+                "The IP was recovered from the target MAC and saved.",
+                saved=saved,
+            )
+        elif status == "mac_unverified":
+            self._show_manual_target_saved(
+                "Target Saved, MAC Not Verified",
+                "The IP is a supported KEF speaker, but it did not report a MAC during verification.",
+                saved=saved,
+                warning=True,
+            )
+        elif status == "mac_not_found":
+            self._show_manual_target_saved(
+                "Target MAC Saved",
+                "The MAC format is valid, but the speaker was not found right now. The app will recover its IP when it appears.",
+                saved=saved,
+                warning=True,
+            )
+        elif status == "unreachable":
+            self._show_manual_target_saved(
+                "Target Saved, Not Verified",
+                "The IP did not respond right now. It was saved as a target hint.",
+                saved=saved,
+                warning=True,
+            )
+        else:
+            self._show_manual_target_saved(
+                "Manual Target Saved",
+                "The target details were saved.",
+                saved=saved,
+            )
+
+    def _on_manual_target_apply_failed(self, detail: str) -> None:
+        pending = self._pending_manual_target
+        self._finish_manual_target_apply_ui()
+        if pending is None:
+            return
+        InfoBar.error(
+            "Target Not Saved",
+            detail or "The target details could not be verified.",
+            duration=4000,
+            parent=self.window(),
+            position=InfoBarPosition.TOP_RIGHT,
+        )
+
+    def _on_scan_speakers(self) -> None:
+        self._scan_speakers.button.setEnabled(False)
+        self._scan_speakers.button.setText("Scanning...")
+
+        start_background_task(
+            "SettingsScanSpeakers",
+            self._controller.scan_kef_devices,
+            on_success=self._speaker_scan_finished.emit,
+            on_error=lambda exc: self._speaker_scan_failed.emit(str(exc)),
+            log=self._log,
+        )
+
+    def _on_speaker_scan_finished(self, speakers: object) -> None:
+        self._scan_speakers.button.setEnabled(True)
+        self._scan_speakers.button.setText("Select Speaker...")
+        devices = list(speakers) if isinstance(speakers, list) else []
+        self._last_scanned_speakers = devices
+        if not devices:
+            InfoBar.warning(
+                "No Speakers Found",
+                "The scan did not find a supported KEF speaker on the local network.",
+                duration=4000,
+                parent=self.window(),
+                position=InfoBarPosition.TOP_RIGHT,
+            )
+            return
+
+        self._open_speaker_selection_dialog(devices)
+
+    def _on_speaker_scan_failed(self, detail: str) -> None:
+        self._scan_speakers.button.setEnabled(True)
+        self._scan_speakers.button.setText("Select Speaker...")
+        self._last_scanned_speakers = []
+        InfoBar.error(
+            "Scan Failed",
+            detail or "The speaker scan could not complete.",
+            duration=4000,
+            parent=self.window(),
+            position=InfoBarPosition.TOP_RIGHT,
+        )
+
+    def _open_speaker_selection_dialog(self, speakers: list[SpeakerIdentity]) -> None:
+        dialog = SpeakerSelectionDialog(
+            speakers,
+            current_ip=self._runtime_config.kef_ip,
+            current_mac=self._runtime_config.kef_mac or self._controller.get_effective_target_mac(),
+            parent=self.window(),
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected_speaker:
+            self._use_speaker(dialog.selected_speaker)
+
+    def _use_speaker(self, speaker: SpeakerIdentity) -> None:
+        target_mac = normalize_mac(speaker.mac or speaker.mac_display or "")
+        self._finish_manual_target_apply_ui()
+
+        self._runtime_config.kef_ip = speaker.ip
+        self._runtime_config.kef_mac = target_mac
+
+        selected = self._controller.select_kef_device(speaker, source="settings_card")
+        saved = self._config_store.save(self._runtime_config)
+        self._refresh_target_summary()
+        self.settings_saved.emit()
+
+        win = self.window()
+        if saved:
+            message = "This speaker is now the app target."
+            if not target_mac:
+                message = "This speaker is now the app target by IP only because its MAC was not reported."
+            InfoBar.success(
+                "Speaker Selected",
+                message if selected else "This speaker was already selected.",
+                duration=4000,
+                parent=win,
+                position=InfoBarPosition.TOP_RIGHT,
+            )
+        else:
+            InfoBar.warning(
+                "Speaker Selected",
+                "The target changed for this session, but config.json could not be saved.",
+                duration=5000,
+                parent=win,
+                position=InfoBarPosition.TOP_RIGHT,
+            )

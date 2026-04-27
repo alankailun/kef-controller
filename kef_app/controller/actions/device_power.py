@@ -144,8 +144,15 @@ class ControllerDevicePowerActionsMixin:
                 mono=f"{self.mono():.3f}",
             )
 
+            if not self._ensure_target_identity("WAKE", reason, "wake_before_wait"):
+                outcome = "skipped_target_identity_not_verified"
+                return False
+
             if not self.wait_until_reachable(c.reachability_wait_timeout, generation, reason):
                 outcome = "aborted_before_attempts"
+                return False
+            if not self._ensure_target_identity("WAKE", reason, "wake_before_attempts"):
+                outcome = "skipped_target_identity_not_verified"
                 return False
 
             def execute_attempt(attempt: int) -> None:
@@ -216,6 +223,9 @@ class ControllerDevicePowerActionsMixin:
                     cause="session_ending",
                     mono=f"{self.mono():.3f}",
                 )
+                return False
+            if not self._ensure_target_identity("LOCK_PRE_STANDBY", reason, "lock_pre_standby_before_attempts"):
+                outcome = "skipped_target_identity_not_verified"
                 return False
 
             for attempt, delay in enumerate(_LOCK_PRE_STANDBY_ATTEMPT_DELAYS, start=1):
@@ -349,6 +359,10 @@ class ControllerDevicePowerActionsMixin:
                 )
                 return False
 
+            if not self._ensure_target_identity("ENDSESSION_STANDBY", reason, "endsession_before_request"):
+                outcome = "skipped_target_identity_not_verified"
+                return False
+
             current_ip = self.get_current_kef_ip()
             if not current_ip:
                 outcome = "skipped_no_current_ip"
@@ -456,6 +470,9 @@ class ControllerDevicePowerActionsMixin:
                     cause="session_ending",
                     mono=f"{self.mono():.3f}",
                 )
+                return False
+            if not self._ensure_target_identity("STANDBY", reason, "standby_before_request"):
+                outcome = "skipped_target_identity_not_verified"
                 return False
 
             outcome = self._acquire_generation_action_lock(

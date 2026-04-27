@@ -9,12 +9,8 @@ class UserSettings:
 
     kef_ip: str = ""
     kef_mac: str = ""
-    expected_speaker_name: str = ""
-    expected_speaker_mac: str = ""
     supported_w2_models: tuple[str, ...] = ("LS50 Wireless II", "LSX II", "LS60 Wireless")
 
-    auto_discover_kef_ip_by_mac: bool = True
-    auto_discover_kef_ip_blind: bool = True
     mac_discovery_subnet_prefix: int = 24
     mac_discovery_extra_cidrs: list[str] = field(default_factory=list)
     mac_discovery_tcp_port: int = 80

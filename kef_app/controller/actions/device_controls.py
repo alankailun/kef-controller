@@ -41,7 +41,8 @@ class ControllerDeviceControlsMixin:
 
     def poll_external_ui_state(self, reason: str, trigger: str) -> tuple[Optional[str], Optional[int], Optional[bool]]:
         if not self.get_current_kef_ip():
-            return None, None, None
+            if not self.resolve_target(reason=reason, trigger=trigger, force_recovery=False):
+                return None, None, None
 
         speaker_on, power_ok = self._read_ui_value(
             reason,
@@ -68,7 +69,10 @@ class ControllerDeviceControlsMixin:
         ip_refreshed = False
         reachable = power_ok or input_ok or volume_ok
 
-        if reachable:
+        if reachable and self.get_effective_target_mac():
+            identity_seen, ip_refreshed = self.probe_external_identity(reason=reason, trigger=trigger)
+            reachable = identity_seen or ip_refreshed
+        elif reachable:
             availability_changed = self._mark_identity_probe_success(source=trigger)
             if availability_changed:
                 self._emit_identity_changed()
@@ -106,6 +110,8 @@ class ControllerDeviceControlsMixin:
                 cause="unsupported_input_source",
                 mono=f"{self.mono():.3f}",
             )
+            return False
+        if not self._ensure_target_identity("CHANGE_INPUT", "ui_live", "change_input_before_action"):
             return False
         previous_input = self.get_input_source()
         previous_player_source = self.get_player_source_hint()
@@ -181,7 +187,7 @@ class ControllerDeviceControlsMixin:
             self._action_lock.release()
 
     def get_volume(self) -> Optional[int]:
-        if not self.get_current_kef_ip():
+        if not self._ensure_target_identity("GET_VOLUME", "ui_live", "get_volume_before_read"):
             return None
         try:
             with temporary_socket_timeout(self.config.socket_timeout):
@@ -193,7 +199,7 @@ class ControllerDeviceControlsMixin:
             return None
 
     def set_volume(self, level: int) -> bool:
-        if not self.get_current_kef_ip():
+        if not self._ensure_target_identity("SET_VOLUME", "ui_live", "set_volume_before_action"):
             return False
         requested_level = level
         coerced_level = self._coerce_volume_level(level)

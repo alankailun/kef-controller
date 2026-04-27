@@ -94,6 +94,25 @@ class UserConfigStoreTests(unittest.TestCase):
             self.assertEqual(loaded.socket_timeout, base_config.socket_timeout)
             self.assertEqual(loaded.mac_discovery_tcp_port, base_config.mac_discovery_tcp_port)
 
+    def test_legacy_expected_mac_migrates_to_target_speaker_mac(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_config = self.make_config(temp_dir)
+            data = UserConfigStore(base_config)._to_user_dict(base_config)
+            data["kef_mac"] = ""
+            data["expected_speaker_mac"] = "AA:BB:CC:DD:EE:FF"
+            data["expected_speaker_name"] = "Office Speaker"
+            with open(base_config.config_file, "w", encoding="utf-8") as handle:
+                json.dump(data, handle)
+
+            loaded = UserConfigStore(base_config).load_or_create()
+            saved = UserConfigStore(loaded)._to_user_dict(loaded)
+
+            self.assertEqual(loaded.kef_mac, "AABBCCDDEEFF")
+            self.assertNotIn("expected_speaker_mac", saved)
+            self.assertNotIn("expected_speaker_name", saved)
+            self.assertNotIn("auto_discover_kef_ip_by_mac", saved)
+            self.assertNotIn("auto_discover_kef_ip_blind", saved)
+
 
 if __name__ == "__main__":
     unittest.main()

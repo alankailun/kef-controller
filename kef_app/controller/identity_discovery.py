@@ -1,16 +1,27 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Optional
 
 from ..devices.speaker_discovery import (
+    discover_kef_devices,
     discover_ip_by_mac,
     discover_kef_device_blind,
     identify_kef_device,
     is_routable_ipv4,
     normalize_mac,
+    probe_ip_port,
 )
-from ..devices.speaker_models import SpeakerIdentity, normalize_name
+from ..devices.speaker_models import SpeakerIdentity
 from .network_timeout import temporary_socket_timeout
+
+
+@dataclass(slots=True)
+class TargetValidationResult:
+    status: str
+    requested_ip: str = ""
+    requested_mac: str = ""
+    identity: SpeakerIdentity = field(default_factory=SpeakerIdentity)
 
 
 class ControllerDiscoveryMixin:
@@ -23,14 +34,11 @@ class ControllerDiscoveryMixin:
             return self._current_kef_ip
 
     def get_effective_target_mac(self) -> str:
-        expected_mac = normalize_mac(self.config.expected_speaker_mac)
-        if expected_mac:
-            return expected_mac
+        configured_mac = normalize_mac(self.config.kef_mac)
+        if configured_mac:
+            return configured_mac
         with self._ip_lock:
             return self._target_kef_mac
-
-    def get_expected_speaker_name(self) -> str:
-        return self.config.expected_speaker_name.strip()
 
     def get_current_identity(self) -> SpeakerIdentity:
         with self._ip_lock:
@@ -45,6 +53,110 @@ class ControllerDiscoveryMixin:
                 backend=self.config.backend_name,
                 matched_by=self._last_matched_by,
             )
+
+    def scan_kef_devices(self) -> list[SpeakerIdentity]:
+        if not self._blind_discovery_lock.acquire(blocking=False):
+            self._log_structured(
+                "SKIP",
+                action="MANUAL_SCAN",
+                cause="blind_discovery_already_running",
+                mono=f"{self.mono():.3f}",
+            )
+            return []
+
+        try:
+            seed_ip = self.get_current_kef_ip()
+            self._log_structured(
+                "BEGIN",
+                action="MANUAL_SCAN",
+                seed_ip=seed_ip or "<empty>",
+                mono=f"{self.mono():.3f}",
+            )
+            devices = discover_kef_devices(seed_ip, self.config, self.log)
+            self._log_structured(
+                "END",
+                action="MANUAL_SCAN",
+                outcome="found" if devices else "not_found",
+                count=len(devices),
+                mono=f"{self.mono():.3f}",
+            )
+            return devices
+        finally:
+            self._blind_discovery_lock.release()
+
+    def select_kef_device(self, identity: SpeakerIdentity, source: str) -> bool:
+        ip = str(identity.ip or "").strip()
+        if not is_routable_ipv4(ip):
+            self._log_structured(
+                "WARN",
+                action="SELECT_DEVICE",
+                source=source,
+                cause="invalid_ip",
+                ip=ip or "<empty>",
+                mono=f"{self.mono():.3f}",
+            )
+            return False
+
+        mac_norm = normalize_mac(identity.mac or identity.mac_display or "")
+        speaker_name = identity.speaker_name or ""
+        speaker_model = identity.speaker_model or ""
+        firmware_version = identity.firmware_version or ""
+
+        with self._ip_lock:
+            old_ip = self._current_kef_ip
+            old_mac = self._target_kef_mac
+            old_name = self._speaker_name
+            old_model = self._speaker_model
+            old_firmware = self._speaker_firmware
+            old_matched_by = self._last_matched_by
+
+            self._current_kef_ip = ip
+            self._target_kef_mac = mac_norm
+            self._speaker_name = speaker_name
+            self._speaker_model = speaker_model
+            self._speaker_firmware = firmware_version
+            self._last_matched_by = identity.matched_by or "manual"
+            self._identity_available = True
+            self._identity_probe_failures = 0
+
+            changed = (
+                old_ip != self._current_kef_ip
+                or old_mac != self._target_kef_mac
+                or old_name != self._speaker_name
+                or old_model != self._speaker_model
+                or old_firmware != self._speaker_firmware
+                or old_matched_by != self._last_matched_by
+            )
+
+        if not changed:
+            self._log_structured(
+                "STEP",
+                action="SELECT_DEVICE",
+                source=source,
+                outcome="unchanged",
+                ip=ip,
+                mac=mac_norm or "<empty>",
+                mono=f"{self.mono():.3f}",
+            )
+            return False
+
+        self.reset_speaker()
+        self._persist_runtime_state(source=f"select:{source}")
+        self._log_structured(
+            "STEP",
+            action="SELECT_DEVICE",
+            source=source,
+            outcome="selected",
+            old_ip=old_ip or "<empty>",
+            new_ip=ip,
+            old_mac=old_mac or "<empty>",
+            new_mac=mac_norm or "<empty>",
+            speaker_name=speaker_name or "<empty>",
+            speaker_model=speaker_model or "<empty>",
+            mono=f"{self.mono():.3f}",
+        )
+        self._emit_identity_changed()
+        return True
 
     def _mark_identity_probe_success(self, source: str) -> bool:
         with self._ip_lock:
@@ -98,21 +210,163 @@ class ControllerDiscoveryMixin:
         return availability_changed
 
     def _identity_matches_expectation(self, identity: SpeakerIdentity) -> tuple[bool, str]:
-        expected_name = normalize_name(self.get_expected_speaker_name())
-        expected_mac = self.get_effective_target_mac()
-        if expected_mac and identity.mac and identity.mac != expected_mac:
-            return False, "expected_mac_mismatch"
-        if expected_name:
-            if normalize_name(identity.speaker_name) != expected_name:
-                return False, "expected_name_mismatch"
-            return True, "expected_name"
-        if expected_mac:
-            return True, "expected_mac"
-        return True, "no_expectation"
+        target_mac = self.get_effective_target_mac()
+        if target_mac:
+            if identity.mac != target_mac:
+                return False, "target_mac_mismatch"
+            return True, "target_mac"
+        return True, "no_target_mac"
 
     def get_target_kef_mac(self) -> str:
         with self._ip_lock:
             return self._target_kef_mac
+
+    def verify_current_target(self, reason: str, trigger: str) -> bool:
+        if not self.get_current_kef_ip():
+            self._log_structured(
+                "SKIP",
+                action="VERIFY_TARGET",
+                reason=reason,
+                trigger=trigger,
+                cause="empty_current_ip",
+                target_mac=self.get_effective_target_mac() or "<empty>",
+                mono=f"{self.mono():.3f}",
+            )
+            return False
+
+        return self.capture_identity_from_current_ip(reason=reason, trigger=trigger)
+
+    def inspect_kef_identity_at_ip(self, ip: str, reason: str, trigger: str) -> Optional[SpeakerIdentity]:
+        ip = str(ip or "").strip()
+        if not is_routable_ipv4(ip):
+            return None
+
+        info: Optional[SpeakerIdentity] = None
+        try:
+            with temporary_socket_timeout(self.config.socket_timeout):
+                speaker = self._backend.create_connector(ip)
+                info = self._backend.capture_identity(speaker, ip)
+        except Exception:
+            info = None
+
+        if not info or not info.speaker_model:
+            info = identify_kef_device(ip, self.config)
+
+        self._log_structured(
+            "STEP" if info else "SKIP",
+            action="VALIDATE_TARGET",
+            reason=reason,
+            trigger=trigger,
+            ip=ip,
+            outcome="identity_found" if info else "identity_not_found",
+            mac=(info.mac_display or info.mac) if info else "<empty>",
+            speaker_model=info.speaker_model if info else "<empty>",
+            speaker_name=info.speaker_name if info else "<empty>",
+            mono=f"{self.mono():.3f}",
+        )
+        return info
+
+    def validate_manual_target(self, ip: str, target_mac: str, reason: str, trigger: str) -> TargetValidationResult:
+        requested_ip = str(ip or "").strip()
+        requested_mac = normalize_mac(target_mac)
+
+        if requested_ip and not is_routable_ipv4(requested_ip):
+            return TargetValidationResult("invalid_ip", requested_ip=requested_ip, requested_mac=requested_mac)
+        if target_mac and len(requested_mac) != 12:
+            return TargetValidationResult("invalid_mac", requested_ip=requested_ip, requested_mac=requested_mac)
+        if not requested_ip and not requested_mac:
+            return TargetValidationResult("empty", requested_ip="", requested_mac="")
+
+        if requested_ip:
+            info = self.inspect_kef_identity_at_ip(requested_ip, reason=reason, trigger=f"{trigger}_ip")
+            if info:
+                if requested_mac:
+                    if info.mac and info.mac != requested_mac:
+                        return TargetValidationResult(
+                            "mac_mismatch",
+                            requested_ip=requested_ip,
+                            requested_mac=requested_mac,
+                            identity=info,
+                        )
+                    if not info.mac:
+                        return TargetValidationResult(
+                            "mac_unverified",
+                            requested_ip=requested_ip,
+                            requested_mac=requested_mac,
+                            identity=info,
+                        )
+                return TargetValidationResult(
+                    "verified",
+                    requested_ip=requested_ip,
+                    requested_mac=requested_mac,
+                    identity=info,
+                )
+
+            if probe_ip_port(requested_ip, self.config.mac_discovery_tcp_port, self.config.mac_discovery_probe_timeout):
+                return TargetValidationResult("not_kef", requested_ip=requested_ip, requested_mac=requested_mac)
+
+        if requested_mac:
+            recovered = self._recover_identity_for_manual_target(
+                requested_mac,
+                seed_ip=requested_ip,
+                reason=reason,
+                trigger=f"{trigger}_recover",
+            )
+            if recovered:
+                return TargetValidationResult(
+                    "recovered",
+                    requested_ip=requested_ip,
+                    requested_mac=requested_mac,
+                    identity=recovered,
+                )
+            return TargetValidationResult("mac_not_found", requested_ip=requested_ip, requested_mac=requested_mac)
+
+        return TargetValidationResult("unreachable", requested_ip=requested_ip, requested_mac=requested_mac)
+
+    def _recover_identity_for_manual_target(
+        self,
+        target_mac: str,
+        seed_ip: str,
+        reason: str,
+        trigger: str,
+    ) -> Optional[SpeakerIdentity]:
+        discovered_ip = discover_ip_by_mac(target_mac, seed_ip, self.config, self.log)
+        if discovered_ip:
+            info = self.inspect_kef_identity_at_ip(discovered_ip, reason=reason, trigger=f"{trigger}_mac_ip")
+            if info and info.mac == target_mac:
+                return info.with_match("target_mac")
+
+        identity = discover_kef_device_blind(target_mac, seed_ip, self.config, self.log)
+        if identity and identity.mac == target_mac:
+            return identity
+
+        return None
+
+    def recover_target_ip(self, reason: str, trigger: str, force: bool = False) -> bool:
+        recovered = self.maybe_refresh_kef_ip(reason=reason, trigger=trigger, force=force)
+        if recovered:
+            return self.verify_current_target(reason=reason, trigger=f"{trigger}_verify")
+        return False
+
+    def resolve_target(
+        self,
+        reason: str,
+        trigger: str,
+        force_recovery: bool = False,
+    ) -> bool:
+        if self.verify_current_target(reason=reason, trigger=f"{trigger}_verify"):
+            return True
+        if not self.get_current_kef_ip() and not self.get_effective_target_mac():
+            self._log_structured(
+                "SKIP",
+                action="RESOLVE_TARGET",
+                reason=reason,
+                trigger=trigger,
+                cause="empty_target_requires_manual_selection",
+                mono=f"{self.mono():.3f}",
+            )
+            return False
+        return self.recover_target_ip(reason=reason, trigger=f"{trigger}_recover", force=force_recovery)
 
     def update_identity_from_device_info(self, info: Optional[SpeakerIdentity], source: str) -> bool:
         if not info:
@@ -201,8 +455,10 @@ class ControllerDiscoveryMixin:
             )
             return False
 
-        changed = self.update_identity_from_device_info(info, source=trigger)
         matched, match_reason = self._identity_matches_expectation(info)
+        changed = False
+        if matched:
+            changed = self.update_identity_from_device_info(info, source=trigger)
         should_log_success = changed or not matched or not self._is_ui_poll_trigger(trigger)
         if should_log_success:
             self._log_structured(
@@ -227,12 +483,13 @@ class ControllerDiscoveryMixin:
                 cause=match_reason,
                 trigger=trigger,
                 current_ip=current_ip,
-                expected_name=self.get_expected_speaker_name() or "<empty>",
-                expected_mac=self.get_effective_target_mac() or "<empty>",
+                target_mac=self.get_effective_target_mac() or "<empty>",
                 actual_name=info.speaker_name or "<empty>",
                 actual_mac=info.mac_display or info.mac or "<empty>",
                 mono=f"{self.mono():.3f}",
             )
+            self.reset_speaker()
+            return False
         return True
 
     def probe_external_identity(self, reason: str, trigger: str) -> tuple[bool, bool]:
@@ -295,7 +552,7 @@ class ControllerDiscoveryMixin:
 
     def apply_configured_device_target(self, source: str) -> bool:
         configured_ip = str(self.config.kef_ip or "").strip()
-        configured_mac = normalize_mac(self.config.expected_speaker_mac) or normalize_mac(self.config.kef_mac)
+        configured_mac = normalize_mac(self.config.kef_mac)
 
         ignored_ip = ""
         ip_changed = False
@@ -316,8 +573,13 @@ class ControllerDiscoveryMixin:
                         ip_changed = True
                 else:
                     ignored_ip = configured_ip
+            elif old_ip:
+                self._current_kef_ip = ""
+                self._identity_available = False
+                self._identity_probe_failures = 0
+                ip_changed = True
 
-            if configured_mac and old_mac != configured_mac:
+            if old_mac != configured_mac:
                 self._target_kef_mac = configured_mac
                 mac_changed = True
 
@@ -357,8 +619,6 @@ class ControllerDiscoveryMixin:
 
     def maybe_refresh_kef_ip_by_mac(self, reason: str, trigger: str, force: bool = False) -> bool:
         c = self.config
-        if not c.auto_discover_kef_ip_by_mac:
-            return False
         effective_mac = self.get_effective_target_mac()
         if not effective_mac:
             self._log_structured(
@@ -438,9 +698,6 @@ class ControllerDiscoveryMixin:
 
     def maybe_refresh_kef_ip_by_blind(self, reason: str, trigger: str, force: bool = False) -> bool:
         c = self.config
-        if not c.auto_discover_kef_ip_blind:
-            return False
-
         if not self._blind_discovery_lock.acquire(blocking=False):
             self._log_structured(
                 "SKIP",
@@ -454,6 +711,20 @@ class ControllerDiscoveryMixin:
 
         try:
             now = self.mono()
+            seed_ip = self.get_current_kef_ip()
+            known_mac = self.get_effective_target_mac()
+            if not known_mac:
+                self._log_structured(
+                    "SKIP",
+                    action="BLIND_DISCOVER_IP",
+                    reason=reason,
+                    trigger=trigger,
+                    cause="empty_target_mac_requires_manual_selection",
+                    seed_ip=seed_ip or "<empty>",
+                    mono=f"{now:.3f}",
+                )
+                return False
+
             elapsed = now - self._last_blind_discovery_mono
             if not force and elapsed < c.blind_discovery_cooldown:
                 self._log_structured(
@@ -469,8 +740,7 @@ class ControllerDiscoveryMixin:
                 return False
 
             self._last_blind_discovery_mono = now
-            seed_ip = self.get_current_kef_ip()
-            known_mac = self.get_effective_target_mac()
+
             self._log_structured(
                 "BEGIN",
                 action="BLIND_DISCOVER_IP",

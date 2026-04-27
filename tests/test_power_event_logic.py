@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import logging
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from kef_app.config import AppConfig
 from kef_app.controller import KefPowerController
+from kef_app.devices.speaker_models import SpeakerIdentity
 
 
 class PowerEventLogicTests(unittest.TestCase):
@@ -63,6 +64,7 @@ class PowerEventLogicTests(unittest.TestCase):
             controller._new_generation("wake", "WTS_SESSION_UNLOCK")
 
         controller._perform_standby_request = fake_perform
+        controller.resolve_target = Mock(return_value=True)
 
         result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
 
@@ -70,6 +72,16 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertEqual(len(perform_calls), 1)
         self.assertEqual(perform_calls[0]["generation"], generation)
         self.assertFalse(controller._recently_lock_standby_ok())
+
+    def test_end_session_standby_skips_when_target_identity_is_not_verified(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        controller.resolve_target = Mock(return_value=False)
+        controller._request_shutdown = Mock()
+
+        result = controller.standby_kef_end_session("unit_test", "flags")
+
+        self.assertFalse(result)
+        controller._request_shutdown.assert_not_called()
 
     def test_apply_configured_device_target_updates_runtime_ip_and_mac(self):
         controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
@@ -94,6 +106,175 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(controller.get_current_kef_ip(), "192.168.1.10")
         self.assertEqual(controller.get_target_kef_mac(), "AABBCCDDEE02")
+
+    def test_apply_configured_device_target_clears_target_mac(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
+
+        controller.config.kef_mac = ""
+
+        changed = controller.apply_configured_device_target(source="unit_test")
+
+        self.assertTrue(changed)
+        self.assertEqual(controller.get_target_kef_mac(), "")
+
+    def test_apply_configured_device_target_clears_current_ip(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
+
+        controller.config.kef_ip = ""
+
+        changed = controller.apply_configured_device_target(source="unit_test")
+
+        self.assertTrue(changed)
+        self.assertEqual(controller.get_current_kef_ip(), "")
+
+    def test_resolve_target_recovers_ip_when_only_target_mac_is_known(self):
+        controller = self.make_controller(kef_ip="", kef_mac="AA:BB:CC:DD:EE:01")
+        identity = SpeakerIdentity(
+            ip="192.168.1.20",
+            mac="AABBCCDDEE01",
+            speaker_name="Office Speaker",
+            speaker_model="LS50 Wireless II",
+        )
+        controller._backend.capture_identity = Mock(return_value=identity)
+
+        with (
+            patch("kef_app.controller.identity_discovery.discover_ip_by_mac", return_value="192.168.1.20"),
+            patch("kef_app.controller.identity_discovery.identify_kef_device", return_value=identity),
+        ):
+            resolved = controller.resolve_target("unit_test", "unit_test", force_recovery=True)
+
+        self.assertTrue(resolved)
+        self.assertEqual(controller.get_current_kef_ip(), "192.168.1.20")
+
+    def test_blind_recovery_without_target_mac_does_not_replace_existing_target(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="")
+
+        with patch("kef_app.controller.identity_discovery.discover_kef_device_blind") as discover:
+            refreshed = controller.maybe_refresh_kef_ip_by_blind("unit_test", "unit_test", force=True)
+
+        self.assertFalse(refreshed)
+        discover.assert_not_called()
+        self.assertEqual(controller.get_current_kef_ip(), "192.168.1.10")
+
+    def test_blind_recovery_without_target_mac_requires_manual_selection(self):
+        controller = self.make_controller(kef_ip="", kef_mac="")
+        identity = SpeakerIdentity(
+            ip="192.168.1.20",
+            mac="AABBCCDDEE01",
+            speaker_name="Office Speaker",
+            speaker_model="LS50 Wireless II",
+        )
+
+        with patch("kef_app.controller.identity_discovery.discover_kef_device_blind", return_value=identity) as discover:
+            refreshed = controller.maybe_refresh_kef_ip_by_blind("unit_test", "unit_test", force=True)
+
+        self.assertFalse(refreshed)
+        discover.assert_not_called()
+        self.assertEqual(controller.get_current_kef_ip(), "")
+
+    def test_scan_kef_devices_does_not_change_current_target(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
+        found = [
+            SpeakerIdentity(
+                ip="192.168.1.20",
+                mac="AABBCCDDEE02",
+                speaker_name="Other Speaker",
+                speaker_model="LSX II",
+            )
+        ]
+
+        with patch("kef_app.controller.identity_discovery.discover_kef_devices", return_value=found):
+            result = controller.scan_kef_devices()
+
+        self.assertEqual(result, found)
+        self.assertEqual(controller.get_current_kef_ip(), "192.168.1.10")
+        self.assertEqual(controller.get_target_kef_mac(), "AABBCCDDEE01")
+
+    def test_select_kef_device_updates_current_target(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
+        identity = SpeakerIdentity(
+            ip="192.168.1.20",
+            mac="AABBCCDDEE02",
+            speaker_name="Office Speaker",
+            speaker_model="LS50 Wireless II",
+        )
+
+        changed = controller.select_kef_device(identity, source="unit_test")
+
+        self.assertTrue(changed)
+        self.assertEqual(controller.get_current_kef_ip(), "192.168.1.20")
+        self.assertEqual(controller.get_target_kef_mac(), "AABBCCDDEE02")
+
+    def test_select_kef_device_without_mac_clears_previous_target_mac(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
+        identity = SpeakerIdentity(
+            ip="192.168.1.20",
+            speaker_name="Office Speaker",
+            speaker_model="LS50 Wireless II",
+        )
+
+        changed = controller.select_kef_device(identity, source="unit_test")
+
+        self.assertTrue(changed)
+        self.assertEqual(controller.get_current_kef_ip(), "192.168.1.20")
+        self.assertEqual(controller.get_target_kef_mac(), "")
+
+    def test_validate_manual_target_rejects_mac_mismatch(self):
+        controller = self.make_controller()
+        identity = SpeakerIdentity(
+            ip="192.168.1.20",
+            mac="AABBCCDDEE02",
+            speaker_name="Office Speaker",
+            speaker_model="LS50 Wireless II",
+        )
+        controller.inspect_kef_identity_at_ip = Mock(return_value=identity)
+
+        result = controller.validate_manual_target(
+            "192.168.1.20",
+            "AA:BB:CC:DD:EE:01",
+            reason="unit_test",
+            trigger="unit_test",
+        )
+
+        self.assertEqual(result.status, "mac_mismatch")
+        self.assertEqual(controller.get_current_kef_ip(), "")
+
+    def test_validate_manual_target_allows_unreachable_ip_only(self):
+        controller = self.make_controller()
+        controller.inspect_kef_identity_at_ip = Mock(return_value=None)
+
+        with patch("kef_app.controller.identity_discovery.probe_ip_port", return_value=False):
+            result = controller.validate_manual_target(
+                "192.168.1.20",
+                "",
+                reason="unit_test",
+                trigger="unit_test",
+            )
+
+        self.assertEqual(result.status, "unreachable")
+        self.assertEqual(result.requested_ip, "192.168.1.20")
+
+    def test_validate_manual_target_recovers_mac_only(self):
+        controller = self.make_controller()
+        identity = SpeakerIdentity(
+            ip="192.168.1.20",
+            mac="AABBCCDDEE01",
+            speaker_name="Office Speaker",
+            speaker_model="LS50 Wireless II",
+        )
+        controller.inspect_kef_identity_at_ip = Mock(return_value=identity)
+
+        with patch("kef_app.controller.identity_discovery.discover_ip_by_mac", return_value="192.168.1.20"):
+            result = controller.validate_manual_target(
+                "",
+                "AA:BB:CC:DD:EE:01",
+                reason="unit_test",
+                trigger="unit_test",
+            )
+
+        self.assertEqual(result.status, "recovered")
+        self.assertEqual(result.identity.ip, "192.168.1.20")
+        self.assertEqual(controller.get_current_kef_ip(), "")
 
     def test_live_input_rejects_empty_or_unsupported_source(self):
         controller = self.make_controller(kef_ip="192.168.1.10")

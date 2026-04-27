@@ -116,6 +116,21 @@ class ControllerDeviceCommonMixin:
     def _is_configurable_input_source(self, source: str) -> bool:
         return source in _CONFIGURABLE_INPUT_SOURCES
 
+    def _ensure_target_identity(self, action: str, reason: str, trigger: str) -> bool:
+        if self.resolve_target(reason=reason, trigger=trigger, force_recovery=True):
+            return True
+
+        self._log_structured(
+            "SKIP",
+            action=action,
+            reason=reason,
+            cause="target_identity_not_verified",
+            target_mac=self.get_effective_target_mac() or "<empty>",
+            target_ip=self.get_current_kef_ip() or "<empty>",
+            mono=f"{self.mono():.3f}",
+        )
+        return False
+
     @staticmethod
     def _coerce_volume_level(level: object) -> Optional[int]:
         try:

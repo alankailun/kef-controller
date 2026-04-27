@@ -89,15 +89,13 @@ class ControllerLoggingMixin:
 
     def log_banner(self):
         c = self.config
-        configured_expected_mac = c.expected_speaker_mac or c.kef_mac
 
         self.log.info("=" * 64)
         self.log.info(f"  {c.speaker_model_label} power controller | backend={c.backend_name} / pykefcontrol")
         self.log.info(
             "  Speaker target: "
             f"ip={self.get_current_kef_ip() or c.kef_ip or '<empty>'} | "
-            f"expected_name={c.expected_speaker_name or '<empty>'} | "
-            f"expected_mac={configured_expected_mac or '<empty>'}"
+            f"target_mac={c.kef_mac or self.get_target_kef_mac() or '<empty>'}"
         )
         self.log.info(
             "  Startup / wake: "
@@ -122,13 +120,13 @@ class ControllerLoggingMixin:
             self.log.info(f"  Default input: {c.kef_input}")
             self.log.info(
                 "  MAC recovery discovery: "
-                f"{c.auto_discover_kef_ip_by_mac} | configured_mac={c.kef_mac or '<empty>'} | "
+                f"enabled | configured_mac={c.kef_mac or '<empty>'} | "
                 f"current_mac={self.get_target_kef_mac() or '<empty>'} | "
                 f"subnet_prefix=/{c.mac_discovery_subnet_prefix} | extra_cidrs={c.mac_discovery_extra_cidrs}"
             )
             self.log.info(
                 "  Full network scan: "
-                f"{c.auto_discover_kef_ip_blind} | http_timeout={c.blind_discovery_http_timeout:.2f}s | "
+                f"target-mac-only | http_timeout={c.blind_discovery_http_timeout:.2f}s | "
                 f"cooldown={c.blind_discovery_cooldown:.1f}s | workers={c.blind_discovery_max_workers}"
             )
             self.log.info(f"  Wake only after unlock: {c.wake_on_unlock_only}")

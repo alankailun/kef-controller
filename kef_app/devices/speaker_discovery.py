@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from ..config import AppConfig
-from .speaker_models import SpeakerIdentity, normalize_mac, normalize_model_label, normalize_name
+from .speaker_models import SpeakerIdentity, normalize_mac, normalize_model_label
 
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -161,24 +161,6 @@ def looks_like_supported_kef_model(model: str, config: AppConfig) -> bool:
     return normalized in allowed
 
 
-def identity_matches_expectation(identity: SpeakerIdentity, config: AppConfig, known_mac: str = "") -> tuple[bool, str]:
-    expected_mac = normalize_mac(config.expected_speaker_mac) or normalize_mac(known_mac)
-    expected_name = normalize_name(config.expected_speaker_name)
-
-    if expected_mac and identity.mac != expected_mac:
-        return False, "expected_mac_mismatch"
-
-    if expected_name:
-        if normalize_name(identity.speaker_name) != expected_name:
-            return False, "expected_name_mismatch"
-        return True, "expected_name"
-
-    if expected_mac:
-        return True, "expected_mac"
-
-    return True, "no_expectation"
-
-
 def identify_kef_device(ip: str, config: AppConfig) -> Optional[SpeakerIdentity]:
     release_data = http_get_kef_data(ip, "settings:/releasetext", timeout=config.blind_discovery_http_timeout)
     if not release_data:
@@ -219,9 +201,62 @@ def _candidate_summary(candidate: SpeakerIdentity) -> str:
     )
 
 
+def _sort_identity_key(identity: SpeakerIdentity) -> tuple[int, str]:
+    try:
+        return (int(ipaddress.IPv4Address(identity.ip)), identity.speaker_name.casefold())
+    except ipaddress.AddressValueError:
+        return (0, identity.speaker_name.casefold())
+
+
+def discover_kef_devices(seed_ip: Optional[str], config: AppConfig, log) -> list[SpeakerIdentity]:
+    networks = build_candidate_networks(seed_ip, config, log)
+    if not networks:
+        log.info("No scan networks are available, so a manual KEF device scan cannot run")
+        return []
+
+    log.info(
+        "Starting manual KEF device scan | "
+        f"seed_ip={seed_ip or '<empty>'} networks={[str(n) for n in networks]} "
+        f"probe_port={config.mac_discovery_tcp_port} probe_timeout={config.mac_discovery_probe_timeout:.2f}s "
+        f"http_timeout={config.blind_discovery_http_timeout:.2f}s probe_workers={config.mac_discovery_max_workers} "
+        f"identify_workers={config.blind_discovery_max_workers}"
+    )
+
+    candidates_by_ip: dict[str, SpeakerIdentity] = {}
+    for network in networks:
+        hosts = _prioritize_seed([str(host) for host in network.hosts()], seed_ip)
+
+        with ThreadPoolExecutor(max_workers=config.mac_discovery_max_workers) as executor:
+            reachable_pairs = zip(
+                hosts,
+                executor.map(
+                    lambda host_ip: probe_ip_port(host_ip, config.mac_discovery_tcp_port, config.mac_discovery_probe_timeout),
+                    hosts,
+                ),
+            )
+            reachable_hosts = [host_ip for host_ip, ok in reachable_pairs if ok]
+
+        if not reachable_hosts:
+            continue
+
+        max_workers = max(1, min(config.blind_discovery_max_workers, len(reachable_hosts)))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for identity in executor.map(lambda host_ip: identify_kef_device(host_ip, config), reachable_hosts):
+                if identity:
+                    candidates_by_ip[identity.ip] = identity
+
+    candidates = sorted(candidates_by_ip.values(), key=_sort_identity_key)
+    summary = ", ".join(_candidate_summary(candidate) for candidate in candidates) or "<none>"
+    log.info(f"Manual KEF device scan finished | count={len(candidates)} | candidates=[{summary}]")
+    return candidates
+
+
 def discover_kef_device_blind(known_mac: str, seed_ip: Optional[str], config: AppConfig, log) -> Optional[SpeakerIdentity]:
     normalized_known_mac = normalize_mac(known_mac)
-    expected_name = normalize_name(config.expected_speaker_name)
+    if not normalized_known_mac:
+        log.info("Full KEF target recovery requires a Target Speaker MAC")
+        return None
+
     networks = build_candidate_networks(seed_ip, config, log)
     if not networks:
         log.info("No scan networks are available, so a full device scan cannot run")
@@ -229,7 +264,6 @@ def discover_kef_device_blind(known_mac: str, seed_ip: Optional[str], config: Ap
 
     log.info(
         "Starting full KEF device scan | "
-        f"expected_name={config.expected_speaker_name or '<empty>'} "
         f"known_mac={known_mac or '<empty>'} normalized={normalized_known_mac or '<empty>'} "
         f"seed_ip={seed_ip or '<empty>'} networks={[str(n) for n in networks]} "
         f"probe_port={config.mac_discovery_tcp_port} probe_timeout={config.mac_discovery_probe_timeout:.2f}s "
@@ -263,46 +297,36 @@ def discover_kef_device_blind(known_mac: str, seed_ip: Optional[str], config: Ap
                 candidates_by_ip[identity.ip] = identity
                 if normalized_known_mac and identity.mac == normalized_known_mac:
                     log.info(
-                        f"Full scan matched the known MAC address | ip={identity.ip} | "
+                        f"Full scan matched the Target Speaker MAC | ip={identity.ip} | "
                         f"mac={identity.mac_display or identity.mac} | model={identity.speaker_model} | "
                         f"name={identity.speaker_name or '<unnamed>'}"
                     )
-                    return identity.with_match("known_mac")
+                    return identity.with_match("target_mac")
 
     candidates = list(candidates_by_ip.values())
     if not candidates:
         log.info(
             f"Full scan did not find any supported KEF device | "
-            f"expected_name={config.expected_speaker_name or '<empty>'} "
             f"known_mac={known_mac or '<empty>'} | seed_ip={seed_ip or '<empty>'}"
         )
         return None
 
-    if expected_name:
-        name_matches = [candidate for candidate in candidates if normalize_name(candidate.speaker_name) == expected_name]
-        if len(name_matches) == 1:
-            candidate = name_matches[0]
-            log.info(
-                f"Full scan matched the expected speaker name | ip={candidate.ip} | "
-                f"model={candidate.speaker_model} | name={candidate.speaker_name or '<unnamed>'} | "
-                f"mac={candidate.mac_display or candidate.mac or '<no-mac>'}"
-            )
-            return candidate.with_match("expected_name")
-        if len(name_matches) > 1:
-            summary = ", ".join(_candidate_summary(candidate) for candidate in name_matches)
-            log.info(f"Full scan found multiple devices with the same expected name; refusing auto-select | candidates=[{summary}]")
-            return None
-
     if len(candidates) == 1:
         candidate = candidates[0]
-        ok, reason = identity_matches_expectation(candidate, config, known_mac)
-        if ok:
+        if candidate.mac != normalized_known_mac:
             log.info(
-                f"Full scan found exactly one supported KEF device | ip={candidate.ip} | "
-                f"mac={candidate.mac_display or candidate.mac} | model={candidate.speaker_model} | "
-                f"name={candidate.speaker_name or '<unnamed>'}"
+                f"Full scan found one KEF device, but its MAC did not match the target | "
+                f"ip={candidate.ip} | target_mac={known_mac or '<empty>'} | "
+                f"actual_mac={candidate.mac_display or candidate.mac or '<no-mac>'}"
             )
-            return candidate.with_match(reason if reason != "no_expectation" else "unique")
+            return None
+
+        log.info(
+            f"Full scan found exactly one supported KEF device | ip={candidate.ip} | "
+            f"mac={candidate.mac_display or candidate.mac} | model={candidate.speaker_model} | "
+            f"name={candidate.speaker_name or '<unnamed>'}"
+        )
+        return candidate.with_match("target_mac")
 
     summary = ", ".join(_candidate_summary(candidate) for candidate in candidates)
     log.info(f"Full scan found multiple KEF devices and could not pick one safely | candidates=[{summary}]")
