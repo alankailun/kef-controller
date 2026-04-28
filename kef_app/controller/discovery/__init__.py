@@ -11,7 +11,18 @@ from .manual_target import ControllerManualTargetMixin
 from .recovery import ControllerDiscoveryRecoveryMixin
 from .state import ControllerIdentityStateMixin
 
+
+class ControllerDiscoveryMixin(
+    ControllerDiscoveryRecoveryMixin,
+    ControllerManualTargetMixin,
+    ControllerIdentityProbeMixin,
+    ControllerIdentityStateMixin,
+):
+    pass
+
+
 __all__ = [
+    "ControllerDiscoveryMixin",
     "ControllerDiscoveryRecoveryMixin",
     "ControllerIdentityProbeMixin",
     "ControllerIdentityStateMixin",

@@ -10,7 +10,7 @@ from ..config import AppConfig
 from ..storage import PersistedSpeakerState, SpeakerStateStore
 from ..devices.speaker_backend import W2Backend
 from .actions import ControllerDeviceActionsMixin
-from .identity_discovery import ControllerDiscoveryMixin
+from .discovery import ControllerDiscoveryMixin
 from .logging_mixin import ControllerLoggingMixin
 from .network_timeout import temporary_socket_timeout
 from .power_state import ControllerStateMixin

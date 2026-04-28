@@ -8,8 +8,8 @@ from typing import Any, Callable
 
 from ..config import AppConfig, UserSettings
 from .json_file import write_json_atomic
-from ..devices.speaker_discovery import normalize_mac
 from ..devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source
+from ..devices.speaker_models import normalize_mac
 
 
 _USER_SETTINGS_FIELD_NAMES = tuple(field.name for field in dataclass_fields(UserSettings))
