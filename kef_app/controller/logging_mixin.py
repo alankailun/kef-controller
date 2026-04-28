@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import time
 
+_SLEEP_CROSSING_MIN_DURATION_S = 5.0
+
 
 class ControllerLoggingMixin:
     _INFO_STEP_ACTIONS = frozenset({"CHANGE_INPUT"})
@@ -13,6 +15,15 @@ class ControllerLoggingMixin:
             ("DISCOVER_IP", "update_speaker_name"),
             ("DISCOVER_IP", "update_speaker_model"),
             ("DISCOVER_IP", "update_firmware_version"),
+            ("DISCOVER_IP", "backend_identity_partial"),
+            ("DISCOVER_IP", "http_identity_succeeded"),
+            ("DISCOVER_IP", "http_identity_failed"),
+            ("DISCOVER_IP", "use_cached_target_identity"),
+            ("DISCOVER_IP", "startup_http_identity"),
+            ("LOCK_PRE_STANDBY", "system_sleep_crossed"),
+            ("STANDBY", "system_sleep_crossed"),
+            ("DISCOVER_IP", "system_sleep_crossed"),
+            ("BLIND_DISCOVER_IP", "system_sleep_crossed"),
             ("CONFIG_SYNC", "configured_device_target"),
             ("IDENTITY_PROBE", "mark_available"),
             ("LOCK_PRE_STANDBY", "verify_standby"),
@@ -38,6 +49,12 @@ class ControllerLoggingMixin:
         if tag == "STEP":
             action = str(fields.get("action") or "")
             step = str(fields.get("step") or "")
+            if (
+                action in {"LOCK_PRE_STANDBY", "STANDBY", "ENDSESSION_STANDBY"}
+                and step == "shutdown_request"
+                and str(fields.get("status") or "") == "sent"
+            ):
+                return logging.INFO
             if action in self._INFO_STEP_ACTIONS or (action, step) in self._INFO_STEP_PAIRS:
                 return logging.INFO
             return logging.DEBUG
@@ -68,6 +85,7 @@ class ControllerLoggingMixin:
 
     def _log_action_end(self, action: str, generation: int | None, reason: str, outcome: str, start_mono: float):
         end_mono = self.mono()
+        self._log_action_sleep_crossing(action, generation, reason, start_mono, end_mono)
         self._log_separator()
         self._log_structured(
             "END",
@@ -79,6 +97,44 @@ class ControllerLoggingMixin:
             mono=f"{end_mono:.3f}",
         )
         self._log_separator()
+
+    def _log_action_sleep_crossing(
+        self,
+        action: str,
+        generation: int | None,
+        reason: str,
+        start_mono: float,
+        end_mono: float,
+    ) -> None:
+        duration_s = end_mono - start_mono
+        if duration_s < _SLEEP_CROSSING_MIN_DURATION_S:
+            return
+
+        with self._state_lock:
+            sleep_pending = bool(getattr(self, "_system_sleep_pending", False))
+            suspend_mono = float(getattr(self, "_last_system_suspend_mono", 0.0) or 0.0)
+            resume_mono = float(getattr(self, "_last_system_resume_mono", 0.0) or 0.0)
+
+        suspend_inside_action = start_mono <= suspend_mono <= end_mono
+        started_after_pending_suspend = sleep_pending and suspend_mono > 0 and suspend_mono <= start_mono
+        resume_inside_action = start_mono <= resume_mono <= end_mono
+        if not (suspend_inside_action or started_after_pending_suspend or resume_inside_action):
+            return
+
+        self._log_structured(
+            "STEP",
+            action=action,
+            gen=generation,
+            reason=reason,
+            step="system_sleep_crossed",
+            action_crossed_system_sleep=True,
+            resumed_while_action_pending=True,
+            sleep_pending=sleep_pending,
+            duration_ms=int(duration_s * 1000),
+            suspend_mono=f"{suspend_mono:.3f}" if suspend_mono else "<unknown>",
+            resume_mono=f"{resume_mono:.3f}" if resume_mono else "<pending>",
+            mono=f"{end_mono:.3f}",
+        )
 
     def _persist_runtime_state(self, source: str) -> bool:
         if self._state_store is None:
@@ -152,13 +208,22 @@ class ControllerLoggingMixin:
         self.log.info("=" * 64)
 
     def log_power_event(self, name: str, wparam: int, lparam: int):
+        event_mono = self.mono()
+        with self._state_lock:
+            if name == "PBT_APMSUSPEND":
+                self._system_sleep_pending = True
+                self._last_system_suspend_mono = event_mono
+            elif name in {"PBT_APMRESUMESUSPEND", "PBT_APMRESUMEAUTOMATIC"}:
+                self._last_system_resume_mono = event_mono
+                self._system_sleep_pending = False
+
         self._log_structured(
             "EVENT",
             kind="POWER",
             name=name,
             wparam=f"0x{wparam:04X}",
             lparam=f"0x{lparam:016X}",
-            mono=f"{self.mono():.3f}",
+            mono=f"{event_mono:.3f}",
         )
 
     def log_session_event(self, name: str, wparam: int, lparam: int):

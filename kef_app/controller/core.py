@@ -61,6 +61,9 @@ class KefPowerController(
         self._session_ending = False
 
         self._last_lock_standby_ok_mono = 0.0
+        self._system_sleep_pending = False
+        self._last_system_suspend_mono = 0.0
+        self._last_system_resume_mono = 0.0
 
     def add_event_listener(self, listener: Callable[[str, dict[str, Any]], None]) -> None:
         with self._event_listener_lock:

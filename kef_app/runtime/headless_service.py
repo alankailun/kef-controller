@@ -88,6 +88,10 @@ class HeadlessRuntime:
         try:
             self.controller.get_speaker(fresh=True)
             self.controller.capture_identity_from_current_ip(reason="startup_prebuild", trigger="startup_prebuild_success")
+            self.controller.log_current_http_identity_snapshot(
+                reason="startup_prebuild",
+                trigger="startup_http_identity",
+            )
             self.log.info(
                 f"Prebuilt the initial KEF connection | ip={self.controller.get_current_kef_ip()} | "
                 f"mono={self.controller.mono():.3f}"
@@ -104,6 +108,10 @@ class HeadlessRuntime:
                     self.controller.capture_identity_from_current_ip(
                         reason="startup_prebuild",
                         trigger="startup_prebuild_recover_success",
+                    )
+                    self.controller.log_current_http_identity_snapshot(
+                        reason="startup_prebuild",
+                        trigger="startup_http_identity_recover_success",
                     )
                     self.log.info(
                         f"Recovered the IP and prebuilt the KEF connection | "
