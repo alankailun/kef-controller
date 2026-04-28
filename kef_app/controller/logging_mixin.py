@@ -6,6 +6,24 @@ import time
 _SLEEP_CROSSING_MIN_DURATION_S = 5.0
 
 
+def _get_pykefcontrol_version() -> str:
+    try:
+        import pykefcontrol
+
+        version = getattr(pykefcontrol, "__version__", "")
+        if version:
+            return str(version)
+    except Exception:
+        pass
+
+    try:
+        from importlib.metadata import version
+
+        return version("pykefcontrol")
+    except Exception:
+        return "<unknown>"
+
+
 class ControllerLoggingMixin:
     _INFO_STEP_ACTIONS = frozenset({"CHANGE_INPUT"})
     _INFO_STEP_PAIRS = frozenset(
@@ -145,9 +163,13 @@ class ControllerLoggingMixin:
 
     def log_banner(self):
         c = self.config
+        pykefcontrol_version = _get_pykefcontrol_version()
 
         self.log.info("=" * 64)
-        self.log.info(f"  {c.speaker_model_label} power controller | backend={c.backend_name} / pykefcontrol")
+        self.log.info(
+            f"  {c.speaker_model_label} power controller | "
+            f"backend={c.backend_name} / pykefcontrol={pykefcontrol_version}"
+        )
         self.log.info(
             "  Speaker target: "
             f"ip={self.get_current_kef_ip() or c.kef_ip or '<empty>'} | "

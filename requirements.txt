@@ -1,5 +1,5 @@
 pywin32
-pykefcontrol
+pykefcontrol==0.9.2
 PySide6
 PySide6-Fluent-Widgets
 pyinstaller
