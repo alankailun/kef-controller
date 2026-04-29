@@ -49,14 +49,6 @@ CloseHandle = kernel32.CloseHandle
 CloseHandle.argtypes = [wintypes.HANDLE]
 CloseHandle.restype = wintypes.BOOL
 
-try:
-    RegisterApplicationRestart = kernel32.RegisterApplicationRestart
-    RegisterApplicationRestart.argtypes = [wintypes.LPCWSTR, wintypes.DWORD]
-    RegisterApplicationRestart.restype = ctypes.c_long
-except AttributeError:
-    RegisterApplicationRestart = None
-
-
 def ensure_single_instance(log, mutex_name: str) -> Optional[int]:
     kernel32_local = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32_local.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
@@ -85,25 +77,6 @@ def ensure_single_instance(log, mutex_name: str) -> Optional[int]:
 
     log.info("Single-instance mutex acquired")
     return handle
-
-
-def register_application_restart(log, enabled: bool, flags: int) -> None:
-    if not enabled:
-        log.info("RegisterApplicationRestart is disabled")
-        return
-
-    if RegisterApplicationRestart is None:
-        log.info("RegisterApplicationRestart is not supported on this system")
-        return
-
-    try:
-        hr = RegisterApplicationRestart("", flags)
-        if hr == 0:
-            log.info(f"Registered application auto-restart | flags=0x{flags:02X}")
-        else:
-            log.info(f"Failed to register application auto-restart | HRESULT=0x{hr & 0xFFFFFFFF:08X}")
-    except Exception as exc:
-        log.info(f"RegisterApplicationRestart raised an exception | {exc}")
 
 
 def get_raw_command_line() -> str:

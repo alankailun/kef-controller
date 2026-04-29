@@ -12,7 +12,6 @@ from ..platform.windows import (
     ensure_single_instance,
     ensure_startup_registration,
     maybe_handle_startup_task_repair,
-    register_application_restart,
 )
 
 
@@ -48,7 +47,6 @@ def build_runtime_context(*, extra_log_handlers: Iterable[logging.Handler] = ())
     single_instance_mutex = ensure_single_instance(log, config.single_instance_mutex_name)
     state_store = SpeakerStateStore(config, log)
     controller = KefPowerController(config, log, state_store=state_store)
-    register_application_restart(log, config.enable_application_restart, config.application_restart_flags)
 
     return RuntimeContext(
         config=config,

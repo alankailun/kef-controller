@@ -314,14 +314,6 @@ class SettingsInterface(ScrollArea):
         )
         group.addSettingCard(self._startup_status)
 
-        self._enable_restart = SwitchCard(
-            FIF.ROTATE,
-            "Restart After a Crash",
-            "Ask Windows to restart this app automatically if it crashes.",
-        )
-        self._enable_restart.set_checked(config.enable_application_restart)
-        group.addSettingCard(self._enable_restart)
-
         self._diagnostic_logging = SwitchCard(
             FIF.DOCUMENT,
             "Diagnostic Logging",
@@ -391,7 +383,6 @@ class SettingsInterface(ScrollArea):
             standby_on_lock=self._power_behavior_cards["standby_on_lock"].is_checked(),
             endsession_standby_on_shutdown=self._power_behavior_cards["endsession_standby_on_shutdown"].is_checked(),
             startup_registration_mode=selected_startup_mode,
-            enable_application_restart=self._enable_restart.is_checked(),
             diagnostic_logging=self._diagnostic_logging.is_checked(),
         )
 

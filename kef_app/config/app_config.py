@@ -48,10 +48,6 @@ class AppConfig:
         return updated
 
     @property
-    def application_restart_flags(self) -> int:
-        return self.system.restart_no_crash | self.system.restart_no_hang
-
-    @property
     def log_file(self) -> str:
         return os.path.join(self.system.log_dir, self.system.log_file_name)
 

@@ -24,5 +24,3 @@ class SystemConfig:
     log_dir: str = field(default_factory=lambda: os.path.join(default_local_appdata_dir(DEFAULT_APP_NAME), "logs"))
     log_file_name: str = "kef_controller.log"
     single_instance_mutex_name: str = "KEFController_SingleInstance_Mutex"
-    restart_no_crash: int = 0x1
-    restart_no_hang: int = 0x2

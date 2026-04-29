@@ -57,4 +57,3 @@ class UserSettings:
     endsession_standby_on_shutdown: bool = True
     endsession_standby_action_lock_timeout: float = 0.20
     endsession_standby_socket_timeout: float = 0.60
-    enable_application_restart: bool = True

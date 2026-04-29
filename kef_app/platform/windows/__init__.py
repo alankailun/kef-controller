@@ -18,7 +18,6 @@ from .api import (
     get_process_image_path,
     get_raw_command_line,
     guess_launch_source,
-    register_application_restart,
 )
 from .startup_registration import (
     REMOVE_TASK_FLAG,
@@ -84,7 +83,6 @@ __all__ = [
     "maybe_handle_startup_task_repair",
     "normalize_startup_mode",
     "preferred_executable_path",
-    "register_application_restart",
     "remove_startup_task_with_uac",
     "repair_task_startup_with_uac",
     "runtime_launch_spec",

@@ -224,9 +224,6 @@ class ControllerLoggingMixin:
             self.log.info(f"  Log retention days: {c.log_backup_days}")
             self.log.info(f"  Runtime state persistence: {c.persist_runtime_state}")
             self.log.info(f"  Fast exit during end-session: {c.fast_exit_on_endsession}")
-            self.log.info(
-                f"  Application auto-restart: {c.enable_application_restart} | flags=0x{c.application_restart_flags:02X}"
-            )
         self.log.info("=" * 64)
 
     def log_power_event(self, name: str, wparam: int, lparam: int):

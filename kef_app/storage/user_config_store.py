@@ -142,7 +142,6 @@ class UserConfigStore:
         "endsession_standby_on_shutdown": lambda value: UserConfigStore._coerce_bool(value),
         "endsession_standby_action_lock_timeout": _coerce_non_negative_float,
         "endsession_standby_socket_timeout": _coerce_positive_float,
-        "enable_application_restart": lambda value: UserConfigStore._coerce_bool(value),
     }
 
     def __init__(self, base_config: AppConfig):
