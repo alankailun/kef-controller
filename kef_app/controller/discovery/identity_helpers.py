@@ -75,6 +75,9 @@ def can_use_cached_current_target(
         return False
     if configured_ip and configured_ip != current_ip:
         return False
-    if cached_mac != target_mac or not cached_model or not identity.speaker_model:
+    if cached_mac != target_mac or not cached_model:
         return False
-    return normalize_model_label(identity.speaker_model) == normalize_model_label(cached_model)
+    live_model = normalize_model_label(identity.speaker_model)
+    if live_model and live_model != normalize_model_label(cached_model):
+        return False
+    return True

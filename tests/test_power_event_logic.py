@@ -364,6 +364,42 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertTrue(resolved)
         identify.assert_not_called()
 
+    def test_urgent_standby_target_can_use_cached_identity_when_live_mac_and_model_are_missing(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
+        with controller._ip_lock:
+            controller._speaker_model = "LS50 Wireless II"
+        partial_identity = SpeakerIdentity(ip="192.168.1.10")
+        controller.get_speaker = Mock(return_value=object())
+        controller._backend.capture_identity = Mock(return_value=partial_identity)
+
+        with patch("kef_app.controller.discovery.identity_probe.identify_kef_device") as identify:
+            resolved = controller.resolve_target(
+                "WTS_SESSION_LOCK",
+                "lock_pre_standby_before_attempts",
+                force_recovery=True,
+            )
+
+        self.assertTrue(resolved)
+        identify.assert_not_called()
+
+    def test_nonurgent_target_does_not_use_cached_identity_when_live_mac_and_model_are_missing(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
+        with controller._ip_lock:
+            controller._speaker_model = "LS50 Wireless II"
+        partial_identity = SpeakerIdentity(ip="192.168.1.10")
+        controller.get_speaker = Mock(return_value=object())
+        controller._backend.capture_identity = Mock(return_value=partial_identity)
+
+        with (
+            patch("kef_app.controller.discovery.identity_probe.identify_kef_device", return_value=None) as identify,
+            patch("kef_app.controller.discovery.recovery.discover_ip_by_mac", return_value=None),
+            patch("kef_app.controller.discovery.recovery.discover_kef_device_blind", return_value=None),
+        ):
+            resolved = controller.resolve_target("unit_test", "unit_test", force_recovery=True)
+
+        self.assertFalse(resolved)
+        identify.assert_called_once_with("192.168.1.10", controller.config)
+
     def test_startup_http_identity_snapshot_does_not_mutate_target(self):
         controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
         other_identity = SpeakerIdentity(
