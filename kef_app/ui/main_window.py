@@ -12,7 +12,6 @@ from .controller_events import ControllerEventBridge
 from .home_view import HomeInterface
 from .logs import LogInterface, UILogHandler
 from .settings import SettingsInterface
-from .event_test_view import TestInterface
 
 
 class KefMainWindow(FluentWindow):
@@ -36,24 +35,19 @@ class KefMainWindow(FluentWindow):
         self._has_positioned_once = False
 
         self._home = HomeInterface(config, controller, config_store, controller_bridge, self)
-        self._test_iface = TestInterface(config, controller, self)
         self._log_iface = LogInterface(config, log_handler, self)
         self._settings_iface = SettingsInterface(config, controller, config_store, self)
         self._settings_iface.settings_saved.connect(self._on_settings_saved)
 
         self.addSubInterface(self._home, FIF.HOME, "Home")
-        self.addSubInterface(self._test_iface, FIF.SPEED_HIGH, "Tests")
         self.addSubInterface(self._log_iface, FIF.DOCUMENT, "Log")
         self.addSubInterface(
             self._settings_iface, FIF.SETTING, "Settings",
             NavigationItemPosition.BOTTOM,
         )
 
-        self._test_iface.refresh()
-
     def _on_settings_saved(self) -> None:
         self._home.request_state_refresh()
-        self._test_iface.refresh()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         event.ignore()
@@ -112,7 +106,6 @@ class KefMainWindow(FluentWindow):
             else:
                 self.show()
             self._home.request_state_refresh()
-            self._test_iface.refresh()
             self._restore_reasonable_geometry()
             self.raise_()
             self.activateWindow()

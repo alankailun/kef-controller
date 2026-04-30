@@ -28,6 +28,7 @@ from ...platform.windows import (
     repair_task_startup_with_uac,
 )
 from ..background_tasks import start_background_task
+from ..event_test_view import EventTestPanel
 from .settings_cards import ButtonCard, ComboCard, StatusCard, SwitchCard
 from .settings_service import (
     INPUTS,
@@ -190,6 +191,7 @@ class SettingsInterface(ScrollArea):
         self._log = logging.getLogger("kef_controller")
         self._last_scanned_speakers: list[SpeakerIdentity] = []
         self._pending_manual_target: tuple[str, str] | None = None
+        self._event_tests_expanded = False
 
         self._speaker_scan_finished.connect(self._on_speaker_scan_finished)
         self._speaker_scan_failed.connect(self._on_speaker_scan_failed)
@@ -209,6 +211,7 @@ class SettingsInterface(ScrollArea):
         self._build_discovery_group(container, layout)
         self._build_behavior_group(container, layout)
         self._build_advanced_group(container, layout)
+        self._build_diagnostics_group(container, layout)
         self._build_save_row(layout)
 
         layout.addStretch()
@@ -288,8 +291,7 @@ class SettingsInterface(ScrollArea):
         layout.addWidget(group)
 
     def _build_advanced_group(self, container: QWidget, layout: QVBoxLayout) -> None:
-        config = self._runtime_config
-        group = SettingCardGroup("Advanced", container)
+        group = SettingCardGroup("Windows Startup", container)
 
         self._startup_initial_checked = is_startup_registered(TASK_NAME)
 
@@ -314,16 +316,34 @@ class SettingsInterface(ScrollArea):
         )
         group.addSettingCard(self._startup_status)
 
+        self._refresh_startup_status()
+        layout.addWidget(group)
+
+    def _build_diagnostics_group(self, container: QWidget, layout: QVBoxLayout) -> None:
+        group = SettingCardGroup("Diagnostics", container)
+
         self._diagnostic_logging = SwitchCard(
             FIF.DOCUMENT,
             "Diagnostic Logging",
             "Write detailed internal logs for troubleshooting. Leave this off unless you are debugging a problem.",
         )
-        self._diagnostic_logging.set_checked(config.diagnostic_logging)
+        self._diagnostic_logging.set_checked(self._runtime_config.diagnostic_logging)
         group.addSettingCard(self._diagnostic_logging)
 
-        self._refresh_startup_status()
+        self._event_tests_toggle = ButtonCard(
+            FIF.SPEED_HIGH,
+            "Event Tests",
+            "Simulate startup, shutdown, lock, unlock, and sleep behavior.",
+            "Show Tests",
+        )
+        self._event_tests_toggle.button.clicked.connect(self._toggle_event_tests)
+        group.addSettingCard(self._event_tests_toggle)
+
         layout.addWidget(group)
+
+        self._event_tests = EventTestPanel(self._runtime_config, self._controller, container)
+        self._event_tests.setVisible(False)
+        layout.addWidget(self._event_tests)
 
     def _build_save_row(self, layout: QVBoxLayout) -> None:
         row = QHBoxLayout()
@@ -345,6 +365,13 @@ class SettingsInterface(ScrollArea):
 
     def _log_power_behavior_state(self) -> None:
         self._log.info(log_power_behavior_state_message(self._runtime_config))
+
+    def _toggle_event_tests(self) -> None:
+        self._event_tests_expanded = not self._event_tests_expanded
+        self._event_tests.setVisible(self._event_tests_expanded)
+        self._event_tests_toggle.button.setText("Hide Tests" if self._event_tests_expanded else "Show Tests")
+        if self._event_tests_expanded:
+            self._event_tests.refresh()
 
     def _try_elevated_startup_disable(self) -> bool:
         ok, detail = remove_startup_task_with_uac(TASK_NAME, log=self._log)
@@ -413,6 +440,7 @@ class SettingsInterface(ScrollArea):
             self._apply_runtime_config(updated)
             self._log_power_behavior_state()
             self._refresh_target_summary()
+            self._event_tests.refresh()
             self.settings_saved.emit()
         self._refresh_startup_status()
 

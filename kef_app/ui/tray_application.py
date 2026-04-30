@@ -44,6 +44,9 @@ class KefTrayApp:
         self._controller_bridge.power_action_finished.connect(self._on_power_action_finished)
 
         self._window = KefMainWindow(config, controller, config_store, self._controller_bridge, log_handler)
+        app_icon = self._app.windowIcon()
+        if not app_icon.isNull():
+            self._window.setWindowIcon(app_icon)
         self._window.visibility_changed.connect(self._on_window_visibility_changed)
 
         self._tray = QSystemTrayIcon(icon_disconnected())

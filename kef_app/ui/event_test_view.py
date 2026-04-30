@@ -1,7 +1,8 @@
 from __future__ import annotations
+
 from typing import Callable, Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
@@ -10,18 +11,16 @@ from qfluentwidgets import (
     InfoBar,
     InfoBarPosition,
     PushButton,
-    ScrollArea,
     SubtitleLabel,
-    TitleLabel,
 )
 
 from ..config import AppConfig
 from ..controller import KefPowerController
 from .background_tasks import start_background_task
-from .settings import SPEAKER_POWER_OPTIONS, get_speaker_power_disabled_reason
+from .settings.settings_service import SPEAKER_POWER_OPTIONS, get_speaker_power_disabled_reason
 
 
-class TestInterface(ScrollArea):
+class EventTestPanel(QWidget):
     _test_finished = Signal(str, bool, str)
 
     def __init__(
@@ -31,7 +30,7 @@ class TestInterface(ScrollArea):
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
-        self.setObjectName("testInterface")
+        self.setObjectName("eventTestPanel")
         self._config = config
         self._controller = controller
         self._log = controller.log
@@ -40,25 +39,12 @@ class TestInterface(ScrollArea):
         self._buttons_by_label: dict[str, PushButton] = {}
         self._value_labels: dict[str, BodyLabel] = {}
 
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(36, 20, 36, 36)
-        layout.setSpacing(16)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
 
-        layout.addWidget(TitleLabel("Event Tests"))
-        layout.addWidget(
-            BodyLabel(
-                "Use these buttons to simulate the same speaker actions that normally happen during startup, "
-                "shutdown, lock, unlock, and sleep."
-            )
-        )
         layout.addWidget(self._build_current_behavior_card())
         layout.addWidget(self._build_test_card())
-        layout.addStretch()
-
-        self.setWidget(container)
-        self.setWidgetResizable(True)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         self._test_finished.connect(self._on_test_finished)
         self.refresh()
@@ -111,14 +97,8 @@ class TestInterface(ScrollArea):
             self._buttons_by_label[label] = button
 
         layout.addLayout(grid)
-        self._event_status = CaptionLabel("Choose a test to simulate a Windows event.")
+        self._event_status = CaptionLabel("Choose a test event.")
         layout.addWidget(self._event_status)
-        layout.addWidget(
-            BodyLabel(
-                "These tests use the live configuration. Startup, shutdown, lock, unlock, and sleep each simulate "
-                "their matching Windows event."
-            )
-        )
         return card
 
     def refresh(self) -> None:
