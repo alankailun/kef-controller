@@ -432,6 +432,123 @@ class ControllerDevicePowerActionsMixin:
                 return False
             return (self.mono() - last) < self.config.lock_standby_dedup_window
 
+    def standby_kef_fast_suspend(self, generation: int, reason: str) -> bool:
+        outcome = "unknown"
+        start_mono = self._log_action_begin("STANDBY", generation, reason)
+        c = self.config
+        self._emit_power_action_started("STANDBY", reason)
+
+        try:
+            if not c.suspend_fast_standby_enabled:
+                outcome = "disabled"
+                self._log_structured(
+                    "SKIP",
+                    action="STANDBY",
+                    gen=generation,
+                    reason=reason,
+                    cause="suspend_fast_standby_disabled",
+                    mono=f"{self.mono():.3f}",
+                )
+                return False
+
+            if self._recently_lock_standby_ok():
+                outcome = "skipped_recent_lock_pre_standby_ok"
+                self._log_structured(
+                    "SKIP",
+                    action="STANDBY",
+                    gen=generation,
+                    reason=reason,
+                    cause="recent_lock_pre_standby_ok",
+                    window_s=f"{c.lock_standby_dedup_window:.2f}",
+                    mono=f"{self.mono():.3f}",
+                )
+                return True
+
+            if self._is_session_ending():
+                outcome = "skipped_session_ending"
+                self._log_structured(
+                    "SKIP",
+                    action="STANDBY",
+                    gen=generation,
+                    reason=reason,
+                    cause="session_ending",
+                    mono=f"{self.mono():.3f}",
+                )
+                return False
+
+            current_ip = self.get_current_kef_ip()
+            self._log_structured(
+                "STEP",
+                action="STANDBY",
+                gen=generation,
+                reason=reason,
+                step="suspend_fast_path",
+                status="begin",
+                target_ip=current_ip or "<empty>",
+                target_mac=self.get_effective_target_mac() or "<empty>",
+                identity_check="cached_target_only",
+                verify_standby=False,
+                mono=f"{self.mono():.3f}",
+            )
+            if not current_ip:
+                outcome = "skipped_no_current_ip"
+                self._log_structured(
+                    "SKIP",
+                    action="STANDBY",
+                    gen=generation,
+                    reason=reason,
+                    cause="no_current_ip",
+                    mono=f"{self.mono():.3f}",
+                )
+                return False
+
+            outcome = self._acquire_generation_action_lock(
+                action="STANDBY",
+                generation=generation,
+                reason=reason,
+                lock_timeout=c.suspend_fast_standby_action_lock_timeout,
+                purpose="standby",
+            )
+            if outcome is not None:
+                return False
+
+            try:
+                self._request_shutdown(fresh=False, timeout=c.suspend_fast_standby_socket_timeout)
+                outcome = "success_fast_suspend"
+                self._log_structured(
+                    "STEP",
+                    action="STANDBY",
+                    gen=generation,
+                    reason=reason,
+                    step="suspend_fast_path",
+                    status="sent",
+                    target_ip=current_ip,
+                    timeout_s=f"{c.suspend_fast_standby_socket_timeout:.2f}",
+                    mono=f"{self.mono():.3f}",
+                )
+                return True
+            except Exception as exc:
+                self.reset_speaker()
+                outcome = "failed_fast_suspend"
+                self._log_structured(
+                    "WARN",
+                    action="STANDBY",
+                    gen=generation,
+                    reason=reason,
+                    attempt=1,
+                    cause="shutdown_failed",
+                    status="fast_suspend_failed",
+                    error=repr(exc),
+                    target_ip=current_ip,
+                    mono=f"{self.mono():.3f}",
+                )
+                return False
+            finally:
+                self._action_lock.release()
+        finally:
+            self._emit_power_action_finished("STANDBY", reason, outcome)
+            self._log_action_end("STANDBY", generation, reason, outcome, start_mono)
+
     def standby_kef(self, generation: int, reason: str) -> bool:
         outcome = "unknown"
         start_mono = self._log_action_begin("STANDBY", generation, reason)

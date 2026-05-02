@@ -62,6 +62,9 @@ class ControllerSessionEventsMixin:
         if not self.config.standby_on_sleep:
             self._log_structured("SKIP", action="STANDBY", reason=reason, cause="sleep_standby_disabled", mono=f"{self.mono():.3f}")
             return
+        if self.config.suspend_fast_standby_enabled:
+            self.standby_kef_fast_suspend(generation, reason)
+            return
         self._start_controller_thread(lambda: self.standby_kef(generation, reason), f"SuspendStandby-{generation}")
 
     def on_lock(self, reason: str):

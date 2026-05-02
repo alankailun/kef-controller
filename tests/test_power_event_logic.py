@@ -51,22 +51,39 @@ class PowerEventLogicTests(unittest.TestCase):
         controller.wake_kef.assert_called_once_with(1, "startup")
         self.assertEqual(controller._current_generation(), 1)
 
-    def test_on_suspend_starts_standby_when_sleep_standby_enabled(self):
+    def test_on_suspend_uses_fast_standby_when_sleep_standby_enabled(self):
         controller = self.make_controller(standby_on_sleep=True)
-        controller._start_controller_thread = lambda target, _thread_name: target()
+        controller._start_controller_thread = Mock()
+        controller.standby_kef_fast_suspend = Mock(return_value=True)
         controller.standby_kef = Mock(return_value=True)
 
         controller.on_suspend("PBT_APMSUSPEND")
 
+        controller.standby_kef_fast_suspend.assert_called_once_with(1, "PBT_APMSUSPEND")
+        controller.standby_kef.assert_not_called()
+        controller._start_controller_thread.assert_not_called()
+        self.assertEqual(controller._current_generation(), 1)
+
+    def test_on_suspend_can_use_full_standby_when_fast_path_disabled(self):
+        controller = self.make_controller(standby_on_sleep=True, suspend_fast_standby_enabled=False)
+        controller._start_controller_thread = lambda target, _thread_name: target()
+        controller.standby_kef_fast_suspend = Mock(return_value=True)
+        controller.standby_kef = Mock(return_value=True)
+
+        controller.on_suspend("PBT_APMSUSPEND")
+
+        controller.standby_kef_fast_suspend.assert_not_called()
         controller.standby_kef.assert_called_once_with(1, "PBT_APMSUSPEND")
         self.assertEqual(controller._current_generation(), 1)
 
     def test_on_suspend_refreshes_generation_even_when_sleep_standby_disabled(self):
         controller = self.make_controller(standby_on_sleep=False)
+        controller.standby_kef_fast_suspend = Mock(return_value=True)
         controller.standby_kef = Mock(return_value=True)
 
         controller.on_suspend("PBT_APMSUSPEND")
 
+        controller.standby_kef_fast_suspend.assert_not_called()
         controller.standby_kef.assert_not_called()
         self.assertEqual(controller._current_generation(), 1)
 
@@ -247,6 +264,36 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertEqual(len(perform_calls), 1)
         self.assertEqual(perform_calls[0]["generation"], generation)
         self.assertFalse(controller._recently_lock_standby_ok())
+
+    def test_fast_suspend_standby_uses_cached_ip_without_identity_probe(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+            suspend_fast_standby_socket_timeout=0.25,
+        )
+        generation = controller._new_generation("sleep", "PBT_APMSUSPEND")
+        controller.resolve_target = Mock(return_value=False)
+        controller._ensure_target_identity = Mock(return_value=False)
+        controller._perform_standby_request = Mock()
+        controller._request_shutdown = Mock()
+
+        result = controller.standby_kef_fast_suspend(generation, "PBT_APMSUSPEND")
+
+        self.assertTrue(result)
+        controller.resolve_target.assert_not_called()
+        controller._ensure_target_identity.assert_not_called()
+        controller._perform_standby_request.assert_not_called()
+        controller._request_shutdown.assert_called_once_with(fresh=False, timeout=0.25)
+
+    def test_fast_suspend_standby_skips_without_current_ip(self):
+        controller = self.make_controller(kef_ip="")
+        generation = controller._new_generation("sleep", "PBT_APMSUSPEND")
+        controller._request_shutdown = Mock()
+
+        result = controller.standby_kef_fast_suspend(generation, "PBT_APMSUSPEND")
+
+        self.assertFalse(result)
+        controller._request_shutdown.assert_not_called()
 
     def test_end_session_standby_skips_when_target_identity_is_not_verified(self):
         controller = self.make_controller(kef_ip="192.168.1.10")

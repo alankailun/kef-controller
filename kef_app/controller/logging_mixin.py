@@ -216,6 +216,12 @@ class ControllerLoggingMixin:
             self.log.info(f"  Wake action-lock timeout: {c.wake_action_lock_timeout}s")
             self.log.info(f"  Standby when Windows sleeps: {c.standby_on_sleep}")
             self.log.info(
+                "  Fast standby on sleep broadcast: "
+                f"{c.suspend_fast_standby_enabled} | "
+                f"lock_timeout={c.suspend_fast_standby_action_lock_timeout}s | "
+                f"socket_timeout={c.suspend_fast_standby_socket_timeout}s"
+            )
+            self.log.info(
                 "  Standby on screen lock: "
                 f"{c.standby_on_lock} | lock_timeout={c.lock_standby_action_lock_timeout}s | "
                 f"dedupe_window={c.lock_standby_dedup_window}s"

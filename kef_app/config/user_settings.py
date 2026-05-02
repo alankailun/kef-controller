@@ -45,6 +45,9 @@ class UserSettings:
     resume_dedup_window: float = 2.0
 
     standby_on_sleep: bool = True
+    suspend_fast_standby_enabled: bool = True
+    suspend_fast_standby_action_lock_timeout: float = 0.20
+    suspend_fast_standby_socket_timeout: float = 0.60
     standby_on_lock: bool = True
     lock_standby_action_lock_timeout: float = 0.3
     lock_standby_dedup_window: float = 8.0
