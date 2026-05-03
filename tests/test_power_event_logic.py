@@ -90,7 +90,6 @@ class PowerEventLogicTests(unittest.TestCase):
     def test_on_lock_creates_sleep_generation_before_preemptive_standby(self):
         controller = self.make_controller(standby_on_lock=True)
         seen: dict[str, object] = {}
-        controller._start_controller_thread = lambda target, _thread_name: target()
 
         def fake_preemptive(generation: int, reason: str) -> bool:
             seen["generation"] = generation
@@ -106,24 +105,20 @@ class PowerEventLogicTests(unittest.TestCase):
 
     def test_on_lock_skips_when_lock_standby_disabled(self):
         controller = self.make_controller(standby_on_lock=False)
-        controller._start_controller_thread = Mock()
         controller.standby_kef_preemptive = Mock(return_value=True)
 
         controller.on_lock("WTS_SESSION_LOCK")
 
-        controller._start_controller_thread.assert_not_called()
         controller.standby_kef_preemptive.assert_not_called()
         self.assertEqual(controller._current_generation(), 0)
 
     def test_on_lock_skips_when_session_is_ending(self):
         controller = self.make_controller(standby_on_lock=True)
         controller._set_session_ending(True)
-        controller._start_controller_thread = Mock()
         controller.standby_kef_preemptive = Mock(return_value=True)
 
         controller.on_lock("WTS_SESSION_LOCK")
 
-        controller._start_controller_thread.assert_not_called()
         controller.standby_kef_preemptive.assert_not_called()
         self.assertEqual(controller._current_generation(), 0)
 
@@ -246,23 +241,36 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertTrue(controller._is_session_ending())
         self.assertEqual(controller._current_generation(), 1)
 
-    def test_preemptive_standby_does_not_mark_success_after_generation_changes(self):
-        controller = self.make_controller()
+    def test_preemptive_standby_uses_cached_ip_without_identity_probe(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+            suspend_fast_standby_socket_timeout=0.25,
+        )
         generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
-        perform_calls: list[dict[str, object]] = []
+        controller.resolve_target = Mock(return_value=False)
+        controller._ensure_target_identity = Mock(return_value=False)
+        controller._perform_standby_request = Mock()
+        controller._request_shutdown = Mock()
 
-        def fake_perform(**kwargs) -> None:
-            perform_calls.append(kwargs)
-            controller._new_generation("wake", "WTS_SESSION_UNLOCK")
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
 
-        controller._perform_standby_request = fake_perform
-        controller.resolve_target = Mock(return_value=True)
+        self.assertTrue(result)
+        controller.resolve_target.assert_not_called()
+        controller._ensure_target_identity.assert_not_called()
+        controller._perform_standby_request.assert_not_called()
+        controller._request_shutdown.assert_called_once_with(fresh=False, timeout=0.25)
+        self.assertTrue(controller._recently_lock_standby_ok())
+
+    def test_preemptive_standby_skips_without_current_ip(self):
+        controller = self.make_controller(kef_ip="")
+        generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
+        controller._request_shutdown = Mock()
 
         result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
 
         self.assertFalse(result)
-        self.assertEqual(len(perform_calls), 1)
-        self.assertEqual(perform_calls[0]["generation"], generation)
+        controller._request_shutdown.assert_not_called()
         self.assertFalse(controller._recently_lock_standby_ok())
 
     def test_fast_suspend_standby_uses_cached_ip_without_identity_probe(self):
@@ -403,12 +411,31 @@ class PowerEventLogicTests(unittest.TestCase):
 
         with patch("kef_app.controller.discovery.identity_probe.identify_kef_device") as identify:
             resolved = controller.resolve_target(
-                "WTS_SESSION_LOCK",
-                "lock_pre_standby_before_attempts",
+                "TRAY_STANDBY",
+                "standby_before_request",
                 force_recovery=True,
             )
 
         self.assertTrue(resolved)
+        identify.assert_not_called()
+
+    def test_urgent_standby_target_uses_cached_identity_without_probe(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
+        with controller._ip_lock:
+            controller._speaker_model = "LS50 Wireless II"
+        controller.get_speaker = Mock()
+        controller._backend.capture_identity = Mock()
+
+        with patch("kef_app.controller.discovery.identity_probe.identify_kef_device") as identify:
+            resolved = controller.resolve_target(
+                "TRAY_STANDBY",
+                "standby_before_request",
+                force_recovery=True,
+            )
+
+        self.assertTrue(resolved)
+        controller.get_speaker.assert_not_called()
+        controller._backend.capture_identity.assert_not_called()
         identify.assert_not_called()
 
     def test_urgent_standby_target_can_use_cached_identity_when_live_mac_and_model_are_missing(self):
@@ -421,8 +448,8 @@ class PowerEventLogicTests(unittest.TestCase):
 
         with patch("kef_app.controller.discovery.identity_probe.identify_kef_device") as identify:
             resolved = controller.resolve_target(
-                "WTS_SESSION_LOCK",
-                "lock_pre_standby_before_attempts",
+                "TRAY_STANDBY",
+                "standby_before_request",
                 force_recovery=True,
             )
 

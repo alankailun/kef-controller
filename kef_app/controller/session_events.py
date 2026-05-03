@@ -73,10 +73,10 @@ class ControllerSessionEventsMixin:
         if self._is_session_ending():
             return
         generation = self._new_generation("sleep", reason)
-        self._start_controller_thread(
-            lambda: self.standby_kef_preemptive(generation, reason),
-            f"LockPreStandby-{generation}",
-        )
+        # Run synchronously on the message-pump thread so the HTTP shutdown
+        # fires before Windows can deliver PBT_APMSUSPEND and tear down
+        # networking — by suspend time the route is already gone.
+        self.standby_kef_preemptive(generation, reason)
 
     def on_resume(self, reason: str):
         if self._should_dedupe_resume_and_mark(reason):

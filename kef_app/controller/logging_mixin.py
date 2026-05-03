@@ -210,7 +210,6 @@ class ControllerLoggingMixin:
             self.log.info(f"  Wake only after unlock: {c.wake_on_unlock_only}")
             self.log.info(f"  Reachability wait timeout: {c.reachability_wait_timeout}s")
             self.log.info(f"  Socket timeout: {c.socket_timeout}s")
-            self.log.info(f"  Standby retry delays: {c.standby_attempt_delays}")
             self.log.info(f"  Wake retry delays: {c.wake_attempt_delays}")
             self.log.info(f"  Standby action-lock timeout: {c.suspend_action_lock_timeout}s")
             self.log.info(f"  Wake action-lock timeout: {c.wake_action_lock_timeout}s")

@@ -50,7 +50,6 @@ def is_urgent_standby_identity_trigger(trigger: str) -> bool:
     text = str(trigger or "")
     return text.startswith(
         (
-            "lock_pre_standby_",
             "standby_before_request_",
             "endsession_before_request_",
         )
@@ -79,5 +78,25 @@ def can_use_cached_current_target(
         return False
     live_model = normalize_model_label(identity.speaker_model)
     if live_model and live_model != normalize_model_label(cached_model):
+        return False
+    return True
+
+
+def can_use_cached_target_without_probe(
+    *,
+    trigger: str,
+    target_mac: str,
+    current_ip: str,
+    configured_ip: str,
+    cached_mac: str,
+    cached_model: str,
+) -> bool:
+    if not is_urgent_standby_identity_trigger(trigger):
+        return False
+    if not target_mac or not current_ip:
+        return False
+    if configured_ip and configured_ip != current_ip:
+        return False
+    if cached_mac != target_mac or not cached_model:
         return False
     return True

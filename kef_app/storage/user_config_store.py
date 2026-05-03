@@ -126,7 +126,6 @@ class UserConfigStore:
         "home_external_poll_interval": _coerce_positive_float,
         "tray_identity_poll_interval": _coerce_positive_float,
         "identity_probe_failure_threshold": _coerce_positive_int,
-        "standby_attempt_delays": _coerce_non_negative_float_list,
         "wake_attempt_delays": _coerce_non_negative_float_list,
         "suspend_action_lock_timeout": _coerce_non_negative_float,
         "wake_action_lock_timeout": _coerce_non_negative_float,

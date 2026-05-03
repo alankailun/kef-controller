@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-from .device_common import ControllerDeviceCommonMixin, StandbyVerificationError
+from .device_common import ControllerDeviceCommonMixin
 from .device_controls import ControllerDeviceControlsMixin
-from .device_power import ControllerDevicePowerActionsMixin
+from .standby import ControllerDeviceStandbyMixin
+from .wake import ControllerDeviceWakeMixin
 
 
 class ControllerDeviceActionsMixin(
-    ControllerDevicePowerActionsMixin,
+    ControllerDeviceWakeMixin,
+    ControllerDeviceStandbyMixin,
     ControllerDeviceControlsMixin,
     ControllerDeviceCommonMixin,
 ):
     pass
 
 
-__all__ = ["ControllerDeviceActionsMixin", "StandbyVerificationError"]
+__all__ = ["ControllerDeviceActionsMixin"]

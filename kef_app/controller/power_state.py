@@ -15,9 +15,6 @@ class ControllerStateMixin:
         with self._state_lock:
             return self._generation
 
-    def _is_generation_current(self, generation: int) -> bool:
-        return generation == self._current_generation()
-
     def _clear_recent_lock_standby_marker(self):
         with self._state_lock:
             self._last_lock_standby_ok_mono = 0.0
@@ -37,7 +34,7 @@ class ControllerStateMixin:
             return self._session_ending
 
     def _should_abort_generation(self, generation: int) -> bool:
-        return not self._is_generation_current(generation)
+        return generation != self._current_generation()
 
     def _interruptible_sleep(self, seconds: float, generation: int, label: str, step: float = 0.05) -> bool:
         deadline = self.mono() + seconds

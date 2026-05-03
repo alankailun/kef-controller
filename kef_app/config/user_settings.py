@@ -37,7 +37,6 @@ class UserSettings:
     tray_identity_poll_interval: float = 20.0
     identity_probe_failure_threshold: int = 2
 
-    standby_attempt_delays: list[float] = field(default_factory=lambda: [0.00, 0.12, 0.25, 0.45, 0.80])
     wake_attempt_delays: list[float] = field(default_factory=lambda: [0.00, 0.60, 1.20, 2.00, 3.00])
 
     suspend_action_lock_timeout: float = 2.0
