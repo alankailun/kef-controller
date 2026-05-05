@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 
-from PySide6.QtCore import QMetaObject, QTimer, Qt
+from PySide6.QtCore import QObject, QTimer, Qt, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
@@ -16,6 +16,10 @@ from .controller_events import ControllerEventBridge
 from .icons import icon_connected, icon_disconnected, icon_working
 from .logs import UILogHandler
 from .main_window import KefMainWindow
+
+
+class RuntimeExitBridge(QObject):
+    runtime_stopped = Signal()
 
 
 class KefTrayApp:
@@ -35,6 +39,11 @@ class KefTrayApp:
         self._app = app
         self._runtime = runtime
         self._is_exiting = False
+        self._runtime_exit_bridge = RuntimeExitBridge()
+        self._runtime_exit_bridge.runtime_stopped.connect(
+            self._on_runtime_stopped,
+            Qt.ConnectionType.QueuedConnection,
+        )
         self._active_power_actions = 0
         self._active_action = ""
         self._identity_poll_lock = threading.Lock()
@@ -109,7 +118,8 @@ class KefTrayApp:
             if thread is None:
                 return
             thread.join()
-            QMetaObject.invokeMethod(self._app, "quit", Qt.ConnectionType.QueuedConnection)
+            self._log.info("Headless runtime stopped; requesting UI shutdown")
+            self._runtime_exit_bridge.runtime_stopped.emit()
 
         start_background_task("RuntimeWatcher", _watch, log=self._log)
 
@@ -211,14 +221,26 @@ class KefTrayApp:
             self._window.toggle()
 
     def _on_exit(self) -> None:
+        self._shutdown_ui(
+            "Exit was requested from the tray menu; stopping the runtime and closing the UI",
+            stop_runtime=True,
+        )
+
+    def _on_runtime_stopped(self) -> None:
+        self._shutdown_ui("Headless runtime stopped; closing the UI", stop_runtime=False)
+
+    def _shutdown_ui(self, message: str, *, stop_runtime: bool) -> None:
         if self._is_exiting:
+            self._log.info(f"{message}; UI shutdown is already in progress")
+            QTimer.singleShot(0, self._app.quit)
             return
 
         self._is_exiting = True
-        self._log.info("Exit was requested from the tray menu; stopping the runtime and closing the UI")
+        self._log.info(message)
         self._identity_poll.stop()
         self._tray.hide()
         self._window.hide()
         self._controller_bridge.dispose()
-        self._runtime.request_stop()
+        if stop_runtime:
+            self._runtime.request_stop()
         QTimer.singleShot(0, self._app.quit)

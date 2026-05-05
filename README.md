@@ -9,7 +9,7 @@ Packaging helpers:
 
 - PyInstaller spec: [KEF Controller.spec](KEF%20Controller.spec)
 - Inno Setup script: [installer/KEF_Controller.iss](installer/KEF_Controller.iss)
-- 
+
 <img width="1470" height="1079" alt="7bdb341ce75780a7ed924d406c750ef1" src="https://github.com/user-attachments/assets/e4585ab3-28c7-4920-aa69-da52f8263170" />
 <img width="1470" height="1079" alt="cb902f1b90c223a420d936547b84feac" src="https://github.com/user-attachments/assets/32f21355-b34a-493d-92ae-6045a938e4bc" />
 <img width="1470" height="1079" alt="a7208ae1b34da96f0e8e78c2d4cd5878" src="https://github.com/user-attachments/assets/5680acc8-bb4d-494c-b6b0-d6fc5007943a" />

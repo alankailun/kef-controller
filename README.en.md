@@ -2,7 +2,7 @@
 
 ## Overview
 
-KEF Controller is a Windows desktop tool for supported KEF W2 / KEF Connect speakers.
+KEF Controller is a Windows tray application for supported KEF W2 / KEF Connect speakers.
 
 Supported models:
 
@@ -13,115 +13,102 @@ Supported models:
 Current speaker power features:
 
 - wake the speaker when the app starts
-- put the speaker in standby when Windows shuts down
+- put the speaker in standby when Windows shuts down, signs out, or ends the session
 - put the speaker in standby when Windows locks
 - wake the speaker when Windows unlocks
 - put the speaker in standby when Windows sleeps
-- recover speaker identity after IP changes
-- run as a tray app with a GUI
+- recover the speaker after IP changes by using the target MAC address
+- scan the local network and select the target speaker from the UI
+- run from the Windows system tray with a main window, settings, logs, and event tests
 
 ## Project Structure
 
 ```text
 kef_controller/
-  main_gui.py
-  main_background.py
-  README.md
-  README.en.md
-  README.zh-CN.md
-  KEF Controller.spec
+  main_gui.py                  GUI entry point: tray app + main window
+  main_background.py           headless entry point for message-pump runtime only
+  KEF Controller.spec          PyInstaller build configuration
   requirements.txt
   installer/
-    KEF_Controller.iss
+    KEF_Controller.iss         Inno Setup installer script
+    assets/                    installer and application icon assets
   kef_app/
-    __init__.py
-    backends.py
-    controller.py
-    discovery.py
-    headless_runtime.py
-    logging_setup.py
-    models.py
-    appdata/
-      config.py
-      config_store.py
-      state_store.py
-      system_config.py
-      user_settings.py
-    controller_support/
-    platform_windows/
-      windows_api.py
-      windows_startup.py
-      startup_support/
-    ui/
-      home_interface.py
-      main_window.py
-      test_interface.py
-      tray_app.py
-      logs/
-      settings/
+    config/                    AppConfig, SystemConfig, and user settings
+    storage/                   JSON config and speaker state stores
+    devices/                   speaker backend, model helpers, and network discovery
+    controller/                power controller, wake/standby actions, identity recovery
+    platform/
+      windows/                 Win32 events, session/power APIs, startup registration
+        startup/               Registry Run and Task Scheduler helpers
+    runtime/                   startup bootstrap, logging, and headless message loop
+    ui/                        PySide6/QFluent tray app, main window, settings, logs
+      logs/                    UI log history and handlers
+      settings/                settings cards, save logic, startup sync
+  tests/                       unittest coverage for config, startup, and event logic
 ```
 
 ## Runtime Files
 
-On first launch, the app creates runtime files under `%LocalAppData%\KEF Controller\`:
+The app keeps user data under the current Windows profile:
 
-- `config.json`
-- `state.json`
-- log files
+```text
+%LocalAppData%\KEF Controller\
+  config.json
+  state.json
+  logs\
+    kef_controller.log
+```
 
-The packaged executable stays clean. User settings, runtime state, and logs are stored in the current Windows user profile instead of next to the `.exe`.
+The packaged executable and installer location stay separate from runtime state. User settings, selected speaker identity, recovered IP state, and logs are not written next to the `.exe`.
+
+## Startup and Install Paths
+
+The app supports Windows startup through:
+
+- Registry Run
+- Task Scheduler
+- Off
+
+The settings UI shows the active startup method and can repair stale startup entries. Task Scheduler repair/removal may ask for administrator approval.
+
+For installed builds, the launcher path is intentionally stable:
+
+```text
+%LocalAppData%\Programs\KEF Controller\KEF Controller.exe
+```
+
+The Inno Setup installer still lets the user choose the main install directory. It also writes a synchronized copy to the stable LocalAppData path above. Start Menu shortcuts, optional desktop shortcuts, post-install launch, and Windows startup entries use that stable path so they do not depend on whether the user installed the app on `C:`, `F:`, OneDrive, or another location.
+
+At runtime, a frozen executable also calls the startup launch helper to keep the stable copy up to date before registering startup entries. If the stable copy cannot be updated, the app logs the failure and falls back to the current executable.
 
 ## Run From Source
 
-Use Windows `cmd.exe`.
+Use Windows `cmd.exe` or PowerShell.
+
+Create or update the virtual environment, then install dependencies:
+
+```bat
+cd /d "path\to\kef_controller"
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
 
 GUI mode:
 
 ```bat
-cd /d "path\to\kef_controller"
-.venv\Scripts\activate
 python main_gui.py
 ```
 
 Headless mode:
 
 ```bat
-cd /d "path\to\kef_controller"
-.venv\Scripts\activate
 python main_background.py
 ```
 
 ## Build the EXE With PyInstaller
 
-Direct command in `cmd.exe`:
-
-```bat
-cd /d "path\to\kef_controller"
-.venv\Scripts\activate
-.venv\Scripts\pyinstaller --noconsole --onefile --name "KEF Controller" --collect-all qfluentwidgets main_gui.py
-```
-
-What this command does:
-
-- `--noconsole`: build a windowed app without a console window
-- `--onefile`: pack the app into one executable
-- `--name "KEF Controller"`: set the output file name
-- `--collect-all qfluentwidgets`: include QFluentWidgets resources
-- `main_gui.py`: use the GUI entry point
-
-Main output:
-
-```text
-dist\KEF Controller.exe
-```
-
-## Build With the Existing `.spec` File
-
-This repository also includes:
-
-- [KEF Controller.spec](KEF%20Controller.spec)
-
-Build from the spec with:
+Recommended build:
 
 ```bat
 cd /d "path\to\kef_controller"
@@ -129,7 +116,19 @@ cd /d "path\to\kef_controller"
 .venv\Scripts\pyinstaller "KEF Controller.spec"
 ```
 
-Use the `.spec` flow when you want repeatable packaging with a fixed build configuration.
+Main output:
+
+```text
+dist\KEF Controller.exe
+```
+
+The `.spec` file uses `main_gui.py`, builds a windowed one-file executable, includes QFluentWidgets resources, and embeds the installer icon.
+
+You can also build directly:
+
+```bat
+.venv\Scripts\pyinstaller --noconsole --onefile --name "KEF Controller" --collect-all qfluentwidgets main_gui.py
+```
 
 ## Create an Installer With Inno Setup
 
@@ -145,11 +144,7 @@ Make sure the PyInstaller output already exists:
 dist\KEF Controller.exe
 ```
 
-This repository includes the installer script:
-
-- [installer/KEF_Controller.iss](installer/KEF_Controller.iss)
-
-Compile it from `cmd.exe`:
+Compile the installer:
 
 ```bat
 cd /d "path\to\kef_controller"
@@ -162,17 +157,30 @@ Expected installer output:
 output\KEF_Controller_Setup.exe
 ```
 
-## Suggested Build Workflow
+The installer closes any running `KEF Controller.exe` before install/uninstall so files can be replaced cleanly.
+
+## Test
+
+Run the unit tests with:
+
+```bat
+cd /d "path\to\kef_controller"
+.venv\Scripts\activate
+python -m unittest discover -s tests
+```
+
+## Suggested Release Workflow
 
 1. Activate `.venv`.
-2. Build `dist\KEF Controller.exe` with PyInstaller.
-3. Test the generated `.exe`.
-4. Compile `installer\KEF_Controller.iss`.
-5. Test the installer on a clean Windows machine if possible.
+2. Run the unit tests.
+3. Build `dist\KEF Controller.exe` with the `.spec` file.
+4. Test the generated `.exe`.
+5. Compile `installer\KEF_Controller.iss`.
+6. Test the installer, shortcuts, startup method, shutdown/lock/sleep behavior, and logs on a Windows machine.
 
 ## Notes
 
-- Windows startup support now has two paths: normal Registry Run and optional Task Scheduler startup.
-- The app writes config, state, and logs to `%LocalAppData%\KEF Controller\`.
-- If SmartScreen or antivirus warns about a fresh unsigned build, that is common for internal test builds.
-- If you rename the app or the output executable, update both the PyInstaller command and the Inno Setup script.
+- `main_gui.py` is the normal packaged entry point.
+- `main_background.py` is still available for running the headless runtime directly.
+- `RegisterApplicationRestart` is not used. The app handles shutdown/session messages itself and exits quickly on Restart Manager `CLOSEAPP` requests to avoid Windows reporting an application hang.
+- Fresh unsigned builds may trigger SmartScreen or antivirus warnings during internal testing.

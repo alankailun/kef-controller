@@ -1,4 +1,5 @@
 #define AppExeName "KEF Controller.exe"
+#define StableAppDir "{localappdata}\Programs\KEF Controller"
 
 [Setup]
 AppId={{8D6C2E54-89C6-4B9F-AE63-8F8A2A814101}
@@ -26,13 +27,14 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Files]
 Source: "..\dist\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\{#AppExeName}"; DestDir: "{#StableAppDir}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\KEF Controller"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\{#AppExeName}"; IconIndex: 0
-Name: "{autodesktop}\KEF Controller"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\{#AppExeName}"; IconIndex: 0; Check: ShouldCreateDesktopIcon
+Name: "{autoprograms}\KEF Controller"; Filename: "{#StableAppDir}\{#AppExeName}"; WorkingDir: "{#StableAppDir}"; IconFilename: "{#StableAppDir}\{#AppExeName}"; IconIndex: 0
+Name: "{autodesktop}\KEF Controller"; Filename: "{#StableAppDir}\{#AppExeName}"; WorkingDir: "{#StableAppDir}"; IconFilename: "{#StableAppDir}\{#AppExeName}"; IconIndex: 0; Check: ShouldCreateDesktopIcon
 
 [Run]
-Filename: "{app}\{#AppExeName}"; Description: "Launch KEF Controller"; Flags: nowait postinstall skipifsilent
+Filename: "{#StableAppDir}\{#AppExeName}"; WorkingDir: "{#StableAppDir}"; Description: "Launch KEF Controller"; Flags: nowait postinstall skipifsilent
 
 [Code]
 procedure RunTaskKill(Args: String);
