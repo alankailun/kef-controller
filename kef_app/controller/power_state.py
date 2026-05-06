@@ -33,6 +33,10 @@ class ControllerStateMixin:
         with self._state_lock:
             return self._session_ending
 
+    def _is_controller_power_action_active(self) -> bool:
+        with self._state_lock:
+            return self._controller_active_power_actions > 0
+
     def _should_abort_generation(self, generation: int) -> bool:
         return generation != self._current_generation()
 

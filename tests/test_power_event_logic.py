@@ -788,6 +788,50 @@ class PowerEventLogicTests(unittest.TestCase):
 
         self.assertEqual(result, (None, None, None))
 
+    def test_speaker_event_poll_recovers_ip_after_consecutive_failures(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+            speaker_event_recovery_failure_threshold=2,
+        )
+        speaker = Mock()
+        speaker.poll_speaker.side_effect = RuntimeError("poll failed")
+        controller.get_speaker = Mock(return_value=speaker)
+        controller.maybe_refresh_kef_ip = Mock(return_value=True)
+
+        controller.poll_speaker_event_state("unit_test", "unit_test", timeout=7.5)
+        controller.poll_speaker_event_state("unit_test", "unit_test", timeout=7.5)
+
+        controller.maybe_refresh_kef_ip.assert_called_once_with(
+            reason="unit_test",
+            trigger="unit_test_event_recover",
+            force=True,
+        )
+
+    def test_wifi_diagnostics_logs_available_radio_info(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        speaker = Mock()
+        speaker.get_wifi_information.return_value = {
+            "signalLevel": -48,
+            "ssid": "Office",
+            "frequency": 5180,
+            "bssid": "AA:BB:CC:DD:EE:FF",
+        }
+        controller.get_speaker = Mock(return_value=speaker)
+        controller._log_structured = Mock()
+
+        info = controller.log_wifi_diagnostics("unit_test", "unit_test")
+
+        self.assertEqual(info["signalLevel"], -48)
+        self.assertTrue(
+            any(
+                call.kwargs.get("action") == "WIFI_DIAGNOSTICS"
+                and call.kwargs.get("status") == "available"
+                and call.kwargs.get("signal_level") == -48
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
     def test_wake_rejects_unsupported_configured_input(self):
         controller = self.make_controller(kef_ip="192.168.1.10", kef_input="standby")
         controller.wait_until_reachable = Mock(return_value=True)

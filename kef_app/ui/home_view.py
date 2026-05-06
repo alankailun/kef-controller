@@ -31,8 +31,6 @@ _INPUT_VALUES = [value for _, value in _INPUT_CHOICES]
 _BTN_GREEN = "background-color: #1f8f5f; color: white; border: 1px solid #1f8f5f;"
 _BTN_DANGER = "background-color: #c2410c; color: white; border: 1px solid #c2410c;"
 _BTN_IDLE = ""
-_EVENT_POLL_IDLE_DELAY_S = 0.2
-_EVENT_POLL_RETRY_DELAY_S = 2.0
 
 
 class HomeInterface(QWidget):
@@ -59,9 +57,6 @@ class HomeInterface(QWidget):
         self._power_on_hint: Optional[bool] = None
         self._applying_input = False
         self._external_poll_lock = threading.Lock()
-        self._event_poll_lock = threading.Lock()
-        self._event_poll_stop = threading.Event()
-        self._event_poll_running = False
         self._last_input = normalize_input_source(config.kef_input)
         self._prev_ip = ""
         self._vol_dragging = False
@@ -82,6 +77,7 @@ class HomeInterface(QWidget):
         self._vol_fetched.connect(self._on_vol_fetched)
         self._vol_set_done.connect(self._on_vol_set_done)
         self._controller_bridge.identity_changed.connect(self._on_identity_changed)
+        self._controller_bridge.speaker_state_changed.connect(self._on_external_state_fetched)
         self._controller_bridge.power_action_started.connect(self._on_power_action_started)
         self._controller_bridge.power_action_finished.connect(self._on_power_action_finished)
 
@@ -241,21 +237,18 @@ class HomeInterface(QWidget):
     def request_state_refresh(self) -> None:
         self._apply_polling_config()
         if self.isVisible() and self._event_poll_enabled():
-            self._start_event_polling()
-        elif not self._event_poll_enabled():
-            self._stop_event_polling()
+            self._controller.start_speaker_event_monitor("ui_home_refresh")
         self.refresh()
         self._poll_external_state(force=self.isVisible())
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
-        self._start_event_polling()
+        self._controller.start_speaker_event_monitor("ui_home_show")
         self._external_poll.start()
         QTimer.singleShot(0, self.request_state_refresh)
 
     def hideEvent(self, event: QHideEvent) -> None:
         super().hideEvent(event)
-        self._stop_event_polling()
         self._external_poll.stop()
 
     def _maybe_fetch_volume(self) -> None:
@@ -311,63 +304,6 @@ class HomeInterface(QWidget):
     def _event_poll_enabled(self) -> bool:
         return bool(getattr(self._config, "home_event_poll_enabled", True))
 
-    def _event_poll_timeout(self) -> float:
-        return max(1.0, float(getattr(self._config, "home_event_poll_timeout", 10.0)))
-
-    def _start_event_polling(self) -> None:
-        if not self._event_poll_enabled():
-            return
-        if self._power_on_hint is False:
-            return
-        with self._event_poll_lock:
-            if self._event_poll_running:
-                return
-            self._event_poll_running = True
-            self._event_poll_stop.clear()
-
-        thread = start_background_task(
-            "SpeakerEventPoll",
-            self._run_event_poll_loop,
-            on_finished=self._on_event_poll_finished,
-            log=self._controller.log,
-        )
-        if thread is None:
-            self._on_event_poll_finished()
-
-    def _stop_event_polling(self) -> None:
-        self._event_poll_stop.set()
-
-    def _on_event_poll_finished(self) -> None:
-        with self._event_poll_lock:
-            self._event_poll_running = False
-
-    def _run_event_poll_loop(self) -> None:
-        while not self._event_poll_stop.is_set():
-            if self._power_on_hint is False:
-                if self._event_poll_stop.wait(_EVENT_POLL_RETRY_DELAY_S):
-                    return
-                continue
-            if not self._controller.get_current_kef_ip():
-                if self._event_poll_stop.wait(_EVENT_POLL_RETRY_DELAY_S):
-                    return
-                continue
-
-            result = self._controller.poll_speaker_event_state(
-                "ui_home_event_poll",
-                "ui_home_event_poll",
-                timeout=self._event_poll_timeout(),
-            )
-            if self._event_poll_stop.is_set():
-                return
-
-            has_event = any(value is not None for value in result)
-            if has_event:
-                self._external_state_fetched.emit(*result)
-
-            delay = _EVENT_POLL_IDLE_DELAY_S if has_event else _EVENT_POLL_RETRY_DELAY_S
-            if self._event_poll_stop.wait(delay):
-                return
-
     def _on_external_state_fetched(
         self,
         input_source: Optional[str],
@@ -386,10 +322,6 @@ class HomeInterface(QWidget):
         current_ip = self._controller.get_current_kef_ip()
         if current_ip and speaker_on is not None:
             self._power_on_hint = speaker_on
-            if speaker_on:
-                self._start_event_polling()
-            else:
-                self._stop_event_polling()
 
         self.refresh()
 
@@ -461,7 +393,7 @@ class HomeInterface(QWidget):
         self._vol_lbl.setText(str(val))
         if self._vol_dragging:
             self._vol_pending = val
-            self._vol_debounce.start(400)
+            self._vol_debounce.start(max(50, int(self._config.home_volume_debounce_ms)))
 
     def _commit_volume(self) -> None:
         val = self._vol_pending
@@ -516,7 +448,6 @@ class HomeInterface(QWidget):
 
     def _on_power_action_started(self, _action: str, _reason: str) -> None:
         self._active_power_actions += 1
-        self._stop_event_polling()
         self._set_working(True)
 
     def _on_power_action_finished(self, action: str, _reason: str, success: bool, _outcome: str) -> None:
@@ -529,7 +460,6 @@ class HomeInterface(QWidget):
         self._set_working(self._active_power_actions > 0)
         if success and action == "WAKE":
             self._maybe_fetch_volume()
-            self._start_event_polling()
 
     def _refresh_action_buttons(self, speaker_on: bool) -> None:
         if self._working:

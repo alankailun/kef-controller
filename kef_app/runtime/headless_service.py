@@ -125,6 +125,7 @@ class HeadlessRuntime:
                     self.controller.reset_speaker()
 
         threading.Thread(target=self.controller.on_startup, daemon=True, name="StartupWake").start()
+        self.controller.start_speaker_event_monitor("headless_runtime")
 
         resource_lock = threading.Lock()
         cleaned_up = False
@@ -141,6 +142,7 @@ class HeadlessRuntime:
                 cleaned_up = True
             with self._hwnd_lock:
                 self._hwnd = 0
+            self.controller.stop_speaker_event_monitor()
 
             if session_notify_registered and hwnd:
                 try:

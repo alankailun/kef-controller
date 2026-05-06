@@ -46,6 +46,8 @@ class KefPowerController(
         self._event_listener_lock = threading.Lock()
         self._discovery_lock = threading.Lock()
         self._blind_discovery_lock = threading.Lock()
+        self._speaker_event_monitor_lock = threading.Lock()
+        self._speaker_event_monitor_stop = threading.Event()
         self._event_listeners: list[Callable[[str, dict[str, Any]], None]] = []
 
         self._current_kef_ip = self._loaded_state.last_ip or config.kef_ip
@@ -60,8 +62,14 @@ class KefPowerController(
         self._last_blind_discovery_mono = 0.0
         self._mac_discovery_miss_count = 0
         self._last_mac_discovery_scanned_miss = False
+        self._speaker_event_monitor_running = False
+        self._speaker_event_poll_failures = 0
+        self._speaker_runtime_input_source = ""
+        self._speaker_runtime_volume: int | None = None
+        self._speaker_runtime_power_on: bool | None = None
 
         self._generation = 0
+        self._controller_active_power_actions = 0
         self._last_resume_event_mono = 0.0
         self._session_ending = False
 
@@ -95,10 +103,18 @@ class KefPowerController(
         self._emit_event("identity_changed", identity=self.get_current_identity())
 
     def _emit_power_action_started(self, action: str, reason: str) -> None:
+        with self._state_lock:
+            self._controller_active_power_actions += 1
         self._emit_event("power_action_started", action=action, reason=reason)
 
     def _emit_power_action_finished(self, action: str, reason: str, outcome: str) -> None:
         success = outcome.startswith("success") or outcome == "skipped_recent_lock_pre_standby_ok"
+        with self._state_lock:
+            self._controller_active_power_actions = max(0, self._controller_active_power_actions - 1)
+        if success and action == "WAKE":
+            self._set_speaker_runtime_state(speaker_on=True, source=f"power_action:{action}")
+        elif success and action in {"STANDBY", "LOCK_PRE_STANDBY", "ENDSESSION_STANDBY"}:
+            self._set_speaker_runtime_state(speaker_on=False, source=f"power_action:{action}")
         self._emit_event(
             "power_action_finished",
             action=action,

@@ -7,6 +7,7 @@ from ..controller import KefPowerController
 
 class ControllerEventBridge(QObject):
     identity_changed = Signal(object)
+    speaker_state_changed = Signal(object, object, object)
     power_action_started = Signal(str, str)
     power_action_finished = Signal(str, str, bool, str)
 
@@ -25,6 +26,14 @@ class ControllerEventBridge(QObject):
     def _handle_event(self, event_name: str, payload: dict[str, object]) -> None:
         if event_name == "identity_changed":
             self.identity_changed.emit(payload.get("identity"))
+            return
+
+        if event_name == "speaker_state_changed":
+            self.speaker_state_changed.emit(
+                payload.get("input_source"),
+                payload.get("volume"),
+                payload.get("speaker_on"),
+            )
             return
 
         if event_name == "power_action_started":

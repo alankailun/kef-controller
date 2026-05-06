@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from typing import Optional
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
 from PySide6.QtGui import QAction
@@ -46,9 +47,11 @@ class KefTrayApp:
         )
         self._active_power_actions = 0
         self._active_action = ""
+        self._speaker_on_hint: Optional[bool] = None
         self._identity_poll_lock = threading.Lock()
         self._controller_bridge = ControllerEventBridge(controller)
         self._controller_bridge.identity_changed.connect(self._on_identity_changed)
+        self._controller_bridge.speaker_state_changed.connect(self._on_speaker_state_changed)
         self._controller_bridge.power_action_started.connect(self._on_power_action_started)
         self._controller_bridge.power_action_finished.connect(self._on_power_action_finished)
 
@@ -149,10 +152,16 @@ class KefTrayApp:
         else:
             display = "No device found"
 
-        status_text = display if available or not ip else f"{display} (Offline)"
+        speaker_on = self._speaker_on_hint if self._speaker_on_hint is not None else available
+        if not ip or speaker_on:
+            status_text = display
+        elif self._speaker_on_hint is False:
+            status_text = f"{display} (Standby)"
+        else:
+            status_text = f"{display} (Offline)"
         self._status_action.setText(status_text)
 
-        if ip and available:
+        if ip and speaker_on:
             self._tray.setIcon(icon_connected())
             self._tray.setToolTip(f"KEF Controller - {display} ({ip})")
         else:
@@ -172,6 +181,16 @@ class KefTrayApp:
         }.get(action, action or "Working")
 
     def _on_identity_changed(self, _identity: object) -> None:
+        self._refresh_icon()
+
+    def _on_speaker_state_changed(
+        self,
+        _input_source: object,
+        _volume: object,
+        speaker_on: object,
+    ) -> None:
+        if speaker_on is not None:
+            self._speaker_on_hint = bool(speaker_on)
         self._refresh_icon()
 
     def _on_power_action_started(self, action: str, _reason: str) -> None:
@@ -238,6 +257,7 @@ class KefTrayApp:
         self._is_exiting = True
         self._log.info(message)
         self._identity_poll.stop()
+        self._controller.stop_speaker_event_monitor()
         self._tray.hide()
         self._window.hide()
         self._controller_bridge.dispose()

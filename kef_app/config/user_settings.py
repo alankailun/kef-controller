@@ -36,7 +36,9 @@ class UserSettings:
     home_external_poll_interval: float = 2.0
     home_event_poll_enabled: bool = True
     home_event_poll_timeout: float = 10.0
-    home_event_reconcile_interval: float = 30.0
+    home_event_reconcile_interval: float = 60.0
+    home_volume_debounce_ms: int = 400
+    speaker_event_recovery_failure_threshold: int = 3
     tray_identity_poll_interval: float = 20.0
     identity_probe_failure_threshold: int = 2
 

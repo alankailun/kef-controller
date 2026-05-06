@@ -158,8 +158,10 @@ class ControllerDeviceWakeMixin:
 
                 self._clear_recent_lock_standby_marker()
                 self.capture_identity_from_current_ip(reason=reason, trigger=f"wake_success_attempt_{attempt}")
+                self.log_wifi_diagnostics(reason=reason, trigger=f"wake_success_attempt_{attempt}")
                 self._log_structured(
                     "STEP",
+                    log_level="info",
                     action="WAKE",
                     gen=generation,
                     reason=reason,

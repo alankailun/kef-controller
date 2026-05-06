@@ -30,6 +30,7 @@ class ControllerIdentityProbeMixin:
             return
         self._log_structured(
             "STEP",
+            log_level="info",
             action="DISCOVER_IP",
             reason=reason,
             step="backend_identity_partial",
@@ -54,6 +55,7 @@ class ControllerIdentityProbeMixin:
             return
         self._log_structured(
             "STEP",
+            log_level="info",
             action="DISCOVER_IP",
             reason=reason,
             step="http_identity_succeeded" if identity else "http_identity_failed",
@@ -167,6 +169,7 @@ class ControllerIdentityProbeMixin:
         if self._can_use_cached_target_without_probe(trigger):
             self._log_structured(
                 "STEP",
+                log_level="info",
                 action="DISCOVER_IP",
                 reason=reason,
                 step="use_cached_target_identity",
@@ -198,6 +201,7 @@ class ControllerIdentityProbeMixin:
             )
             self._log_structured(
                 "STEP",
+                log_level="info",
                 action="DISCOVER_IP",
                 reason=reason,
                 step="use_cached_target_identity",
@@ -243,6 +247,7 @@ class ControllerIdentityProbeMixin:
         if should_log_success:
             self._log_structured(
                 "STEP",
+                log_level="info",
                 action="DISCOVER_IP",
                 reason=reason,
                 step="capture_identity_from_current_ip",
@@ -278,6 +283,7 @@ class ControllerIdentityProbeMixin:
         if not current_ip:
             self._log_structured(
                 "STEP",
+                log_level="info",
                 action="DISCOVER_IP",
                 reason=reason,
                 step="startup_http_identity",
@@ -298,6 +304,7 @@ class ControllerIdentityProbeMixin:
         ended = self.mono()
         self._log_structured(
             "STEP",
+            log_level="info",
             action="DISCOVER_IP",
             reason=reason,
             step="startup_http_identity",

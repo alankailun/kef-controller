@@ -127,6 +127,8 @@ class UserConfigStore:
         "home_event_poll_enabled": lambda value: UserConfigStore._coerce_bool(value),
         "home_event_poll_timeout": _coerce_positive_float,
         "home_event_reconcile_interval": _coerce_positive_float,
+        "home_volume_debounce_ms": _coerce_positive_int,
+        "speaker_event_recovery_failure_threshold": _coerce_positive_int,
         "tray_identity_poll_interval": _coerce_positive_float,
         "identity_probe_failure_threshold": _coerce_positive_int,
         "wake_attempt_delays": _coerce_non_negative_float_list,

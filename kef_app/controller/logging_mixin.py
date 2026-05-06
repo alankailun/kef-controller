@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Optional
 
 _SLEEP_CROSSING_MIN_DURATION_S = 5.0
 
@@ -25,35 +26,20 @@ def _get_pykefcontrol_version() -> str:
 
 
 class ControllerLoggingMixin:
-    _INFO_STEP_ACTIONS = frozenset({"CHANGE_INPUT"})
-    _INFO_STEP_PAIRS = frozenset(
-        {
-            ("DISCOVER_IP", "update_current_ip"),
-            ("DISCOVER_IP", "update_target_mac"),
-            ("DISCOVER_IP", "update_speaker_name"),
-            ("DISCOVER_IP", "update_speaker_model"),
-            ("DISCOVER_IP", "update_firmware_version"),
-            ("DISCOVER_IP", "backend_identity_partial"),
-            ("DISCOVER_IP", "http_identity_succeeded"),
-            ("DISCOVER_IP", "http_identity_failed"),
-            ("DISCOVER_IP", "use_cached_target_identity"),
-            ("DISCOVER_IP", "startup_http_identity"),
-            ("LOCK_PRE_STANDBY", "system_sleep_crossed"),
-            ("STANDBY", "system_sleep_crossed"),
-            ("DISCOVER_IP", "system_sleep_crossed"),
-            ("BLIND_DISCOVER_IP", "system_sleep_crossed"),
-            ("CONFIG_SYNC", "configured_device_target"),
-            ("IDENTITY_PROBE", "mark_available"),
-            ("LOCK_PRE_STANDBY", "verify_standby"),
-            ("STANDBY", "verify_standby"),
-        }
-    )
-
     def mono(self) -> float:
         return time.monotonic()
 
     def _is_diagnostic_logging_enabled(self) -> bool:
         return bool(getattr(self.config, "diagnostic_logging", False))
+
+    @staticmethod
+    def _coerce_log_level(level: object) -> Optional[int]:
+        if level is None:
+            return None
+        if isinstance(level, int):
+            return level
+        normalized = str(level).strip().upper()
+        return getattr(logging, normalized, None)
 
     def _get_structured_log_level(self, tag: str, fields: dict[str, object]) -> int:
         if tag in {"WARN", "RETRY", "ABORT"}:
@@ -73,14 +59,12 @@ class ControllerLoggingMixin:
                 and str(fields.get("status") or "") == "sent"
             ):
                 return logging.INFO
-            if action in self._INFO_STEP_ACTIONS or (action, step) in self._INFO_STEP_PAIRS:
-                return logging.INFO
             return logging.DEBUG
         return logging.INFO
 
-    def _log_structured(self, tag: str, **fields):
-        level = self._get_structured_log_level(tag, fields)
-        if not self.log.isEnabledFor(level):
+    def _log_structured(self, tag: str, *, log_level: object = None, **fields):
+        log_level_value = self._coerce_log_level(log_level) or self._get_structured_log_level(tag, fields)
+        if not self.log.isEnabledFor(log_level_value):
             return
 
         parts = []
@@ -89,9 +73,9 @@ class ControllerLoggingMixin:
                 continue
             parts.append(f"{key}={value}")
         if parts:
-            self.log.log(level, f"{tag} " + " | ".join(parts))
+            self.log.log(log_level_value, f"{tag} " + " | ".join(parts))
         else:
-            self.log.log(level, tag)
+            self.log.log(log_level_value, tag)
 
     def _log_separator(self):
         if self._is_diagnostic_logging_enabled():
@@ -144,6 +128,7 @@ class ControllerLoggingMixin:
 
         self._log_structured(
             "STEP",
+            log_level="info",
             action=action,
             gen=generation,
             reason=reason,
@@ -187,6 +172,8 @@ class ControllerLoggingMixin:
             "  Polling / logging: "
             f"home_poll={c.home_external_poll_interval}s | tray_poll={c.tray_identity_poll_interval}s | "
             f"home_event_poll={c.home_event_poll_enabled} | event_timeout={c.home_event_poll_timeout}s | "
+            f"event_reconcile={c.home_event_reconcile_interval}s | "
+            f"event_recovery_failures={c.speaker_event_recovery_failure_threshold} | "
             f"offline_threshold={c.identity_probe_failure_threshold} | diagnostic_logging={c.diagnostic_logging}"
         )
         self.log.info(

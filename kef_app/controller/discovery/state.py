@@ -121,6 +121,7 @@ class ControllerIdentityStateMixin:
         if previous_failures or availability_changed:
             self._log_structured(
                 "STEP",
+                log_level="info",
                 action="IDENTITY_PROBE",
                 step="mark_available",
                 source=source,
@@ -221,6 +222,7 @@ class ControllerIdentityStateMixin:
             if new_val and old_val != new_val:
                 self._log_structured(
                     "STEP",
+                    log_level="info",
                     action="DISCOVER_IP",
                     step=step,
                     source=source,
@@ -260,6 +262,7 @@ class ControllerIdentityStateMixin:
         self._persist_runtime_state(source=f"ip:{source}")
         self._log_structured(
             "STEP",
+            log_level="info",
             action="DISCOVER_IP",
             step="update_current_ip",
             source=source,
@@ -323,6 +326,7 @@ class ControllerIdentityStateMixin:
         self._persist_runtime_state(source=f"config:{source}")
         self._log_structured(
             "STEP",
+            log_level="info",
             action="CONFIG_SYNC",
             step="configured_device_target",
             source=source,
