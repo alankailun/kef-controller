@@ -324,12 +324,15 @@ class ControllerDeviceControlsMixin:
                 cause="host_unreachable" if unreachable else "event_poll_failed",
                 speaker=speaker,
             )
+            transient = failures < threshold
             self._log_structured(
-                "STEP" if unreachable else "WARN",
+                "STEP" if (unreachable or transient) else "WARN",
+                log_level="info" if (unreachable or transient) else None,
                 action="POLL_SPEAKER_EVENTS",
                 reason=reason,
                 trigger=trigger,
                 cause="host_unreachable" if unreachable else "event_poll_failed",
+                status="transient_failure" if transient else "escalated_failure",
                 failures=failures,
                 threshold=threshold,
                 ip_refresh_attempted=recovered,

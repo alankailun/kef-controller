@@ -806,6 +806,26 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertFalse(speaker._previous_poll_song_status)
         controller.reset_speaker.assert_not_called()
 
+    def test_speaker_event_poll_single_failure_logs_as_transient_step(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        speaker = Mock()
+        speaker.polling_queue = "stale-queue"
+        speaker.last_polled = 123.0
+        speaker._previous_poll_song_status = False
+        speaker.poll_speaker.side_effect = RuntimeError("poll failed")
+        controller.get_speaker = Mock(return_value=speaker)
+        controller._log_structured = Mock()
+
+        controller.poll_speaker_event_state("unit_test", "unit_test", timeout=7.5)
+
+        transient_logs = [
+            call for call in controller._log_structured.mock_calls
+            if call.kwargs.get("status") == "transient_failure"
+        ]
+        self.assertEqual(len(transient_logs), 1)
+        self.assertEqual(transient_logs[0].args[0], "STEP")
+        self.assertEqual(transient_logs[0].kwargs.get("log_level"), "info")
+
     def test_speaker_event_poll_recovers_ip_after_consecutive_failures(self):
         controller = self.make_controller(
             kef_ip="192.168.1.10",

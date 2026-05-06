@@ -37,8 +37,9 @@ def looks_like_supported_kef_model(model: str, config: AppConfig) -> bool:
     return normalized in allowed
 
 
-def identify_kef_device(ip: str, config: AppConfig) -> Optional[SpeakerIdentity]:
-    release_data = http_get_kef_data(ip, "settings:/releasetext", timeout=config.blind_discovery_http_timeout)
+def identify_kef_device(ip: str, config: AppConfig, *, timeout: float | None = None) -> Optional[SpeakerIdentity]:
+    http_timeout = config.blind_discovery_http_timeout if timeout is None else timeout
+    release_data = http_get_kef_data(ip, "settings:/releasetext", timeout=http_timeout)
     if not release_data:
         return None
 
@@ -50,12 +51,12 @@ def identify_kef_device(ip: str, config: AppConfig) -> Optional[SpeakerIdentity]
         return None
 
     mac_address = ""
-    mac_data = http_get_kef_data(ip, "settings:/system/primaryMacAddress", timeout=config.blind_discovery_http_timeout)
+    mac_data = http_get_kef_data(ip, "settings:/system/primaryMacAddress", timeout=http_timeout)
     if mac_data and isinstance(mac_data[0], dict):
         mac_address = mac_data[0].get("string_", "")
 
     speaker_name = ""
-    name_data = http_get_kef_data(ip, "settings:/deviceName", timeout=config.blind_discovery_http_timeout)
+    name_data = http_get_kef_data(ip, "settings:/deviceName", timeout=http_timeout)
     if name_data and isinstance(name_data[0], dict):
         speaker_name = name_data[0].get("string_", "")
 
