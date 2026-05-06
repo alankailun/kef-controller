@@ -788,6 +788,24 @@ class PowerEventLogicTests(unittest.TestCase):
 
         self.assertEqual(result, (None, None, None))
 
+    def test_speaker_event_poll_first_failure_resets_subscription_only(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        speaker = Mock()
+        speaker.polling_queue = "stale-queue"
+        speaker.last_polled = 123.0
+        speaker._previous_poll_song_status = True
+        speaker.poll_speaker.side_effect = RuntimeError("poll failed")
+        controller.get_speaker = Mock(return_value=speaker)
+        controller.reset_speaker = Mock()
+
+        result = controller.poll_speaker_event_state("unit_test", "unit_test", timeout=7.5)
+
+        self.assertEqual(result, (None, None, None))
+        self.assertIsNone(speaker.polling_queue)
+        self.assertIsNone(speaker.last_polled)
+        self.assertFalse(speaker._previous_poll_song_status)
+        controller.reset_speaker.assert_not_called()
+
     def test_speaker_event_poll_recovers_ip_after_consecutive_failures(self):
         controller = self.make_controller(
             kef_ip="192.168.1.10",

@@ -82,7 +82,26 @@ class ControllerDeviceControlsMixin:
         with self._state_lock:
             self._speaker_event_poll_failures = 0
 
-    def _record_speaker_event_poll_failure(self, *, reason: str, trigger: str, cause: str) -> tuple[int, int, bool]:
+    def _reset_speaker_event_subscription(self, speaker: KefConnector | None) -> bool:
+        if speaker is None:
+            return False
+        with self._speaker_lock:
+            try:
+                speaker.polling_queue = None
+                speaker.last_polled = None
+                speaker._previous_poll_song_status = False
+            except Exception:
+                return False
+        return True
+
+    def _record_speaker_event_poll_failure(
+        self,
+        *,
+        reason: str,
+        trigger: str,
+        cause: str,
+        speaker: KefConnector | None,
+    ) -> tuple[int, int, bool]:
         threshold = max(1, int(self.config.speaker_event_recovery_failure_threshold))
         with self._state_lock:
             self._speaker_event_poll_failures += 1
@@ -92,9 +111,11 @@ class ControllerDeviceControlsMixin:
         if failures == 1:
             # First failure is most often a stale pollQueue subscription (KEF
             # GCs the queue or pykefcontrol's 50s rebuild window misfires).
-            # Resetting the cached connector forces the next poll to build a
-            # fresh KefConnector with polling_queue=None, which re-subscribes.
-            self.reset_speaker()
+            # Clearing only the queue avoids KefConnector.__init__'s volume
+            # read on the next pass while still forcing a fresh subscription.
+            subscription_reset = self._reset_speaker_event_subscription(speaker)
+            if not subscription_reset:
+                self.reset_speaker()
             self._log_structured(
                 "STEP",
                 log_level="info",
@@ -102,7 +123,11 @@ class ControllerDeviceControlsMixin:
                 reason=reason,
                 trigger=trigger,
                 step="recovery",
-                status="reset_speaker_for_subscription_refresh",
+                status=(
+                    "reset_poll_subscription"
+                    if subscription_reset
+                    else "reset_speaker_for_subscription_refresh"
+                ),
                 cause=cause,
                 failures=failures,
                 threshold=threshold,
@@ -286,17 +311,18 @@ class ControllerDeviceControlsMixin:
         if not self.get_current_kef_ip():
             return None, None, None
 
+        speaker = None
         try:
             with temporary_socket_timeout(self.config.socket_timeout):
                 speaker = self.get_speaker(fresh=False)
                 events = speaker.poll_speaker(timeout=max(1, int(timeout)))
         except Exception as exc:
-            self.reset_speaker()
             unreachable = _is_host_unreachable(exc)
             failures, threshold, recovered = self._record_speaker_event_poll_failure(
                 reason=reason,
                 trigger=trigger,
                 cause="host_unreachable" if unreachable else "event_poll_failed",
+                speaker=speaker,
             )
             self._log_structured(
                 "STEP" if unreachable else "WARN",
