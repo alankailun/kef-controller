@@ -36,6 +36,9 @@ class KefPowerController(
 
         self._backend = W2Backend(log)
         self._speaker: Optional[KefConnector] = None
+        # Lock order for future nested sections: action/discovery locks first,
+        # then state/ip locks, and never call network or persistence work while
+        # holding _ip_lock or _state_lock.
         self._speaker_lock = threading.Lock()
         self._action_lock = threading.Lock()
         self._state_lock = threading.Lock()

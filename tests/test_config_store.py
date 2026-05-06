@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import tempfile
 import unittest
 from dataclasses import fields as dataclass_fields
+from unittest.mock import patch
 
 from kef_app.config import AppConfig, SystemConfig, UserSettings
-from kef_app.storage import UserConfigStore
+from kef_app.devices.speaker_models import SpeakerIdentity
+from kef_app.storage import SpeakerStateStore, UserConfigStore
 
 
 class UserConfigStoreTests(unittest.TestCase):
@@ -112,6 +115,25 @@ class UserConfigStoreTests(unittest.TestCase):
             self.assertNotIn("expected_speaker_name", saved)
             self.assertNotIn("auto_discover_kef_ip_by_mac", saved)
             self.assertNotIn("auto_discover_kef_ip_blind", saved)
+
+    def test_speaker_state_store_skips_unchanged_identity_write(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.make_config(temp_dir)
+            store = SpeakerStateStore(config, logging.getLogger("tests.speaker_state_store"))
+            identity = SpeakerIdentity(
+                ip="192.168.1.20",
+                mac="AABBCCDDEE01",
+                speaker_name="Office Speaker",
+                speaker_model="LS50 Wireless II",
+                backend="w2",
+                matched_by="target_mac",
+            )
+
+            with patch("kef_app.storage.speaker_state_store.write_json_atomic") as write:
+                self.assertTrue(store.save(identity, source="unit_test_first"))
+                self.assertFalse(store.save(identity, source="unit_test_second"))
+
+            self.assertEqual(write.call_count, 1)
 
 
 if __name__ == "__main__":

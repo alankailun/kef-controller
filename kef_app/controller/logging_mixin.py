@@ -79,12 +79,15 @@ class ControllerLoggingMixin:
         return logging.INFO
 
     def _log_structured(self, tag: str, **fields):
+        level = self._get_structured_log_level(tag, fields)
+        if not self.log.isEnabledFor(level):
+            return
+
         parts = []
         for key, value in fields.items():
             if value is None:
                 continue
             parts.append(f"{key}={value}")
-        level = self._get_structured_log_level(tag, fields)
         if parts:
             self.log.log(level, f"{tag} " + " | ".join(parts))
         else:

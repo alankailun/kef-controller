@@ -65,6 +65,19 @@ class SpeakerStateStore:
         self.config = config
         self.log = log
         self.path = config.state_file
+        self._last_saved_state: PersistedSpeakerState | None = None
+
+    @staticmethod
+    def _same_saved_identity(left: PersistedSpeakerState, right: PersistedSpeakerState) -> bool:
+        return (
+            left.last_ip == right.last_ip
+            and left.last_mac == right.last_mac
+            and left.last_speaker_name == right.last_speaker_name
+            and left.last_speaker_model == right.last_speaker_model
+            and left.last_firmware_version == right.last_firmware_version
+            and left.backend == right.backend
+            and left.matched_by == right.matched_by
+        )
 
     def load(self) -> PersistedSpeakerState:
         if not self.config.persist_runtime_state:
@@ -79,6 +92,7 @@ class SpeakerStateStore:
             with open(self.path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             state = PersistedSpeakerState.from_dict(data if isinstance(data, dict) else {})
+            self._last_saved_state = state
             self.log.info(
                 "Loaded saved speaker state | "
                 f"state_file={self.path} ip={state.last_ip or '<empty>'} mac={state.last_mac or '<empty>'} "
@@ -96,8 +110,27 @@ class SpeakerStateStore:
             return False
 
         state = PersistedSpeakerState.from_identity(identity)
+        previous = self._last_saved_state
+        if previous is None and os.path.exists(self.path):
+            try:
+                with open(self.path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                previous = PersistedSpeakerState.from_dict(data if isinstance(data, dict) else {})
+            except Exception:
+                previous = None
+
+        if previous is not None and self._same_saved_identity(previous, state):
+            self._last_saved_state = previous
+            self.log.debug(
+                "Skipped unchanged speaker state write | "
+                f"source={source} state_file={self.path} ip={state.last_ip or '<empty>'} "
+                f"mac={state.last_mac or '<empty>'}"
+            )
+            return False
+
         try:
             write_json_atomic(self.path, state.to_dict(), prefix="speaker_state_")
+            self._last_saved_state = state
 
             self.log.info(
                 "Saved current speaker state | "

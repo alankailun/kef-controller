@@ -113,8 +113,6 @@ class ControllerDeviceControlsMixin:
             return False
         if not self._ensure_target_identity("CHANGE_INPUT", "ui_live", "change_input_before_action"):
             return False
-        previous_input = self.get_input_source()
-        previous_player_source = self.get_player_source_hint()
         if not self.get_current_kef_ip():
             return False
         if not self._action_lock.acquire(timeout=2.0):
@@ -122,6 +120,7 @@ class ControllerDeviceControlsMixin:
             return False
 
         try:
+            previous_input = self.get_input_source()
             for attempt in range(1, 3):
                 if attempt > 1:
                     time.sleep(0.6)
@@ -142,32 +141,17 @@ class ControllerDeviceControlsMixin:
                         self.reset_speaker()
                         continue
 
-                    actual_player_source, player_ok = self._verify_player_source(new_input)
-                    if not player_ok:
-                        self._log_structured(
-                            "WARN",
-                            action="CHANGE_INPUT",
-                            requested_input=requested_input,
-                            normalized_input=new_input,
-                            attempt=attempt,
-                            cause="player_source_not_verified",
-                            actual_input=actual_input or "<unknown>",
-                            actual_player_source=actual_player_source,
-                            mono=f"{self.mono():.3f}",
-                        )
-                        self.reset_speaker()
-                        continue
                     self._log_structured(
                         "STEP",
                         action="CHANGE_INPUT",
                         requested_input=requested_input,
                         new_input=new_input,
                         previous_input=previous_input or "<unknown>",
-                        previous_player_source=previous_player_source or "<unknown>",
+                        previous_player_source="<not_read>",
                         attempt=attempt,
                         status="success",
                         actual_input=actual_input,
-                        actual_player_source=actual_player_source or "<unknown>",
+                        actual_player_source="<skipped_input_confirmed>",
                         mono=f"{self.mono():.3f}",
                     )
                     return True

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import contextlib
-import socket
 import threading
 
 import requests.sessions
 
 
-_socket_timeout_lock = threading.Lock()
 _requests_timeout_patch_lock = threading.Lock()
 _requests_timeout_local = threading.local()
 _REQUESTS_TIMEOUT_UNSET = object()
@@ -39,22 +37,16 @@ def _install_requests_default_timeout_patch() -> None:
 
 @contextlib.contextmanager
 def temporary_socket_timeout(seconds: float):
-    # socket.setdefaulttimeout is process-global; serialize updates so threads
-    # do not trample each other's timeout settings.
     _install_requests_default_timeout_patch()
-    with _socket_timeout_lock:
-        previous = socket.getdefaulttimeout()
-        previous_requests_timeout = getattr(_requests_timeout_local, "timeout", _REQUESTS_TIMEOUT_UNSET)
-        socket.setdefaulttimeout(seconds)
-        _requests_timeout_local.timeout = seconds
-        try:
-            yield
-        finally:
-            if previous_requests_timeout is _REQUESTS_TIMEOUT_UNSET:
-                try:
-                    delattr(_requests_timeout_local, "timeout")
-                except AttributeError:
-                    pass
-            else:
-                _requests_timeout_local.timeout = previous_requests_timeout
-            socket.setdefaulttimeout(previous)
+    previous_requests_timeout = getattr(_requests_timeout_local, "timeout", _REQUESTS_TIMEOUT_UNSET)
+    _requests_timeout_local.timeout = seconds
+    try:
+        yield
+    finally:
+        if previous_requests_timeout is _REQUESTS_TIMEOUT_UNSET:
+            try:
+                delattr(_requests_timeout_local, "timeout")
+            except AttributeError:
+                pass
+        else:
+            _requests_timeout_local.timeout = previous_requests_timeout

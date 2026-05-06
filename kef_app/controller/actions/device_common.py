@@ -33,6 +33,7 @@ _HOST_UNREACHABLE_MARKERS = (
     "no route to host",
     "unreachable host",
 )
+_HOST_UNREACHABLE_PATTERN = re.compile("|".join(re.escape(marker) for marker in _HOST_UNREACHABLE_MARKERS))
 
 
 def _is_host_unreachable(exc: BaseException) -> bool:
@@ -52,7 +53,7 @@ def _is_host_unreachable(exc: BaseException) -> bool:
             return True
 
         text = f"{type(current).__name__}: {current!r} {current}".casefold()
-        if any(marker in text for marker in _HOST_UNREACHABLE_MARKERS):
+        if _HOST_UNREACHABLE_PATTERN.search(text):
             return True
 
         cause = getattr(current, "__cause__", None)
@@ -444,8 +445,10 @@ class ControllerDeviceCommonMixin:
         expected = normalize_input_source(expected_input)
         deadline = self.mono() + timeout
         observed = None
+        fresh = True
         while self.mono() < deadline:
-            observed = self.get_input_source(fresh=True)
+            observed = self.get_input_source(fresh=fresh)
+            fresh = False
             if observed == expected:
                 return observed
             time.sleep(_CHANGE_INPUT_POLL_INTERVAL)

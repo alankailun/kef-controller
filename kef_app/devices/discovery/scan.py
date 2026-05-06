@@ -31,6 +31,39 @@ def _sort_identity_key(identity: SpeakerIdentity) -> tuple[int, str]:
         return (0, identity.speaker_name.casefold())
 
 
+def _reachable_hosts(
+    executor: ThreadPoolExecutor,
+    hosts: list[str],
+    config: AppConfig,
+) -> list[str]:
+    reachable_pairs = zip(
+        hosts,
+        executor.map(
+            lambda host_ip: probe_ip_port(host_ip, config.mac_discovery_tcp_port, config.mac_discovery_probe_timeout),
+            hosts,
+        ),
+    )
+    return [host_ip for host_ip, ok in reachable_pairs if ok]
+
+
+def _identify_hosts(
+    executor: ThreadPoolExecutor,
+    hosts: list[str],
+    config: AppConfig,
+) -> list[SpeakerIdentity]:
+    identities: list[SpeakerIdentity] = []
+    batch_size = max(1, config.blind_discovery_max_workers)
+    for start in range(0, len(hosts), batch_size):
+        batch = hosts[start : start + batch_size]
+        found = executor.map(lambda host_ip: identify_kef_device(host_ip, config), batch)
+        identities.extend(identity for identity in found if identity)
+    return identities
+
+
+def _shared_discovery_workers(host_count: int, config: AppConfig) -> int:
+    return max(1, min(host_count, max(config.mac_discovery_max_workers, config.blind_discovery_max_workers)))
+
+
 def discover_kef_devices(seed_ip: Optional[str], config: AppConfig, log) -> list[SpeakerIdentity]:
     networks = build_candidate_networks(seed_ip, config, log)
     if not networks:
@@ -53,26 +86,14 @@ def discover_kef_devices(seed_ip: Optional[str], config: AppConfig, log) -> list
         network_started = time.monotonic()
         hosts = _prioritize_seed([str(host) for host in network.hosts()], seed_ip)
 
-        with ThreadPoolExecutor(max_workers=config.mac_discovery_max_workers) as executor:
-            reachable_pairs = zip(
-                hosts,
-                executor.map(
-                    lambda host_ip: probe_ip_port(host_ip, config.mac_discovery_tcp_port, config.mac_discovery_probe_timeout),
-                    hosts,
-                ),
-            )
-            reachable_hosts = [host_ip for host_ip, ok in reachable_pairs if ok]
+        with ThreadPoolExecutor(max_workers=_shared_discovery_workers(len(hosts), config)) as executor:
+            reachable_hosts = _reachable_hosts(executor, hosts, config)
+            identities = _identify_hosts(executor, reachable_hosts, config) if reachable_hosts else []
 
         total_reachable_hosts += len(reachable_hosts)
-        identified_count = 0
-
-        if reachable_hosts:
-            max_workers = max(1, min(config.blind_discovery_max_workers, len(reachable_hosts)))
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                for identity in executor.map(lambda host_ip: identify_kef_device(host_ip, config), reachable_hosts):
-                    if identity:
-                        identified_count += 1
-                        candidates_by_ip[identity.ip] = identity
+        identified_count = len(identities)
+        for identity in identities:
+            candidates_by_ip[identity.ip] = identity
 
         total_identified_kef += identified_count
         log.info(
@@ -120,25 +141,11 @@ def discover_kef_device_blind(known_mac: str, seed_ip: Optional[str], config: Ap
         network_started = time.monotonic()
         hosts = _prioritize_seed([str(host) for host in network.hosts()], seed_ip)
 
-        with ThreadPoolExecutor(max_workers=config.mac_discovery_max_workers) as executor:
-            reachable_pairs = zip(
-                hosts,
-                executor.map(
-                    lambda host_ip: probe_ip_port(host_ip, config.mac_discovery_tcp_port, config.mac_discovery_probe_timeout),
-                    hosts,
-                ),
-            )
-            reachable_hosts = [host_ip for host_ip, ok in reachable_pairs if ok]
+        with ThreadPoolExecutor(max_workers=_shared_discovery_workers(len(hosts), config)) as executor:
+            reachable_hosts = _reachable_hosts(executor, hosts, config)
+            identities = _identify_hosts(executor, reachable_hosts, config) if reachable_hosts else []
 
         total_reachable_hosts += len(reachable_hosts)
-        identities: list[SpeakerIdentity] = []
-
-        if reachable_hosts:
-            max_workers = max(1, min(config.blind_discovery_max_workers, len(reachable_hosts)))
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                for identity in executor.map(lambda host_ip: identify_kef_device(host_ip, config), reachable_hosts):
-                    if identity:
-                        identities.append(identity)
 
         total_identified_kef += len(identities)
         log.info(
@@ -228,12 +235,7 @@ def discover_ip_by_mac(target_mac: str, seed_ip: Optional[str], config: AppConfi
         hosts = _prioritize_seed([str(host) for host in network.hosts()], seed_ip)
 
         with ThreadPoolExecutor(max_workers=config.mac_discovery_max_workers) as executor:
-            list(
-                executor.map(
-                    lambda ip: probe_ip_port(ip, config.mac_discovery_tcp_port, config.mac_discovery_probe_timeout),
-                    hosts,
-                )
-            )
+            _reachable_hosts(executor, hosts, config)
 
         arp_map = read_arp_table(log)
         last_arp_map = arp_map

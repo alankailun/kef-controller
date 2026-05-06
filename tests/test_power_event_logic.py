@@ -39,6 +39,19 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertTrue(_is_host_unreachable(self.host_unreachable_error()))
         self.assertFalse(_is_host_unreachable(ConnectionRefusedError(10061, "Connection refused")))
 
+    def test_wait_for_input_source_reuses_connector_after_first_poll(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        controller.get_input_source = Mock(side_effect=[None, "coaxial"])
+
+        with patch("kef_app.controller.actions.device_common.time.sleep"):
+            observed = controller._wait_for_input_source("coaxial", timeout=0.5)
+
+        self.assertEqual(observed, "coaxial")
+        self.assertEqual(
+            [call.kwargs["fresh"] for call in controller.get_input_source.mock_calls],
+            [True, False],
+        )
+
     def test_on_startup_delay_can_abort_before_wake(self):
         controller = self.make_controller(wake_on_startup=True, startup_delay=0.5)
         controller._interruptible_sleep = Mock(return_value=False)
@@ -694,6 +707,21 @@ class PowerEventLogicTests(unittest.TestCase):
 
         self.assertFalse(controller.change_input_live(""))
         self.assertFalse(controller.change_input_live("standby"))
+
+    def test_change_input_skips_player_source_probe_after_input_is_confirmed(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
+        controller._ensure_target_identity = Mock(return_value=True)
+        controller.get_input_source = Mock(side_effect=["wifi", "coaxial"])
+        controller._set_speaker_source = Mock()
+        controller.get_player_source_hint = Mock()
+        controller._verify_player_source = Mock()
+
+        result = controller.change_input_live("coaxial")
+
+        self.assertTrue(result)
+        controller._set_speaker_source.assert_called_once_with("coaxial", fresh=True)
+        controller.get_player_source_hint.assert_not_called()
+        controller._verify_player_source.assert_not_called()
 
     def test_set_volume_rejects_non_numeric_level_without_connector_call(self):
         controller = self.make_controller(kef_ip="192.168.1.10")
