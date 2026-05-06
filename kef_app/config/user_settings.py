@@ -14,7 +14,7 @@ class UserSettings:
     mac_discovery_subnet_prefix: int = 24
     mac_discovery_extra_cidrs: list[str] = field(default_factory=list)
     mac_discovery_tcp_port: int = 80
-    mac_discovery_probe_timeout: float = 0.20
+    mac_discovery_probe_timeout: float = 0.50
     mac_discovery_max_workers: int = 48
     mac_discovery_cooldown: float = 30.0
     mac_discovery_max_hosts_per_network: int = 512

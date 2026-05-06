@@ -71,6 +71,22 @@ class UserConfigStoreTests(unittest.TestCase):
             self.assertEqual(loaded.blind_discovery_max_workers, 4)
             self.assertIn("blind_discovery_http_timeout", saved)
 
+    def test_legacy_discovery_probe_timeout_is_raised_to_current_default(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_config = self.make_config(temp_dir)
+            path = base_config.config_file
+            data = UserConfigStore(base_config)._to_user_dict(base_config)
+            data["mac_discovery_probe_timeout"] = 0.20
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(data, handle)
+
+            loaded = UserConfigStore(base_config).load_or_create()
+
+            self.assertEqual(loaded.mac_discovery_probe_timeout, 0.50)
+            with open(path, "r", encoding="utf-8") as handle:
+                saved = json.load(handle)
+            self.assertEqual(saved["mac_discovery_probe_timeout"], 0.50)
+
     def test_invalid_input_source_is_ignored(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base_config = self.make_config(temp_dir)

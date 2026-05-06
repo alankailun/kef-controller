@@ -14,6 +14,8 @@ from ..devices.speaker_models import normalize_mac
 
 _USER_SETTINGS_FIELD_NAMES = tuple(field.name for field in dataclass_fields(UserSettings))
 _CONFIGURABLE_INPUT_SOURCES = {value for _, value in INPUT_SOURCE_OPTIONS}
+_LEGACY_MAC_DISCOVERY_PROBE_TIMEOUT = 0.20
+_DEFAULT_MAC_DISCOVERY_PROBE_TIMEOUT = 0.50
 
 
 def _coerce_string(value: Any) -> str:
@@ -173,6 +175,8 @@ class UserConfigStore:
 
             loaded = self._apply_to_config(self._base_config.clone(), data)
             loaded = self._migrate_legacy_device_target(loaded, data)
+            if self._migrate_legacy_probe_timeout(loaded, data):
+                self.save(loaded)
             if "log_dir" in data:
                 self._startup_messages.append(
                     f"Ignored legacy custom log_dir and kept the default log folder | log_dir={loaded.log_dir}"
@@ -239,6 +243,22 @@ class UserConfigStore:
             )
 
         return config
+
+    def _migrate_legacy_probe_timeout(self, config: AppConfig, data: dict[str, Any]) -> bool:
+        if "mac_discovery_probe_timeout" not in data:
+            return False
+        try:
+            probe_timeout = float(data["mac_discovery_probe_timeout"])
+        except Exception:
+            return False
+        if not math.isclose(probe_timeout, _LEGACY_MAC_DISCOVERY_PROBE_TIMEOUT, rel_tol=0.0, abs_tol=1e-9):
+            return False
+
+        config.mac_discovery_probe_timeout = _DEFAULT_MAC_DISCOVERY_PROBE_TIMEOUT
+        self._startup_messages.append(
+            "Raised legacy MAC discovery probe timeout from 0.20s to 0.50s"
+        )
+        return True
 
     @staticmethod
     def _format_value_for_log(value: Any, limit: int = 120) -> str:
