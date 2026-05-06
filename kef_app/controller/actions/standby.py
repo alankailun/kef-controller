@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .device_common import _STANDBY_VERIFY_TIMEOUT, StandbyVerificationError
+from .device_common import _STANDBY_VERIFY_TIMEOUT, StandbyVerificationError, _is_host_unreachable
 
 
 class ControllerDeviceStandbyMixin:
@@ -84,6 +84,22 @@ class ControllerDeviceStandbyMixin:
                 return True
             except Exception as exc:
                 self.reset_speaker()
+                if _is_host_unreachable(exc):
+                    self._mark_lock_prestandby_success()
+                    outcome = "success_assumed_host_unreachable"
+                    self._log_structured(
+                        "STEP",
+                        action="LOCK_PRE_STANDBY",
+                        gen=generation,
+                        reason=reason,
+                        step="shutdown_request",
+                        status="host_unreachable_assumed_standby",
+                        cause="host_unreachable_assume_standby",
+                        error=repr(exc),
+                        target_ip=current_ip,
+                        mono=f"{self.mono():.3f}",
+                    )
+                    return True
                 outcome = "failed"
                 self._log_structured(
                     "WARN",
@@ -283,6 +299,22 @@ class ControllerDeviceStandbyMixin:
                 return True
             except Exception as exc:
                 self.reset_speaker()
+                if _is_host_unreachable(exc):
+                    outcome = "success_best_effort_host_unreachable"
+                    self._log_structured(
+                        "STEP",
+                        action="STANDBY",
+                        gen=generation,
+                        reason=reason,
+                        attempt=1,
+                        step="suspend_fast_path",
+                        status="host_unreachable_best_effort",
+                        cause="suspend_network_or_speaker_unreachable",
+                        error=repr(exc),
+                        target_ip=current_ip,
+                        mono=f"{self.mono():.3f}",
+                    )
+                    return True
                 outcome = "failed_fast_suspend"
                 self._log_structured(
                     "WARN",

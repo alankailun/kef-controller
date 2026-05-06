@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 from kef_app.config import AppConfig
 from kef_app.controller import KefPowerController
+from kef_app.controller.actions.device_common import _is_host_unreachable
 from kef_app.devices.speaker_models import SpeakerIdentity
 from kef_app.platform.windows import ENDSESSION_CLOSEAPP
 
@@ -17,6 +18,26 @@ class PowerEventLogicTests(unittest.TestCase):
         logger.handlers = [logging.NullHandler()]
         logger.propagate = False
         return KefPowerController(config, logger)
+
+    @staticmethod
+    def host_unreachable_error() -> OSError:
+        return OSError("[WinError 10065] A socket operation was attempted to an unreachable host")
+
+    def capture_events(self, controller: KefPowerController) -> list[tuple[str, dict[str, object]]]:
+        events: list[tuple[str, dict[str, object]]] = []
+        controller.add_event_listener(lambda name, payload: events.append((name, payload)))
+        return events
+
+    @staticmethod
+    def emitted_outcome(events: list[tuple[str, dict[str, object]]], outcome: str) -> bool:
+        return any(
+            name == "power_action_finished" and payload.get("success") is True and payload.get("outcome") == outcome
+            for name, payload in events
+        )
+
+    def test_host_unreachable_classifier_does_not_match_connection_refused(self):
+        self.assertTrue(_is_host_unreachable(self.host_unreachable_error()))
+        self.assertFalse(_is_host_unreachable(ConnectionRefusedError(10061, "Connection refused")))
 
     def test_on_startup_delay_can_abort_before_wake(self):
         controller = self.make_controller(wake_on_startup=True, startup_delay=0.5)
@@ -262,6 +283,30 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._request_shutdown.assert_called_once_with(fresh=False, timeout=0.25)
         self.assertTrue(controller._recently_lock_standby_ok())
 
+    def test_preemptive_standby_treats_host_unreachable_as_assumed_standby(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+            suspend_fast_standby_socket_timeout=0.25,
+        )
+        events = self.capture_events(controller)
+        generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
+        controller._log_structured = Mock()
+        controller._request_shutdown = Mock(side_effect=self.host_unreachable_error())
+
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+
+        self.assertTrue(result)
+        controller._request_shutdown.assert_called_once_with(fresh=False, timeout=0.25)
+        self.assertTrue(controller._recently_lock_standby_ok())
+        self.assertTrue(self.emitted_outcome(events, "success_assumed_host_unreachable"))
+        self.assertFalse(
+            any(
+                call.args[:1] == ("WARN",) and call.kwargs.get("action") == "LOCK_PRE_STANDBY"
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
     def test_preemptive_standby_skips_without_current_ip(self):
         controller = self.make_controller(kef_ip="")
         generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
@@ -292,6 +337,29 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._ensure_target_identity.assert_not_called()
         controller._perform_standby_request.assert_not_called()
         controller._request_shutdown.assert_called_once_with(fresh=False, timeout=0.25)
+
+    def test_fast_suspend_standby_treats_host_unreachable_as_best_effort_success(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+            suspend_fast_standby_socket_timeout=0.25,
+        )
+        events = self.capture_events(controller)
+        generation = controller._new_generation("sleep", "PBT_APMSUSPEND")
+        controller._log_structured = Mock()
+        controller._request_shutdown = Mock(side_effect=self.host_unreachable_error())
+
+        result = controller.standby_kef_fast_suspend(generation, "PBT_APMSUSPEND")
+
+        self.assertTrue(result)
+        controller._request_shutdown.assert_called_once_with(fresh=False, timeout=0.25)
+        self.assertTrue(self.emitted_outcome(events, "success_best_effort_host_unreachable"))
+        self.assertFalse(
+            any(
+                call.args[:1] == ("WARN",) and call.kwargs.get("action") == "STANDBY"
+                for call in controller._log_structured.mock_calls
+            )
+        )
 
     def test_fast_suspend_standby_skips_without_current_ip(self):
         controller = self.make_controller(kef_ip="")
