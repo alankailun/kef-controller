@@ -4,7 +4,27 @@ from ...devices.discovery import discover_ip_by_mac, discover_kef_device_blind, 
 from ...devices.speaker_models import SpeakerIdentity
 
 
+_BLIND_DISCOVERY_MAC_MISS_THRESHOLD = 2
+
+
 class ControllerDiscoveryRecoveryMixin:
+    def _set_mac_discovery_miss_state(self, *, scanned_miss: bool, miss_count: int | None = None) -> int:
+        with self._state_lock:
+            if miss_count is not None:
+                self._mac_discovery_miss_count = max(0, miss_count)
+            self._last_mac_discovery_scanned_miss = scanned_miss
+            return self._mac_discovery_miss_count
+
+    def _record_mac_discovery_miss(self) -> int:
+        with self._state_lock:
+            self._mac_discovery_miss_count += 1
+            self._last_mac_discovery_scanned_miss = True
+            return self._mac_discovery_miss_count
+
+    def _mac_discovery_gate_state(self) -> tuple[bool, int]:
+        with self._state_lock:
+            return self._last_mac_discovery_scanned_miss, self._mac_discovery_miss_count
+
     def scan_kef_devices(self) -> list[SpeakerIdentity]:
         if not self._blind_discovery_lock.acquire(blocking=False):
             self._log_structured(
@@ -63,6 +83,7 @@ class ControllerDiscoveryRecoveryMixin:
 
     def maybe_refresh_kef_ip_by_mac(self, reason: str, trigger: str, force: bool = False) -> bool:
         c = self.config
+        self._set_mac_discovery_miss_state(scanned_miss=False)
         effective_mac = self.get_effective_target_mac()
         if not effective_mac:
             self._log_structured(
@@ -116,6 +137,7 @@ class ControllerDiscoveryRecoveryMixin:
             )
             discovered_ip = discover_ip_by_mac(target_mac, seed_ip, c, self.log)
             if not discovered_ip:
+                miss_count = self._record_mac_discovery_miss()
                 end_mono = self.mono()
                 self._log_action_sleep_crossing("DISCOVER_IP", None, reason, now, end_mono)
                 self._log_structured(
@@ -124,11 +146,13 @@ class ControllerDiscoveryRecoveryMixin:
                     reason=reason,
                     trigger=trigger,
                     outcome="not_found",
+                    consecutive_misses=miss_count,
                     duration_ms=int((end_mono - now) * 1000),
                     mono=f"{end_mono:.3f}",
                 )
                 return False
 
+            self._set_mac_discovery_miss_state(scanned_miss=False, miss_count=0)
             changed = self.update_kef_ip(discovered_ip, source=trigger)
             end_mono = self.mono()
             self._log_action_sleep_crossing("DISCOVER_IP", None, reason, now, end_mono)
@@ -241,4 +265,26 @@ class ControllerDiscoveryRecoveryMixin:
         refreshed = self.maybe_refresh_kef_ip_by_mac(reason=reason, trigger=trigger, force=force)
         if refreshed:
             return True
-        return self.maybe_refresh_kef_ip_by_blind(reason=reason, trigger=trigger, force=force)
+        if not self.get_effective_target_mac():
+            return self.maybe_refresh_kef_ip_by_blind(reason=reason, trigger=trigger, force=force)
+
+        scanned_miss, miss_count = self._mac_discovery_gate_state()
+        if not scanned_miss or miss_count < _BLIND_DISCOVERY_MAC_MISS_THRESHOLD:
+            self._log_structured(
+                "SKIP",
+                action="BLIND_DISCOVER_IP",
+                reason=reason,
+                trigger=trigger,
+                cause="mac_discovery_miss_gate",
+                consecutive_misses=miss_count,
+                required_misses=_BLIND_DISCOVERY_MAC_MISS_THRESHOLD,
+                fresh_mac_miss=scanned_miss,
+                force=force,
+                mono=f"{self.mono():.3f}",
+            )
+            return False
+
+        try:
+            return self.maybe_refresh_kef_ip_by_blind(reason=reason, trigger=trigger, force=force)
+        finally:
+            self._set_mac_discovery_miss_state(scanned_miss=False, miss_count=0)

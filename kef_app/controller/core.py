@@ -58,6 +58,8 @@ class KefPowerController(
         self._identity_probe_failures = 0
         self._last_mac_discovery_mono = 0.0
         self._last_blind_discovery_mono = 0.0
+        self._mac_discovery_miss_count = 0
+        self._last_mac_discovery_scanned_miss = False
 
         self._generation = 0
         self._last_resume_event_mono = 0.0

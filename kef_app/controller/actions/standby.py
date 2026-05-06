@@ -11,6 +11,120 @@ class ControllerDeviceStandbyMixin:
                 return False
             return (self.mono() - last) < self.config.lock_standby_dedup_window
 
+    def _perform_fast_shutdown(
+        self,
+        *,
+        action: str,
+        generation: int,
+        reason: str,
+        begin_step: str,
+        success_step: str,
+        lock_timeout: float,
+        lock_purpose: str,
+        socket_timeout: float,
+        success_outcome: str,
+        host_unreachable_outcome: str,
+        host_unreachable_status: str,
+        host_unreachable_cause: str,
+        failed_outcome: str,
+        failed_status: str | None = None,
+        attempt: int | None = None,
+        mark_lock_success: bool = False,
+    ) -> tuple[bool, str]:
+        current_ip = self.get_current_kef_ip()
+        self._log_structured(
+            "STEP",
+            action=action,
+            gen=generation,
+            reason=reason,
+            step=begin_step,
+            status="begin",
+            target_ip=current_ip or "<empty>",
+            target_mac=self.get_effective_target_mac() or "<empty>",
+            identity_check="cached_target_only",
+            verify_standby=False,
+            mono=f"{self.mono():.3f}",
+        )
+        if not current_ip:
+            outcome = "skipped_no_current_ip"
+            self._log_structured(
+                "SKIP",
+                action=action,
+                gen=generation,
+                reason=reason,
+                cause="no_current_ip",
+                mono=f"{self.mono():.3f}",
+            )
+            return False, outcome
+
+        outcome = self._acquire_generation_action_lock(
+            action=action,
+            generation=generation,
+            reason=reason,
+            lock_timeout=lock_timeout,
+            purpose=lock_purpose,
+        )
+        if outcome is not None:
+            return False, outcome
+
+        try:
+            self._request_shutdown(fresh=False, timeout=socket_timeout)
+            if mark_lock_success:
+                self._mark_lock_prestandby_success()
+            outcome = success_outcome
+            self._log_structured(
+                "STEP",
+                action=action,
+                gen=generation,
+                reason=reason,
+                step=success_step,
+                status="sent",
+                target_ip=current_ip,
+                timeout_s=f"{socket_timeout:.2f}",
+                mono=f"{self.mono():.3f}",
+            )
+            return True, outcome
+        except Exception as exc:
+            self.reset_speaker()
+            if _is_host_unreachable(exc):
+                if mark_lock_success:
+                    self._mark_lock_prestandby_success()
+                outcome = host_unreachable_outcome
+                fields = {
+                    "action": action,
+                    "gen": generation,
+                    "reason": reason,
+                    "step": success_step,
+                    "status": host_unreachable_status,
+                    "cause": host_unreachable_cause,
+                    "error": repr(exc),
+                    "target_ip": current_ip,
+                    "mono": f"{self.mono():.3f}",
+                }
+                if attempt is not None:
+                    fields["attempt"] = attempt
+                self._log_structured("STEP", **fields)
+                return True, outcome
+
+            outcome = failed_outcome
+            fields = {
+                "action": action,
+                "gen": generation,
+                "reason": reason,
+                "cause": "shutdown_failed",
+                "error": repr(exc),
+                "target_ip": current_ip,
+                "mono": f"{self.mono():.3f}",
+            }
+            if attempt is not None:
+                fields["attempt"] = attempt
+            if failed_status is not None:
+                fields["status"] = failed_status
+            self._log_structured("WARN", **fields)
+            return False, outcome
+        finally:
+            self._action_lock.release()
+
     def standby_kef_preemptive(self, generation: int, reason: str) -> bool:
         outcome = "unknown"
         start_mono = self._log_action_begin("LOCK_PRE_STANDBY", generation, reason)
@@ -30,90 +144,23 @@ class ControllerDeviceStandbyMixin:
                 )
                 return False
 
-            current_ip = self.get_current_kef_ip()
-            self._log_structured(
-                "STEP",
-                action="LOCK_PRE_STANDBY",
-                gen=generation,
-                reason=reason,
-                step="lock_fast_path",
-                status="begin",
-                target_ip=current_ip or "<empty>",
-                target_mac=self.get_effective_target_mac() or "<empty>",
-                identity_check="cached_target_only",
-                verify_standby=False,
-                mono=f"{self.mono():.3f}",
-            )
-            if not current_ip:
-                outcome = "skipped_no_current_ip"
-                self._log_structured(
-                    "SKIP",
-                    action="LOCK_PRE_STANDBY",
-                    gen=generation,
-                    reason=reason,
-                    cause="no_current_ip",
-                    mono=f"{self.mono():.3f}",
-                )
-                return False
-
-            outcome = self._acquire_generation_action_lock(
+            success, outcome = self._perform_fast_shutdown(
                 action="LOCK_PRE_STANDBY",
                 generation=generation,
                 reason=reason,
+                begin_step="lock_fast_path",
+                success_step="shutdown_request",
                 lock_timeout=c.lock_standby_action_lock_timeout,
-                purpose="lock_pre_standby",
+                lock_purpose="lock_pre_standby",
+                socket_timeout=c.suspend_fast_standby_socket_timeout,
+                success_outcome="success",
+                host_unreachable_outcome="success_assumed_host_unreachable",
+                host_unreachable_status="host_unreachable_assumed_standby",
+                host_unreachable_cause="host_unreachable_assume_standby",
+                failed_outcome="failed",
+                mark_lock_success=True,
             )
-            if outcome is not None:
-                return False
-
-            try:
-                self._request_shutdown(fresh=False, timeout=c.suspend_fast_standby_socket_timeout)
-                self._mark_lock_prestandby_success()
-                outcome = "success"
-                self._log_structured(
-                    "STEP",
-                    action="LOCK_PRE_STANDBY",
-                    gen=generation,
-                    reason=reason,
-                    step="shutdown_request",
-                    status="sent",
-                    target_ip=current_ip,
-                    timeout_s=f"{c.suspend_fast_standby_socket_timeout:.2f}",
-                    mono=f"{self.mono():.3f}",
-                )
-                return True
-            except Exception as exc:
-                self.reset_speaker()
-                if _is_host_unreachable(exc):
-                    self._mark_lock_prestandby_success()
-                    outcome = "success_assumed_host_unreachable"
-                    self._log_structured(
-                        "STEP",
-                        action="LOCK_PRE_STANDBY",
-                        gen=generation,
-                        reason=reason,
-                        step="shutdown_request",
-                        status="host_unreachable_assumed_standby",
-                        cause="host_unreachable_assume_standby",
-                        error=repr(exc),
-                        target_ip=current_ip,
-                        mono=f"{self.mono():.3f}",
-                    )
-                    return True
-                outcome = "failed"
-                self._log_structured(
-                    "WARN",
-                    action="LOCK_PRE_STANDBY",
-                    gen=generation,
-                    reason=reason,
-                    cause="shutdown_failed",
-                    error=repr(exc),
-                    target_ip=current_ip,
-                    mono=f"{self.mono():.3f}",
-                )
-                return False
-            finally:
-                self._action_lock.release()
+            return success
         finally:
             self._emit_power_action_finished("LOCK_PRE_STANDBY", reason, outcome)
             self._log_action_end("LOCK_PRE_STANDBY", generation, reason, outcome, start_mono)
@@ -246,91 +293,24 @@ class ControllerDeviceStandbyMixin:
                 )
                 return False
 
-            current_ip = self.get_current_kef_ip()
-            self._log_structured(
-                "STEP",
-                action="STANDBY",
-                gen=generation,
-                reason=reason,
-                step="suspend_fast_path",
-                status="begin",
-                target_ip=current_ip or "<empty>",
-                target_mac=self.get_effective_target_mac() or "<empty>",
-                identity_check="cached_target_only",
-                verify_standby=False,
-                mono=f"{self.mono():.3f}",
-            )
-            if not current_ip:
-                outcome = "skipped_no_current_ip"
-                self._log_structured(
-                    "SKIP",
-                    action="STANDBY",
-                    gen=generation,
-                    reason=reason,
-                    cause="no_current_ip",
-                    mono=f"{self.mono():.3f}",
-                )
-                return False
-
-            outcome = self._acquire_generation_action_lock(
+            success, outcome = self._perform_fast_shutdown(
                 action="STANDBY",
                 generation=generation,
                 reason=reason,
+                begin_step="suspend_fast_path",
+                success_step="suspend_fast_path",
                 lock_timeout=c.suspend_fast_standby_action_lock_timeout,
-                purpose="standby",
+                lock_purpose="standby",
+                socket_timeout=c.suspend_fast_standby_socket_timeout,
+                success_outcome="success_fast_suspend",
+                host_unreachable_outcome="success_best_effort_host_unreachable",
+                host_unreachable_status="host_unreachable_best_effort",
+                host_unreachable_cause="suspend_network_or_speaker_unreachable",
+                failed_outcome="failed_fast_suspend",
+                failed_status="fast_suspend_failed",
+                attempt=1,
             )
-            if outcome is not None:
-                return False
-
-            try:
-                self._request_shutdown(fresh=False, timeout=c.suspend_fast_standby_socket_timeout)
-                outcome = "success_fast_suspend"
-                self._log_structured(
-                    "STEP",
-                    action="STANDBY",
-                    gen=generation,
-                    reason=reason,
-                    step="suspend_fast_path",
-                    status="sent",
-                    target_ip=current_ip,
-                    timeout_s=f"{c.suspend_fast_standby_socket_timeout:.2f}",
-                    mono=f"{self.mono():.3f}",
-                )
-                return True
-            except Exception as exc:
-                self.reset_speaker()
-                if _is_host_unreachable(exc):
-                    outcome = "success_best_effort_host_unreachable"
-                    self._log_structured(
-                        "STEP",
-                        action="STANDBY",
-                        gen=generation,
-                        reason=reason,
-                        attempt=1,
-                        step="suspend_fast_path",
-                        status="host_unreachable_best_effort",
-                        cause="suspend_network_or_speaker_unreachable",
-                        error=repr(exc),
-                        target_ip=current_ip,
-                        mono=f"{self.mono():.3f}",
-                    )
-                    return True
-                outcome = "failed_fast_suspend"
-                self._log_structured(
-                    "WARN",
-                    action="STANDBY",
-                    gen=generation,
-                    reason=reason,
-                    attempt=1,
-                    cause="shutdown_failed",
-                    status="fast_suspend_failed",
-                    error=repr(exc),
-                    target_ip=current_ip,
-                    mono=f"{self.mono():.3f}",
-                )
-                return False
-            finally:
-                self._action_lock.release()
+            return success
         finally:
             self._emit_power_action_finished("STANDBY", reason, outcome)
             self._log_action_end("STANDBY", generation, reason, outcome, start_mono)

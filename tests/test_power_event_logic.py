@@ -555,6 +555,41 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertFalse(resolved)
         identify.assert_called_once_with("192.168.1.10", controller.config)
 
+    def test_refresh_ip_requires_consecutive_mac_misses_before_blind_scan(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
+        identity = SpeakerIdentity(
+            ip="192.168.1.20",
+            mac="AABBCCDDEE01",
+            speaker_name="Office Speaker",
+            speaker_model="LS50 Wireless II",
+        )
+
+        with (
+            patch("kef_app.controller.discovery.recovery.discover_ip_by_mac", return_value=None) as discover_by_mac,
+            patch("kef_app.controller.discovery.recovery.discover_kef_device_blind", return_value=identity) as blind,
+        ):
+            first = controller.maybe_refresh_kef_ip("unit_test", "unit_test", force=True)
+            second = controller.maybe_refresh_kef_ip("unit_test", "unit_test", force=True)
+
+        self.assertFalse(first)
+        self.assertTrue(second)
+        self.assertEqual(discover_by_mac.call_count, 2)
+        blind.assert_called_once()
+        self.assertEqual(controller.get_current_kef_ip(), "192.168.1.20")
+
+    def test_refresh_ip_resets_blind_gate_after_full_scan_attempt(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
+
+        with (
+            patch("kef_app.controller.discovery.recovery.discover_ip_by_mac", return_value=None),
+            patch("kef_app.controller.discovery.recovery.discover_kef_device_blind", return_value=None) as blind,
+        ):
+            self.assertFalse(controller.maybe_refresh_kef_ip("unit_test", "unit_test", force=True))
+            self.assertFalse(controller.maybe_refresh_kef_ip("unit_test", "unit_test", force=True))
+            self.assertFalse(controller.maybe_refresh_kef_ip("unit_test", "unit_test", force=True))
+
+        self.assertEqual(blind.call_count, 1)
+
     def test_startup_http_identity_snapshot_does_not_mutate_target(self):
         controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
         other_identity = SpeakerIdentity(
