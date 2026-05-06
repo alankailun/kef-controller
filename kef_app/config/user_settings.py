@@ -34,6 +34,9 @@ class UserSettings:
     reachability_wait_timeout: float = 4.0
     reachability_poll_interval: float = 0.25
     home_external_poll_interval: float = 2.0
+    home_event_poll_enabled: bool = True
+    home_event_poll_timeout: float = 10.0
+    home_event_reconcile_interval: float = 30.0
     tray_identity_poll_interval: float = 20.0
     identity_probe_failure_threshold: int = 2
 

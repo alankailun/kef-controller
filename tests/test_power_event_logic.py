@@ -763,6 +763,31 @@ class PowerEventLogicTests(unittest.TestCase):
 
         self.assertFalse(controller.set_volume("loud"))  # type: ignore[arg-type]
 
+    def test_speaker_event_poll_returns_normalized_ui_state(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        speaker = Mock()
+        speaker.poll_speaker.return_value = {
+            "source": "wifi",
+            "volume": 31,
+            "speaker_status": "powerOn",
+        }
+        controller.get_speaker = Mock(return_value=speaker)
+
+        result = controller.poll_speaker_event_state("unit_test", "unit_test", timeout=7.5)
+
+        self.assertEqual(result, ("wifi", 31, True))
+        speaker.poll_speaker.assert_called_once_with(timeout=7)
+
+    def test_speaker_event_poll_ignores_non_ui_events(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        speaker = Mock()
+        speaker.poll_speaker.return_value = {"device_name": "Office Speaker"}
+        controller.get_speaker = Mock(return_value=speaker)
+
+        result = controller.poll_speaker_event_state("unit_test", "unit_test", timeout=7.5)
+
+        self.assertEqual(result, (None, None, None))
+
     def test_wake_rejects_unsupported_configured_input(self):
         controller = self.make_controller(kef_ip="192.168.1.10", kef_input="standby")
         controller.wait_until_reachable = Mock(return_value=True)

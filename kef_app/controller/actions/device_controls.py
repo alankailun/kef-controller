@@ -7,6 +7,7 @@ from pykefcontrol.kef_connector import KefConnector
 
 from ..network_timeout import temporary_socket_timeout
 from ...devices.speaker_models import normalize_input_source
+from .device_common import _is_host_unreachable
 
 
 T = TypeVar("T")
@@ -96,6 +97,60 @@ class ControllerDeviceControlsMixin:
                 reachable=reachable,
                 mono=f"{self.mono():.3f}",
             )
+        return input_source, volume, speaker_on
+
+    def poll_speaker_event_state(
+        self,
+        reason: str,
+        trigger: str,
+        *,
+        timeout: float,
+    ) -> tuple[Optional[str], Optional[int], Optional[bool]]:
+        if not self.get_current_kef_ip():
+            return None, None, None
+
+        try:
+            with temporary_socket_timeout(self.config.socket_timeout):
+                speaker = self.get_speaker(fresh=False)
+                events = speaker.poll_speaker(timeout=max(1, int(timeout)))
+        except Exception as exc:
+            self.reset_speaker()
+            unreachable = _is_host_unreachable(exc)
+            self._log_structured(
+                "STEP" if unreachable else "WARN",
+                action="POLL_SPEAKER_EVENTS",
+                reason=reason,
+                trigger=trigger,
+                cause="host_unreachable" if unreachable else "event_poll_failed",
+                error=repr(exc),
+                mono=f"{self.mono():.3f}",
+            )
+            return None, None, None
+
+        if not isinstance(events, dict) or not events:
+            return None, None, None
+
+        input_source = normalize_input_source(events.get("source")) or None
+        volume = events.get("volume") if isinstance(events.get("volume"), int) else None
+        speaker_on = self._normalize_speaker_power_state(events.get("speaker_status"))
+
+        if input_source is None and volume is None and speaker_on is None:
+            return None, None, None
+
+        availability_changed = self._mark_identity_probe_success(source=trigger)
+        if availability_changed:
+            self._emit_identity_changed()
+
+        self._log_structured(
+            "STEP",
+            action="POLL_SPEAKER_EVENTS",
+            reason=reason,
+            trigger=trigger,
+            input_source=input_source or "<unchanged>",
+            volume=volume if volume is not None else "<unchanged>",
+            speaker_on=speaker_on if speaker_on is not None else "<unchanged>",
+            mono=f"{self.mono():.3f}",
+        )
         return input_source, volume, speaker_on
 
     def change_input_live(self, new_input: str) -> bool:

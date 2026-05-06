@@ -186,6 +186,7 @@ class ControllerLoggingMixin:
         self.log.info(
             "  Polling / logging: "
             f"home_poll={c.home_external_poll_interval}s | tray_poll={c.tray_identity_poll_interval}s | "
+            f"home_event_poll={c.home_event_poll_enabled} | event_timeout={c.home_event_poll_timeout}s | "
             f"offline_threshold={c.identity_probe_failure_threshold} | diagnostic_logging={c.diagnostic_logging}"
         )
         self.log.info(
