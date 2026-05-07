@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from .device_common import _STANDBY_VERIFY_TIMEOUT, StandbyVerificationError, _is_host_unreachable
+from .raw_shutdown import FireAndForgetShutdownResult, fire_and_forget_standby
+
+
+_FAST_STANDBY_FIRE_AND_FORGET_ATTEMPTS = 3
+_FAST_STANDBY_FIRE_AND_FORGET_SOCKET_TIMEOUT = 0.18
+_FAST_STANDBY_FIRE_AND_FORGET_JOIN_TIMEOUT = 0.25
 
 
 class ControllerDeviceStandbyMixin:
@@ -30,6 +36,8 @@ class ControllerDeviceStandbyMixin:
         failed_status: str | None = None,
         attempt: int | None = None,
         mark_lock_success: bool = False,
+        fire_and_forget: bool = False,
+        fire_and_forget_outcome: str | None = None,
     ) -> tuple[bool, str]:
         current_ip = self.get_current_kef_ip()
         self._log_structured(
@@ -56,6 +64,15 @@ class ControllerDeviceStandbyMixin:
                 mono=f"{self.mono():.3f}",
             )
             return False, outcome
+
+        if fire_and_forget and self._try_fire_and_forget_shutdown(
+            action=action,
+            generation=generation,
+            reason=reason,
+            current_ip=current_ip,
+            mark_lock_success=mark_lock_success,
+        ):
+            return True, fire_and_forget_outcome or success_outcome
 
         outcome = self._acquire_generation_action_lock(
             action=action,
@@ -125,6 +142,49 @@ class ControllerDeviceStandbyMixin:
         finally:
             self._action_lock.release()
 
+    def _send_fire_and_forget_shutdown(self, current_ip: str) -> FireAndForgetShutdownResult:
+        return fire_and_forget_standby(
+            current_ip,
+            port=self.config.mac_discovery_tcp_port,
+            attempts=_FAST_STANDBY_FIRE_AND_FORGET_ATTEMPTS,
+            socket_timeout=_FAST_STANDBY_FIRE_AND_FORGET_SOCKET_TIMEOUT,
+            join_timeout=_FAST_STANDBY_FIRE_AND_FORGET_JOIN_TIMEOUT,
+        )
+
+    def _try_fire_and_forget_shutdown(
+        self,
+        *,
+        action: str,
+        generation: int,
+        reason: str,
+        current_ip: str,
+        mark_lock_success: bool,
+    ) -> bool:
+        result = self._send_fire_and_forget_shutdown(current_ip)
+        status = "sent" if result.success else "failed_fallback_standard"
+        fields = {
+            "action": action,
+            "gen": generation,
+            "reason": reason,
+            "step": "fire_and_forget_shutdown",
+            "status": status,
+            "target_ip": current_ip,
+            "attempts": result.attempts,
+            "completed": result.completed,
+            "pending": result.pending,
+            "duration_ms": result.duration_ms,
+            "bypass_action_lock": True,
+            "read_response": False,
+            "mono": f"{self.mono():.3f}",
+        }
+        if result.errors:
+            fields["errors"] = "; ".join(result.errors)
+
+        self._log_structured("STEP", log_level="info", **fields)
+        if result.success and mark_lock_success:
+            self._mark_lock_prestandby_success()
+        return result.success
+
     def standby_kef_preemptive(self, generation: int, reason: str) -> bool:
         outcome = "unknown"
         start_mono = self._log_action_begin("LOCK_PRE_STANDBY", generation, reason)
@@ -159,6 +219,8 @@ class ControllerDeviceStandbyMixin:
                 host_unreachable_cause="host_unreachable_assume_standby",
                 failed_outcome="failed",
                 mark_lock_success=True,
+                fire_and_forget=True,
+                fire_and_forget_outcome="success_fire_and_forget",
             )
             return success
         finally:
@@ -309,6 +371,8 @@ class ControllerDeviceStandbyMixin:
                 failed_outcome="failed_fast_suspend",
                 failed_status="fast_suspend_failed",
                 attempt=1,
+                fire_and_forget=True,
+                fire_and_forget_outcome="success_fast_suspend_fire_and_forget",
             )
             return success
         finally:

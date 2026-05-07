@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 from kef_app.config import AppConfig
 from kef_app.controller import KefPowerController
 from kef_app.controller.actions.device_common import _is_host_unreachable
+from kef_app.controller.actions.raw_shutdown import FireAndForgetShutdownResult
 from kef_app.devices.speaker_models import SpeakerIdentity
 from kef_app.platform.windows import ENDSESSION_CLOSEAPP
 
@@ -22,6 +23,17 @@ class PowerEventLogicTests(unittest.TestCase):
     @staticmethod
     def host_unreachable_error() -> OSError:
         return OSError("[WinError 10065] A socket operation was attempted to an unreachable host")
+
+    @staticmethod
+    def fire_and_forget_result(success: bool) -> FireAndForgetShutdownResult:
+        return FireAndForgetShutdownResult(
+            success=success,
+            attempts=3,
+            completed=3,
+            pending=0,
+            duration_ms=2,
+            errors=() if success else ("TimeoutError('timed out')",),
+        )
 
     def capture_events(self, controller: KefPowerController) -> list[tuple[str, dict[str, object]]]:
         events: list[tuple[str, dict[str, object]]] = []
@@ -286,6 +298,7 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._ensure_target_identity = Mock(return_value=False)
         controller._perform_standby_request = Mock()
         controller._request_shutdown = Mock()
+        controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
 
         result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
 
@@ -293,7 +306,27 @@ class PowerEventLogicTests(unittest.TestCase):
         controller.resolve_target.assert_not_called()
         controller._ensure_target_identity.assert_not_called()
         controller._perform_standby_request.assert_not_called()
-        controller._request_shutdown.assert_called_once_with(fresh=False, timeout=0.25)
+        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller._request_shutdown.assert_not_called()
+        self.assertTrue(controller._recently_lock_standby_ok())
+
+    def test_preemptive_standby_fire_and_forget_bypasses_busy_action_lock(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+        )
+        generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
+        controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
+        controller._request_shutdown = Mock()
+        self.assertTrue(controller._action_lock.acquire(blocking=False))
+        try:
+            result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+        finally:
+            controller._action_lock.release()
+
+        self.assertTrue(result)
+        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller._request_shutdown.assert_not_called()
         self.assertTrue(controller._recently_lock_standby_ok())
 
     def test_preemptive_standby_treats_host_unreachable_as_assumed_standby(self):
@@ -305,11 +338,13 @@ class PowerEventLogicTests(unittest.TestCase):
         events = self.capture_events(controller)
         generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
         controller._log_structured = Mock()
+        controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(False))
         controller._request_shutdown = Mock(side_effect=self.host_unreachable_error())
 
         result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
 
         self.assertTrue(result)
+        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
         controller._request_shutdown.assert_called_once_with(fresh=False, timeout=0.25)
         self.assertTrue(controller._recently_lock_standby_ok())
         self.assertTrue(self.emitted_outcome(events, "success_assumed_host_unreachable"))
@@ -324,10 +359,12 @@ class PowerEventLogicTests(unittest.TestCase):
         controller = self.make_controller(kef_ip="")
         generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
         controller._request_shutdown = Mock()
+        controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
 
         result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
 
         self.assertFalse(result)
+        controller._send_fire_and_forget_shutdown.assert_not_called()
         controller._request_shutdown.assert_not_called()
         self.assertFalse(controller._recently_lock_standby_ok())
 
@@ -342,6 +379,7 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._ensure_target_identity = Mock(return_value=False)
         controller._perform_standby_request = Mock()
         controller._request_shutdown = Mock()
+        controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
 
         result = controller.standby_kef_fast_suspend(generation, "PBT_APMSUSPEND")
 
@@ -349,7 +387,8 @@ class PowerEventLogicTests(unittest.TestCase):
         controller.resolve_target.assert_not_called()
         controller._ensure_target_identity.assert_not_called()
         controller._perform_standby_request.assert_not_called()
-        controller._request_shutdown.assert_called_once_with(fresh=False, timeout=0.25)
+        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller._request_shutdown.assert_not_called()
 
     def test_fast_suspend_standby_treats_host_unreachable_as_best_effort_success(self):
         controller = self.make_controller(
@@ -360,11 +399,13 @@ class PowerEventLogicTests(unittest.TestCase):
         events = self.capture_events(controller)
         generation = controller._new_generation("sleep", "PBT_APMSUSPEND")
         controller._log_structured = Mock()
+        controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(False))
         controller._request_shutdown = Mock(side_effect=self.host_unreachable_error())
 
         result = controller.standby_kef_fast_suspend(generation, "PBT_APMSUSPEND")
 
         self.assertTrue(result)
+        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
         controller._request_shutdown.assert_called_once_with(fresh=False, timeout=0.25)
         self.assertTrue(self.emitted_outcome(events, "success_best_effort_host_unreachable"))
         self.assertFalse(
@@ -378,10 +419,12 @@ class PowerEventLogicTests(unittest.TestCase):
         controller = self.make_controller(kef_ip="")
         generation = controller._new_generation("sleep", "PBT_APMSUSPEND")
         controller._request_shutdown = Mock()
+        controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
 
         result = controller.standby_kef_fast_suspend(generation, "PBT_APMSUSPEND")
 
         self.assertFalse(result)
+        controller._send_fire_and_forget_shutdown.assert_not_called()
         controller._request_shutdown.assert_not_called()
 
     def test_end_session_standby_skips_when_target_identity_is_not_verified(self):
