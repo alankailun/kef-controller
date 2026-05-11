@@ -155,10 +155,11 @@ class ControllerDeviceStandbyMixin:
         self,
         *,
         action: str,
-        generation: int,
+        generation: int | None,
         reason: str,
         current_ip: str,
         mark_lock_success: bool,
+        extra_fields: dict[str, object] | None = None,
     ) -> bool:
         result = self._send_fire_and_forget_shutdown(current_ip)
         status = "sent" if result.success else "failed_fallback_standard"
@@ -177,6 +178,8 @@ class ControllerDeviceStandbyMixin:
             "read_response": False,
             "mono": f"{self.mono():.3f}",
         }
+        if extra_fields:
+            fields.update(extra_fields)
         if result.errors:
             fields["errors"] = "; ".join(result.errors)
 
@@ -261,6 +264,17 @@ class ControllerDeviceStandbyMixin:
                     mono=f"{self.mono():.3f}",
                 )
                 return False
+
+            if self._try_fire_and_forget_shutdown(
+                action="ENDSESSION_STANDBY",
+                generation=None,
+                reason=reason,
+                current_ip=current_ip,
+                mark_lock_success=False,
+                extra_fields={"flags": flags},
+            ):
+                outcome = "success_fire_and_forget"
+                return True
 
             if not self._action_lock.acquire(timeout=self.config.endsession_standby_action_lock_timeout):
                 outcome = "skipped_action_lock_busy"

@@ -237,24 +237,56 @@ class PowerEventLogicTests(unittest.TestCase):
         controller.resolve_target.assert_not_called()
         controller._request_shutdown.assert_not_called()
 
-    def test_end_session_standby_sends_shutdown_when_enabled_and_target_verified(self):
+    def test_end_session_standby_uses_fire_and_forget_when_target_verified(self):
         controller = self.make_controller(kef_ip="192.168.1.10", endsession_standby_on_shutdown=True)
         controller.resolve_target = Mock(return_value=True)
         controller._request_shutdown = Mock()
+        controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
 
         result = controller.standby_kef_end_session("WM_QUERYENDSESSION", "NONE")
 
         self.assertTrue(result)
         controller.resolve_target.assert_called_once()
+        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller._request_shutdown.assert_not_called()
+
+    def test_end_session_standby_falls_back_to_standard_request_when_fire_and_forget_fails(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", endsession_standby_on_shutdown=True)
+        controller.resolve_target = Mock(return_value=True)
+        controller._request_shutdown = Mock()
+        controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(False))
+
+        result = controller.standby_kef_end_session("WM_QUERYENDSESSION", "NONE")
+
+        self.assertTrue(result)
+        controller.resolve_target.assert_called_once()
+        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
         controller._request_shutdown.assert_called_once_with(
             fresh=False,
             timeout=controller.config.endsession_standby_socket_timeout,
         )
 
-    def test_end_session_standby_skips_when_action_lock_is_busy(self):
+    def test_end_session_standby_fire_and_forget_bypasses_busy_action_lock(self):
         controller = self.make_controller(kef_ip="192.168.1.10", endsession_standby_on_shutdown=True)
         controller.resolve_target = Mock(return_value=True)
         controller._request_shutdown = Mock()
+        controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
+
+        self.assertTrue(controller._action_lock.acquire(blocking=False))
+        try:
+            result = controller.standby_kef_end_session("WM_QUERYENDSESSION", "NONE")
+        finally:
+            controller._action_lock.release()
+
+        self.assertTrue(result)
+        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller._request_shutdown.assert_not_called()
+
+    def test_end_session_standby_skips_when_action_lock_is_busy_after_fire_and_forget_fails(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", endsession_standby_on_shutdown=True)
+        controller.resolve_target = Mock(return_value=True)
+        controller._request_shutdown = Mock()
+        controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(False))
 
         self.assertTrue(controller._action_lock.acquire(blocking=False))
         try:
@@ -263,6 +295,7 @@ class PowerEventLogicTests(unittest.TestCase):
             controller._action_lock.release()
 
         self.assertFalse(result)
+        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
         controller._request_shutdown.assert_not_called()
 
     def test_query_end_session_fast_closeapp_does_not_send_standby(self):
@@ -431,10 +464,12 @@ class PowerEventLogicTests(unittest.TestCase):
         controller = self.make_controller(kef_ip="192.168.1.10")
         controller.resolve_target = Mock(return_value=False)
         controller._request_shutdown = Mock()
+        controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
 
         result = controller.standby_kef_end_session("unit_test", "flags")
 
         self.assertFalse(result)
+        controller._send_fire_and_forget_shutdown.assert_not_called()
         controller._request_shutdown.assert_not_called()
 
     def test_apply_configured_device_target_updates_runtime_ip_and_mac(self):
