@@ -19,11 +19,8 @@ PBT_APMRESUMEAUTOMATIC = 0x0012
 PBT_POWERSETTINGCHANGE = 0x8013
 DEVICE_NOTIFY_WINDOW_HANDLE = 0
 
-POWER_USER_PRESENT = 0
-POWER_USER_INACTIVE = 2
-POWER_MONITOR_OFF = 0
-POWER_MONITOR_ON = 1
-POWER_MONITOR_DIM = 2
+SystemPowerInformation = 12
+
 LID_CLOSED = 0
 LID_OPENED = 1
 
@@ -51,6 +48,17 @@ RegisterPowerSettingNotification.restype = wintypes.HANDLE
 UnregisterPowerSettingNotification = user32.UnregisterPowerSettingNotification
 UnregisterPowerSettingNotification.argtypes = [wintypes.HANDLE]
 UnregisterPowerSettingNotification.restype = wintypes.BOOL
+
+powrprof = ctypes.WinDLL("PowrProf.dll")
+CallNtPowerInformation = powrprof.CallNtPowerInformation
+CallNtPowerInformation.argtypes = [
+    ctypes.c_int,
+    ctypes.c_void_p,
+    wintypes.ULONG,
+    ctypes.c_void_p,
+    wintypes.ULONG,
+]
+CallNtPowerInformation.restype = ctypes.c_long
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 GetCommandLineW = kernel32.GetCommandLineW
@@ -109,15 +117,20 @@ class POWERBROADCAST_SETTING(ctypes.Structure):
     ]
 
 
+class SYSTEM_POWER_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("MaxIdlenessAllowed", wintypes.ULONG),
+        ("Idleness", wintypes.ULONG),
+        ("TimeRemaining", wintypes.ULONG),
+        ("CoolingMode", ctypes.c_ubyte),
+    ]
+
+
 RegisterPowerSettingNotification.argtypes = [wintypes.HANDLE, ctypes.POINTER(GUID), wintypes.DWORD]
 
-GUID_SESSION_USER_PRESENCE = GUID.from_string("{3C0F4548-C03F-4C4D-B9F2-237EDE686376}")
-GUID_SESSION_DISPLAY_STATUS = GUID.from_string("{2B84C20E-AD23-4DDF-93DB-05FFBD7EFCA5}")
 GUID_LIDSWITCH_STATE_CHANGE = GUID.from_string("{BA3E0F4D-B817-4094-A2D1-D56379E6A0F3}")
 
 POWER_SETTING_GUIDS: tuple[tuple[str, GUID], ...] = (
-    ("GUID_SESSION_USER_PRESENCE", GUID_SESSION_USER_PRESENCE),
-    ("GUID_SESSION_DISPLAY_STATUS", GUID_SESSION_DISPLAY_STATUS),
     ("GUID_LIDSWITCH_STATE_CHANGE", GUID_LIDSWITCH_STATE_CHANGE),
 )
 
@@ -136,17 +149,6 @@ class PowerSettingChange:
 def _label_power_setting_value(name: str, value: int | None) -> str:
     if value is None:
         return "raw"
-    if name == "GUID_SESSION_USER_PRESENCE":
-        return {
-            POWER_USER_PRESENT: "PowerUserPresent",
-            POWER_USER_INACTIVE: "PowerUserInactive",
-        }.get(value, f"USER_ACTIVITY_PRESENCE({value})")
-    if name == "GUID_SESSION_DISPLAY_STATUS":
-        return {
-            POWER_MONITOR_OFF: "PowerMonitorOff",
-            POWER_MONITOR_ON: "PowerMonitorOn",
-            POWER_MONITOR_DIM: "PowerMonitorDim",
-        }.get(value, f"MONITOR_DISPLAY_STATE({value})")
     if name == "GUID_LIDSWITCH_STATE_CHANGE":
         return {
             LID_CLOSED: "LidClosed",
@@ -172,6 +174,19 @@ def decode_power_setting_change(lparam: int) -> PowerSettingChange | None:
         label=_label_power_setting_value(name, value),
         data_hex=data.hex(),
     )
+
+
+def read_system_idle_info() -> SYSTEM_POWER_INFORMATION | None:
+    info = SYSTEM_POWER_INFORMATION()
+    status = CallNtPowerInformation(
+        SystemPowerInformation,
+        None,
+        0,
+        ctypes.byref(info),
+        ctypes.sizeof(info),
+    )
+    return info if status == 0 else None
+
 
 def ensure_single_instance(log, mutex_name: str) -> Optional[int]:
     kernel32_local = ctypes.WinDLL("kernel32", use_last_error=True)

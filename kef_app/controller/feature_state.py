@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 
 @dataclass(slots=True)
-class LockStandbyDedupState:
+class EarlyStandbyDedupState:
     last_success_mono: float = 0.0
 
     def clear(self) -> None:
@@ -15,4 +15,3 @@ class LockStandbyDedupState:
 
     def is_recent(self, mono: float, window: float) -> bool:
         return self.last_success_mono > 0.0 and (mono - self.last_success_mono) < window
-

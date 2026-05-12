@@ -34,8 +34,8 @@ class StandbyPolicy:
     host_unreachable_cause: str = "host_unreachable_assume_standby"
     fire_and_forget: bool = False
     fire_and_forget_outcome: str | None = None
-    mark_lock_success: bool = False
-    skip_if_recent_lock: bool = False
+    mark_early_standby_success: bool = False
+    skip_if_recent_early_standby: bool = False
     skip_if_session_ending: bool = False
     ensure_identity: bool = False
     identity_step: str = ""
@@ -47,15 +47,15 @@ PREEMPTIVE_STANDBY_POLICY = StandbyPolicy(
     mode="fast_request",
     begin_step="lock_fast_path",
     success_step="shutdown_request",
-    lock_purpose="lock_pre_standby",
-    lock_timeout_field="lock_standby_action_lock_timeout",
+    lock_purpose="early_standby",
+    lock_timeout_field="early_standby_action_lock_timeout",
     socket_timeout_field="suspend_fast_standby_socket_timeout",
     success_outcome="success",
     failed_outcome="failed",
     fire_and_forget=True,
     fire_and_forget_outcome="success_fire_and_forget",
-    mark_lock_success=True,
-    skip_if_recent_lock=True,
+    mark_early_standby_success=True,
+    skip_if_recent_early_standby=True,
     skip_if_session_ending=True,
 )
 
@@ -77,7 +77,7 @@ FAST_SUSPEND_STANDBY_POLICY = StandbyPolicy(
     host_unreachable_cause="suspend_network_or_speaker_unreachable",
     fire_and_forget=True,
     fire_and_forget_outcome="success_fast_suspend_fire_and_forget",
-    skip_if_recent_lock=True,
+    skip_if_recent_early_standby=True,
     skip_if_session_ending=True,
     attempt=1,
 )
@@ -92,7 +92,7 @@ STANDARD_STANDBY_POLICY = StandbyPolicy(
     success_outcome="success_attempt_1",
     failed_outcome="failed_no_retry_before_suspend",
     failed_status="no_retry_before_suspend",
-    skip_if_recent_lock=True,
+    skip_if_recent_early_standby=True,
     skip_if_session_ending=True,
     ensure_identity=True,
     identity_step="standby_before_request",
@@ -118,9 +118,9 @@ ENDSESSION_STANDBY_POLICY = StandbyPolicy(
 
 
 class ControllerDeviceStandbyMixin:
-    def _recently_lock_standby_ok(self) -> bool:
+    def _recently_early_standby_ok(self) -> bool:
         with self._state_lock:
-            return self._lock_standby_dedup.is_recent(self.mono(), self.config.lock_standby_dedup_window)
+            return self._early_standby_dedup.is_recent(self.mono(), self.config.early_standby_dedup_window)
 
     def _config_value(self, field_name: str):
         return getattr(self.config, field_name)
@@ -128,15 +128,20 @@ class ControllerDeviceStandbyMixin:
     def _standby_log_fields(self, policy: StandbyPolicy, generation: int | None, reason: str) -> dict[str, object]:
         return {"action": policy.action, "gen": generation, "reason": reason}
 
-    def _standby_skip_recent_lock(self, policy: StandbyPolicy, generation: int | None, reason: str) -> tuple[bool, str]:
-        if not policy.skip_if_recent_lock or not self._recently_lock_standby_ok():
+    def _standby_skip_recent_early_standby(
+        self,
+        policy: StandbyPolicy,
+        generation: int | None,
+        reason: str,
+    ) -> tuple[bool, str]:
+        if not policy.skip_if_recent_early_standby or not self._recently_early_standby_ok():
             return False, ""
-        outcome = "skipped_recent_lock_pre_standby_ok"
+        outcome = "skipped_recent_early_standby_ok"
         self._log_structured(
             "SKIP",
             **self._standby_log_fields(policy, generation, reason),
-            cause="recent_lock_pre_standby_ok",
-            window_s=f"{self.config.lock_standby_dedup_window:.2f}",
+            cause="recent_early_standby_ok",
+            window_s=f"{self.config.early_standby_dedup_window:.2f}",
             mono=f"{self.mono():.3f}",
         )
         return True, outcome
@@ -219,7 +224,7 @@ class ControllerDeviceStandbyMixin:
         skipped, outcome = self._standby_skip_session_ending(policy, generation, reason)
         if skipped:
             return False, outcome
-        skipped, outcome = self._standby_skip_recent_lock(policy, generation, reason)
+        skipped, outcome = self._standby_skip_recent_early_standby(policy, generation, reason)
         if skipped:
             return True, outcome
 
@@ -239,7 +244,7 @@ class ControllerDeviceStandbyMixin:
             failed_outcome=policy.failed_outcome,
             failed_status=policy.failed_status,
             attempt=policy.attempt,
-            mark_lock_success=policy.mark_lock_success,
+            mark_early_standby_success=policy.mark_early_standby_success,
             fire_and_forget=policy.fire_and_forget,
             fire_and_forget_outcome=policy.fire_and_forget_outcome,
         )
@@ -257,7 +262,7 @@ class ControllerDeviceStandbyMixin:
             mono=f"{self.mono():.3f}",
         )
 
-        skipped, outcome = self._standby_skip_recent_lock(policy, generation, reason)
+        skipped, outcome = self._standby_skip_recent_early_standby(policy, generation, reason)
         if skipped:
             return True, outcome
         skipped, outcome = self._standby_skip_session_ending(policy, generation, reason)
@@ -329,7 +334,7 @@ class ControllerDeviceStandbyMixin:
                 generation=None,
                 reason=reason,
                 current_ip=current_ip,
-                mark_lock_success=False,
+                mark_early_standby_success=False,
                 extra_fields={"flags": flags},
                 success_outcome=policy.fire_and_forget_outcome or policy.success_outcome,
             )
@@ -397,7 +402,7 @@ class ControllerDeviceStandbyMixin:
         failed_outcome: str,
         failed_status: str | None = None,
         attempt: int | None = None,
-        mark_lock_success: bool = False,
+        mark_early_standby_success: bool = False,
         fire_and_forget: bool = False,
         fire_and_forget_outcome: str | None = None,
     ) -> tuple[bool, str]:
@@ -433,7 +438,7 @@ class ControllerDeviceStandbyMixin:
                 generation=generation,
                 reason=reason,
                 current_ip=current_ip,
-                mark_lock_success=mark_lock_success,
+                mark_early_standby_success=mark_early_standby_success,
                 success_outcome=fire_and_forget_outcome or success_outcome,
                 host_unreachable_outcome=host_unreachable_outcome,
                 host_unreachable_status=host_unreachable_status,
@@ -476,8 +481,8 @@ class ControllerDeviceStandbyMixin:
                     mono=f"{request_finished_mono:.3f}",
                 )
                 return False, outcome
-            if mark_lock_success:
-                self._mark_lock_prestandby_success()
+            if mark_early_standby_success:
+                self._mark_early_standby_success()
             outcome = success_outcome
             self._log_structured(
                 "STEP",
@@ -517,8 +522,8 @@ class ControllerDeviceStandbyMixin:
                 return False, outcome
 
             if is_host_unreachable(exc):
-                if mark_lock_success:
-                    self._mark_lock_prestandby_success()
+                if mark_early_standby_success:
+                    self._mark_early_standby_success()
                 outcome = host_unreachable_outcome
                 fields = {
                     "action": action,
@@ -571,7 +576,7 @@ class ControllerDeviceStandbyMixin:
         generation: int | None,
         reason: str,
         current_ip: str,
-        mark_lock_success: bool,
+        mark_early_standby_success: bool,
         extra_fields: dict[str, object] | None = None,
         success_outcome: str = "success_fire_and_forget",
         host_unreachable_outcome: str = "success_assumed_host_unreachable",
@@ -612,8 +617,8 @@ class ControllerDeviceStandbyMixin:
             fields["errors"] = "; ".join(result.errors)
 
         self._log_structured("STEP", log_level="info", **fields)
-        if outcome is not None and mark_lock_success:
-            self._mark_lock_prestandby_success()
+        if outcome is not None and mark_early_standby_success:
+            self._mark_early_standby_success()
         return outcome
 
     def standby_kef_preemptive(self, generation: int, reason: str) -> bool:

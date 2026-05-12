@@ -213,14 +213,19 @@ class ControllerLoggingMixin:
             )
             self.log.info(
                 "  Standby on screen lock: "
-                f"{c.standby_on_lock} | lock_timeout={c.lock_standby_action_lock_timeout}s | "
-                f"dedupe_window={c.lock_standby_dedup_window}s"
+                f"{c.standby_on_lock}"
             )
             self.log.info(
                 "  Early standby triggers: "
-                f"user_inactive={c.standby_on_user_inactive} | "
-                f"display_off={c.standby_on_display_off} | "
-                f"lid_close={c.standby_on_lid_close}"
+                f"lid_close={c.standby_on_lid_close} | "
+                f"sleep_countdown={c.standby_on_sleep_countdown} | "
+                f"countdown_threshold={c.sleep_countdown_threshold_s}s | "
+                f"countdown_poll={c.sleep_countdown_poll_interval_s}s"
+            )
+            self.log.info(
+                "  Early standby tuning: "
+                f"action_lock_timeout={c.early_standby_action_lock_timeout}s | "
+                f"dedupe_window={c.early_standby_dedup_window}s"
             )
             self.log.info(f"  Standby during shutdown/sign-out: {c.endsession_standby_on_shutdown}")
             self.log.info(f"  Log retention days: {c.log_backup_days}")

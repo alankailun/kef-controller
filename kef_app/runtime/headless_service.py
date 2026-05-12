@@ -23,9 +23,7 @@ from ..platform.windows import (
     PBT_APMRESUMEAUTOMATIC,
     PBT_APMRESUMESUSPEND,
     PBT_POWERSETTINGCHANGE,
-    POWER_MONITOR_OFF,
     POWER_SETTING_GUIDS,
-    POWER_USER_INACTIVE,
     RegisterPowerSettingNotification,
     UnregisterPowerSettingNotification,
     WM_POWERBROADCAST,
@@ -136,6 +134,7 @@ class HeadlessRuntime:
 
         threading.Thread(target=self.controller.on_startup, daemon=True, name="StartupWake").start()
         self.controller.start_speaker_event_monitor("headless_runtime")
+        self.controller.start_sleep_countdown_monitor("headless_runtime")
 
         resource_lock = threading.Lock()
         cleaned_up = False
@@ -154,6 +153,7 @@ class HeadlessRuntime:
             with self._hwnd_lock:
                 self._hwnd = 0
             self.controller.stop_speaker_event_monitor()
+            self.controller.stop_sleep_countdown_monitor()
 
             if session_notify_registered and hwnd:
                 try:
@@ -257,24 +257,23 @@ class HeadlessRuntime:
                             return True
 
                         self.controller.log_power_setting_event(change, wparam, lparam)
-                        if change.name == "GUID_SESSION_USER_PRESENCE" and change.value == POWER_USER_INACTIVE:
-                            self.controller.on_user_inactive("POWER_USER_INACTIVE")
-                        elif change.name == "GUID_SESSION_DISPLAY_STATUS" and change.value == POWER_MONITOR_OFF:
-                            self.controller.on_display_off("POWER_DISPLAY_OFF")
-                        elif change.name == "GUID_LIDSWITCH_STATE_CHANGE" and change.value == LID_CLOSED:
+                        if change.name == "GUID_LIDSWITCH_STATE_CHANGE" and change.value == LID_CLOSED:
                             self.controller.on_lid_closed("POWER_LID_CLOSED")
                         return True
 
                     if wparam == PBT_APMSUSPEND:
                         self.controller.log_power_event("PBT_APMSUSPEND", wparam, lparam)
+                        self.controller.stop_sleep_countdown_monitor()
                         self.controller.on_suspend("PBT_APMSUSPEND")
                         return True
                     if wparam == PBT_APMRESUMEAUTOMATIC:
                         self.controller.log_power_event("PBT_APMRESUMEAUTOMATIC", wparam, lparam)
+                        self.controller.start_sleep_countdown_monitor("PBT_APMRESUMEAUTOMATIC")
                         self.controller.on_resume("PBT_APMRESUMEAUTOMATIC")
                         return True
                     if wparam == PBT_APMRESUMESUSPEND:
                         self.controller.log_power_event("PBT_APMRESUMESUSPEND", wparam, lparam)
+                        self.controller.start_sleep_countdown_monitor("PBT_APMRESUMESUSPEND")
                         self.controller.on_resume("PBT_APMRESUMESUSPEND")
                         return True
                     self.controller.log_power_event("WM_POWERBROADCAST_OTHER", wparam, lparam)

@@ -86,7 +86,7 @@ class UserConfigStoreTests(unittest.TestCase):
                 saved = json.load(handle)
             self.assertEqual(saved["discovery"]["mac_discovery_probe_timeout"], 0.50)
 
-    def test_legacy_lock_standby_dedup_window_is_raised_to_current_default(self):
+    def test_legacy_early_standby_dedup_window_is_raised_to_current_default(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base_config = self.make_config(temp_dir)
             path = base_config.config_file
@@ -97,10 +97,10 @@ class UserConfigStoreTests(unittest.TestCase):
 
             loaded = UserConfigStore(base_config).load_or_create()
 
-            self.assertEqual(loaded.lock_standby_dedup_window, 30.0)
+            self.assertEqual(loaded.early_standby_dedup_window, 30.0)
             with open(path, "r", encoding="utf-8") as handle:
                 saved = json.load(handle)
-            self.assertEqual(saved["standby_triggers"]["lock_standby_dedup_window"], 30.0)
+            self.assertEqual(saved["standby_triggers"]["early_standby_dedup_window"], 30.0)
 
     def test_invalid_input_source_is_ignored(self):
         with tempfile.TemporaryDirectory() as temp_dir:

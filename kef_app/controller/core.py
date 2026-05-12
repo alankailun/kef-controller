@@ -11,11 +11,12 @@ from ..storage import PersistedSpeakerState, SpeakerStateStore
 from ..devices.speaker_backend import W2Backend
 from .actions import ControllerDeviceActionsMixin
 from .discovery import ControllerDiscoveryMixin
-from .feature_state import LockStandbyDedupState
+from .feature_state import EarlyStandbyDedupState
 from .logging_mixin import ControllerLoggingMixin
 from .network_timeout import temporary_socket_timeout
 from .power_state import ControllerStateMixin
 from .session_events import ControllerSessionEventsMixin
+from .sleep_countdown_monitor import SleepCountdownMonitorMixin
 
 from ..devices.speaker_models import normalize_mac
 
@@ -25,6 +26,7 @@ class KefPowerController(
     ControllerStateMixin,
     ControllerDiscoveryMixin,
     ControllerDeviceActionsMixin,
+    SleepCountdownMonitorMixin,
     ControllerSessionEventsMixin,
 ):
     def __init__(self, config: AppConfig, log: logging.Logger, state_store: Optional[SpeakerStateStore] = None):
@@ -49,6 +51,9 @@ class KefPowerController(
         self._blind_discovery_lock = threading.Lock()
         self._speaker_event_monitor_lock = threading.Lock()
         self._speaker_event_monitor_stop = threading.Event()
+        self._sleep_countdown_monitor_lock = threading.Lock()
+        self._sleep_countdown_monitor_stop = threading.Event()
+        self._sleep_countdown_monitor_thread: threading.Thread | None = None
         self._event_listeners: list[Callable[[str, dict[str, Any]], None]] = []
 
         self._current_kef_ip = self._loaded_state.last_ip or config.kef_ip
@@ -64,6 +69,8 @@ class KefPowerController(
         self._mac_discovery_miss_count = 0
         self._last_mac_discovery_scanned_miss = False
         self._speaker_event_monitor_running = False
+        self._sleep_countdown_monitor_running = False
+        self._sleep_countdown_monitor_restart_pending = False
         self._speaker_event_poll_failures = 0
         self._speaker_runtime_input_source = ""
         self._speaker_runtime_volume: int | None = None
@@ -74,7 +81,7 @@ class KefPowerController(
         self._last_resume_event_mono = 0.0
         self._session_ending = False
 
-        self._lock_standby_dedup = LockStandbyDedupState()
+        self._early_standby_dedup = EarlyStandbyDedupState()
         self._system_sleep_pending = False
         self._last_system_suspend_mono = 0.0
         self._last_system_resume_mono = 0.0
@@ -109,7 +116,7 @@ class KefPowerController(
         self._emit_event("power_action_started", action=action, reason=reason)
 
     def _emit_power_action_finished(self, action: str, reason: str, outcome: str) -> None:
-        success = outcome.startswith("success") or outcome == "skipped_recent_lock_pre_standby_ok"
+        success = outcome.startswith("success") or outcome == "skipped_recent_early_standby_ok"
         with self._state_lock:
             self._controller_active_power_actions = max(0, self._controller_active_power_actions - 1)
         if success and action == "WAKE":

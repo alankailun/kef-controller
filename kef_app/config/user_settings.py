@@ -63,10 +63,11 @@ class SpeakerEventPolling:
 class StandbyTriggers:
     standby_on_sleep: bool = True
     standby_on_lock: bool = True
-    standby_on_user_inactive: bool = True
-    standby_on_display_off: bool = True
     standby_on_lid_close: bool = True
-    lock_standby_dedup_window: float = 30.0
+    standby_on_sleep_countdown: bool = True
+    sleep_countdown_threshold_s: float = 5.0
+    sleep_countdown_poll_interval_s: float = 2.0
+    early_standby_dedup_window: float = 30.0
 
 
 @dataclass(slots=True)
@@ -75,7 +76,7 @@ class StandbyTuning:
     suspend_fast_standby_enabled: bool = True
     suspend_fast_standby_action_lock_timeout: float = 0.20
     suspend_fast_standby_socket_timeout: float = 0.60
-    lock_standby_action_lock_timeout: float = 0.3
+    early_standby_action_lock_timeout: float = 0.3
 
 
 @dataclass(slots=True)
@@ -108,6 +109,10 @@ USER_SETTINGS_FIELD_PATHS: dict[str, tuple[str, str]] = {
     **_section_field_paths("end_session", EndSessionBehavior),
     **_section_field_paths("diagnostics", DiagnosticsSettings),
 }
+USER_SETTINGS_LEGACY_FIELD_ALIASES: dict[str, tuple[str, str]] = {
+    "lock_standby_action_lock_timeout": ("standby_tuning", "early_standby_action_lock_timeout"),
+    "lock_standby_dedup_window": ("standby_triggers", "early_standby_dedup_window"),
+}
 
 USER_SETTINGS_FLAT_FIELD_NAMES = tuple(USER_SETTINGS_FIELD_PATHS)
 USER_SETTINGS_SECTION_NAMES = (
@@ -121,7 +126,11 @@ USER_SETTINGS_SECTION_NAMES = (
     "end_session",
     "diagnostics",
 )
-USER_SETTINGS_FIELD_NAMES = USER_SETTINGS_SECTION_NAMES + USER_SETTINGS_FLAT_FIELD_NAMES
+USER_SETTINGS_FIELD_NAMES = (
+    USER_SETTINGS_SECTION_NAMES
+    + USER_SETTINGS_FLAT_FIELD_NAMES
+    + tuple(USER_SETTINGS_LEGACY_FIELD_ALIASES)
+)
 
 
 @dataclass(slots=True)
@@ -137,7 +146,7 @@ class UserSettings:
     diagnostics: DiagnosticsSettings = field(default_factory=DiagnosticsSettings)
 
     def __getattr__(self, name: str) -> Any:
-        path = USER_SETTINGS_FIELD_PATHS.get(name)
+        path = USER_SETTINGS_FIELD_PATHS.get(name) or USER_SETTINGS_LEGACY_FIELD_ALIASES.get(name)
         if path is None:
             raise AttributeError(f"{type(self).__name__!s} has no attribute {name!r}")
         section_name, field_name = path
@@ -148,6 +157,8 @@ class UserSettings:
             object.__setattr__(self, name, value)
             return
         path = USER_SETTINGS_FIELD_PATHS.get(name)
+        if path is None:
+            path = USER_SETTINGS_LEGACY_FIELD_ALIASES.get(name)
         if path is not None:
             section_name, field_name = path
             setattr(getattr(self, section_name), field_name, value)

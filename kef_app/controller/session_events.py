@@ -94,12 +94,6 @@ class ControllerSessionEventsMixin:
         generation = self._new_generation("sleep", reason)
         return self.standby_kef_preemptive(generation, reason)
 
-    def on_user_inactive(self, reason: str = "POWER_USER_INACTIVE") -> bool:
-        return get_trigger("user_inactive").fire(self, reason)
-
-    def on_display_off(self, reason: str = "POWER_DISPLAY_OFF") -> bool:
-        return get_trigger("display_off").fire(self, reason)
-
     def on_lid_closed(self, reason: str = "POWER_LID_CLOSED") -> bool:
         return get_trigger("lid_closed").fire(self, reason)
 

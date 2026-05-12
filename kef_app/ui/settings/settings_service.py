@@ -116,9 +116,8 @@ def log_power_behavior_state_message(config: AppConfig) -> str:
         f"wake_on_startup={config.wake_on_startup} | "
         f"shutdown_standby={config.endsession_standby_on_shutdown} | "
         f"lock_standby={config.standby_on_lock} | "
-        f"user_inactive_standby={config.standby_on_user_inactive} | "
-        f"display_off_standby={config.standby_on_display_off} | "
         f"lid_close_standby={config.standby_on_lid_close} | "
+        f"sleep_countdown_standby={config.standby_on_sleep_countdown} | "
         f"wake_after_unlock={config.wake_on_unlock_only} | "
         f"sleep_standby={config.standby_on_sleep}"
     )
