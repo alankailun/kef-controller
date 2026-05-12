@@ -7,7 +7,6 @@ from typing import Callable, Optional
 from pykefcontrol.kef_connector import KefConnector
 
 from ..network_timeout import temporary_socket_timeout
-from ...devices.transport import is_host_unreachable as _is_host_unreachable
 from ...devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source
 
 
@@ -18,6 +17,8 @@ _STANDBY_VERIFY_READ_TIMEOUT = 0.20
 _STANDBY_VERIFY_TIMEOUT = 0.40
 _STANDBY_VERIFY_OFFLINE_FAILURES = 2
 _CONFIGURABLE_INPUT_SOURCES = {value for _, value in INPUT_SOURCE_OPTIONS}
+
+
 class StandbyVerificationError(RuntimeError):
     pass
 
@@ -105,10 +106,6 @@ class ControllerDeviceCommonMixin:
             return "aborted_stale_generation_after_lock"
 
         return None
-
-    def _verify_player_source(self, expected_input: str) -> tuple[Optional[str], bool]:
-        actual_player_source = self.get_player_source_hint(fresh=True)
-        return actual_player_source, (not actual_player_source or actual_player_source == expected_input)
 
     def _is_configurable_input_source(self, source: str) -> bool:
         return source in _CONFIGURABLE_INPUT_SOURCES
@@ -354,35 +351,6 @@ class ControllerDeviceCommonMixin:
             mono=f"{self.mono():.3f}",
         )
         return "failed_all_attempts"
-
-    def _extract_player_source_hint(self, player_data: dict) -> Optional[str]:
-        candidates = [
-            player_data.get("mediaRoles", {}).get("mediaData", {}).get("metaData", {}).get("serviceID"),
-            player_data.get("trackRoles", {}).get("mediaData", {}).get("metaData", {}).get("serviceID"),
-            player_data.get("mediaRoles", {}).get("title"),
-            player_data.get("trackRoles", {}).get("title"),
-            player_data.get("mediaRoles", {}).get("path"),
-            player_data.get("trackRoles", {}).get("path"),
-        ]
-        for candidate in candidates:
-            normalized = normalize_input_source(str(candidate or ""))
-            if normalized:
-                return normalized
-        return None
-
-    def get_player_source_hint(self, fresh: bool = False) -> Optional[str]:
-        if not self.get_current_kef_ip():
-            return None
-        try:
-            with temporary_socket_timeout(self.config.socket_timeout):
-                speaker = self.get_speaker(fresh=fresh)
-                player_data = speaker._get_player_data()
-        except Exception as exc:
-            self.reset_speaker()
-            self._log_structured("WARN", action="GET_PLAYER_SOURCE", error=repr(exc), mono=f"{self.mono():.3f}")
-            return None
-
-        return self._extract_player_source_hint(player_data)
 
     def get_input_source(self, fresh: bool = False) -> Optional[str]:
         if not self.get_current_kef_ip():

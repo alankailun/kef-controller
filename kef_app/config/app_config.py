@@ -5,11 +5,11 @@ import os
 from dataclasses import dataclass, field, fields as dataclass_fields
 
 from .system_config import SystemConfig
-from .user_settings import UserSettings
+from .user_settings import USER_SETTINGS_FIELD_NAMES, UserSettings
 
 
 _SYSTEM_CONFIG_FIELD_NAMES = {field.name for field in dataclass_fields(SystemConfig)}
-_USER_SETTINGS_FIELD_NAMES = {field.name for field in dataclass_fields(UserSettings)}
+_USER_SETTINGS_FIELD_NAMES = set(USER_SETTINGS_FIELD_NAMES)
 
 
 @dataclass(slots=True)

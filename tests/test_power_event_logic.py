@@ -6,8 +6,15 @@ from unittest.mock import Mock, patch
 
 from kef_app.config import AppConfig
 from kef_app.controller import KefPowerController
-from kef_app.controller.actions.device_common import _is_host_unreachable
+from kef_app.controller.actions.standby import (
+    ENDSESSION_STANDBY_POLICY,
+    FAST_SUSPEND_STANDBY_POLICY,
+    PREEMPTIVE_STANDBY_POLICY,
+    STANDARD_STANDBY_POLICY,
+)
+from kef_app.controller.triggers import TRIGGERS
 from kef_app.devices.transport import FireAndForgetShutdownResult
+from kef_app.devices.transport import is_host_unreachable
 from kef_app.devices.speaker_models import SpeakerIdentity
 from kef_app.platform.windows import ENDSESSION_CLOSEAPP
 
@@ -52,9 +59,31 @@ class PowerEventLogicTests(unittest.TestCase):
             for name, payload in events
         )
 
+    def test_trigger_registry_contains_power_standby_triggers(self):
+        self.assertEqual(
+            set(TRIGGERS),
+            {
+                "lock",
+                "user_inactive",
+                "display_off",
+                "lid_closed",
+                "suspend",
+                "query_end_session",
+                "end_session",
+            },
+        )
+
+    def test_standby_policies_capture_distinct_action_modes(self):
+        self.assertEqual(PREEMPTIVE_STANDBY_POLICY.mode, "fast_request")
+        self.assertEqual(PREEMPTIVE_STANDBY_POLICY.action, "EARLY_STANDBY")
+        self.assertTrue(PREEMPTIVE_STANDBY_POLICY.mark_lock_success)
+        self.assertEqual(FAST_SUSPEND_STANDBY_POLICY.host_unreachable_outcome, "success_best_effort_host_unreachable")
+        self.assertEqual(STANDARD_STANDBY_POLICY.mode, "verified_request")
+        self.assertEqual(ENDSESSION_STANDBY_POLICY.mode, "end_session")
+
     def test_host_unreachable_classifier_does_not_match_connection_refused(self):
-        self.assertTrue(_is_host_unreachable(self.host_unreachable_error()))
-        self.assertFalse(_is_host_unreachable(ConnectionRefusedError(10061, "Connection refused")))
+        self.assertTrue(is_host_unreachable(self.host_unreachable_error()))
+        self.assertFalse(is_host_unreachable(ConnectionRefusedError(10061, "Connection refused")))
 
     def test_wait_for_input_source_reuses_connector_after_first_poll(self):
         controller = self.make_controller(kef_ip="192.168.1.10")
@@ -428,7 +457,7 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertTrue(self.emitted_outcome(events, "success_assumed_host_unreachable"))
         self.assertFalse(
             any(
-                call.args[:1] == ("WARN",) and call.kwargs.get("action") == "LOCK_PRE_STANDBY"
+                call.args[:1] == ("WARN",) and call.kwargs.get("action") == "EARLY_STANDBY"
                 for call in controller._log_structured.mock_calls
             )
         )
@@ -457,7 +486,7 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertTrue(
             any(
                 call.args[:1] == ("STEP",)
-                and call.kwargs.get("action") == "LOCK_PRE_STANDBY"
+                and call.kwargs.get("action") == "EARLY_STANDBY"
                 and call.kwargs.get("status") == "host_unreachable_assumed_standby"
                 and call.kwargs.get("all_host_unreachable") is True
                 for call in controller._log_structured.mock_calls
@@ -485,7 +514,7 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertTrue(
             any(
                 call.args[:1] == ("SKIP",)
-                and call.kwargs.get("action") == "LOCK_PRE_STANDBY"
+                and call.kwargs.get("action") == "EARLY_STANDBY"
                 and call.kwargs.get("cause") == "recent_lock_pre_standby_ok"
                 for call in controller._log_structured.mock_calls
             )
@@ -945,20 +974,16 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertFalse(controller.change_input_live(""))
         self.assertFalse(controller.change_input_live("standby"))
 
-    def test_change_input_skips_player_source_probe_after_input_is_confirmed(self):
+    def test_change_input_confirms_selected_input(self):
         controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
         controller._ensure_target_identity = Mock(return_value=True)
         controller.get_input_source = Mock(side_effect=["wifi", "coaxial"])
         controller._set_speaker_source = Mock()
-        controller.get_player_source_hint = Mock()
-        controller._verify_player_source = Mock()
 
         result = controller.change_input_live("coaxial")
 
         self.assertTrue(result)
         controller._set_speaker_source.assert_called_once_with("coaxial", fresh=True)
-        controller.get_player_source_hint.assert_not_called()
-        controller._verify_player_source.assert_not_called()
 
     def test_set_volume_rejects_non_numeric_level_without_connector_call(self):
         controller = self.make_controller(kef_ip="192.168.1.10")

@@ -8,6 +8,7 @@ from dataclasses import fields as dataclass_fields
 from unittest.mock import patch
 
 from kef_app.config import AppConfig, SystemConfig, UserSettings
+from kef_app.config.user_settings import USER_SETTINGS_FLAT_FIELD_NAMES, USER_SETTINGS_SECTION_NAMES
 from kef_app.devices.speaker_models import SpeakerIdentity
 from kef_app.storage import SpeakerStateStore, UserConfigStore
 
@@ -22,12 +23,10 @@ class UserConfigStoreTests(unittest.TestCase):
         )
 
     def test_every_user_setting_is_persisted_and_loaded(self):
-        missing = [
-            field.name
-            for field in dataclass_fields(UserSettings)
-            if field.name not in UserConfigStore.USER_EDITABLE_FIELDS
-        ]
-        self.assertEqual(missing, [])
+        self.assertEqual(tuple(UserConfigStore.USER_EDITABLE_FIELDS), USER_SETTINGS_FLAT_FIELD_NAMES)
+        saved = UserConfigStore(AppConfig())._to_user_dict(AppConfig())
+        self.assertEqual(tuple(saved), USER_SETTINGS_SECTION_NAMES)
+        self.assertEqual([field.name for field in dataclass_fields(UserSettings)], list(USER_SETTINGS_SECTION_NAMES))
 
     def test_every_persisted_user_setting_has_a_coercer(self):
         missing = [
@@ -69,7 +68,7 @@ class UserConfigStoreTests(unittest.TestCase):
             self.assertEqual(loaded.blind_discovery_http_timeout, 1.25)
             self.assertEqual(loaded.blind_discovery_cooldown, 0)
             self.assertEqual(loaded.blind_discovery_max_workers, 4)
-            self.assertIn("blind_discovery_http_timeout", saved)
+            self.assertIn("blind_discovery_http_timeout", saved["discovery"])
 
     def test_legacy_discovery_probe_timeout_is_raised_to_current_default(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -85,7 +84,7 @@ class UserConfigStoreTests(unittest.TestCase):
             self.assertEqual(loaded.mac_discovery_probe_timeout, 0.50)
             with open(path, "r", encoding="utf-8") as handle:
                 saved = json.load(handle)
-            self.assertEqual(saved["mac_discovery_probe_timeout"], 0.50)
+            self.assertEqual(saved["discovery"]["mac_discovery_probe_timeout"], 0.50)
 
     def test_legacy_lock_standby_dedup_window_is_raised_to_current_default(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -101,7 +100,7 @@ class UserConfigStoreTests(unittest.TestCase):
             self.assertEqual(loaded.lock_standby_dedup_window, 30.0)
             with open(path, "r", encoding="utf-8") as handle:
                 saved = json.load(handle)
-            self.assertEqual(saved["lock_standby_dedup_window"], 30.0)
+            self.assertEqual(saved["standby_triggers"]["lock_standby_dedup_window"], 30.0)
 
     def test_invalid_input_source_is_ignored(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -3,19 +3,34 @@ from __future__ import annotations
 import json
 import math
 import os
-from dataclasses import fields as dataclass_fields
+from dataclasses import fields as dataclass_fields, is_dataclass
 from typing import Any, Callable
 
 from ..config import AppConfig, UserSettings
+from ..config.user_settings import (
+    USER_SETTINGS_FIELD_PATHS,
+    USER_SETTINGS_FLAT_FIELD_NAMES,
+    USER_SETTINGS_SECTION_NAMES,
+)
 from .json_file import write_json_atomic
 from ..devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source
 from ..devices.speaker_models import normalize_mac
 
 
-_USER_SETTINGS_FIELD_NAMES = tuple(field.name for field in dataclass_fields(UserSettings))
+_USER_SETTINGS_FIELD_NAMES = USER_SETTINGS_FLAT_FIELD_NAMES
+_USER_SETTINGS_SECTION_FIELDS = {
+    section_name: tuple(
+        field_name
+        for field_name, path in USER_SETTINGS_FIELD_PATHS.items()
+        if path[0] == section_name
+    )
+    for section_name in USER_SETTINGS_SECTION_NAMES
+}
 _CONFIGURABLE_INPUT_SOURCES = {value for _, value in INPUT_SOURCE_OPTIONS}
+# Added 2026-05. Safe to remove after 2026-11 once released installs have auto-rewritten config.json.
 _LEGACY_MAC_DISCOVERY_PROBE_TIMEOUT = 0.20
 _DEFAULT_MAC_DISCOVERY_PROBE_TIMEOUT = 0.50
+# Added 2026-05. Safe to remove after 2026-11 once released installs have auto-rewritten config.json.
 _LEGACY_LOCK_STANDBY_DEDUP_WINDOW = 8.0
 _DEFAULT_LOCK_STANDBY_DEDUP_WINDOW = 30.0
 
@@ -213,17 +228,18 @@ class UserConfigStore:
 
     def _to_user_dict(self, config: AppConfig) -> dict[str, Any]:
         data: dict[str, Any] = {}
-        for field_name in self.USER_EDITABLE_FIELDS:
-            value = getattr(config, field_name)
-            if isinstance(value, tuple):
-                data[field_name] = list(value)
-            else:
-                data[field_name] = value
+        for section_name in USER_SETTINGS_SECTION_NAMES:
+            section = getattr(config.user, section_name)
+            section_data: dict[str, Any] = {}
+            for field in dataclass_fields(section):
+                section_data[field.name] = self._json_value(getattr(section, field.name))
+            data[section_name] = section_data
         return data
 
     def _apply_to_config(self, config: AppConfig, data: dict[str, Any]) -> AppConfig:
+        flat_data = self._flatten_user_data(data)
         for key in self.USER_EDITABLE_FIELDS:
-            if key not in data:
+            if key not in flat_data:
                 continue
 
             coerce = self.FIELD_COERCERS.get(key)
@@ -231,11 +247,11 @@ class UserConfigStore:
                 continue
 
             try:
-                setattr(config, key, coerce(data[key]))
+                setattr(config, key, coerce(flat_data[key]))
             except Exception as exc:
                 self._startup_messages.append(
                     "Ignored invalid user config field | "
-                    f"field={key} value={self._format_value_for_log(data[key])} | {exc}"
+                    f"field={key} value={self._format_value_for_log(flat_data[key])} | {exc}"
                 )
         return config
 
@@ -255,10 +271,11 @@ class UserConfigStore:
         return config
 
     def _migrate_legacy_probe_timeout(self, config: AppConfig, data: dict[str, Any]) -> bool:
-        if "mac_discovery_probe_timeout" not in data:
+        raw_value = self._raw_user_value(data, "mac_discovery_probe_timeout")
+        if raw_value is None:
             return False
         try:
-            probe_timeout = float(data["mac_discovery_probe_timeout"])
+            probe_timeout = float(raw_value)
         except Exception:
             return False
         if not math.isclose(probe_timeout, _LEGACY_MAC_DISCOVERY_PROBE_TIMEOUT, rel_tol=0.0, abs_tol=1e-9):
@@ -271,10 +288,11 @@ class UserConfigStore:
         return True
 
     def _migrate_legacy_lock_standby_dedup_window(self, config: AppConfig, data: dict[str, Any]) -> bool:
-        if "lock_standby_dedup_window" not in data:
+        raw_value = self._raw_user_value(data, "lock_standby_dedup_window")
+        if raw_value is None:
             return False
         try:
-            window = float(data["lock_standby_dedup_window"])
+            window = float(raw_value)
         except Exception:
             return False
         if not math.isclose(window, _LEGACY_LOCK_STANDBY_DEDUP_WINDOW, rel_tol=0.0, abs_tol=1e-9):
@@ -285,6 +303,49 @@ class UserConfigStore:
             "Raised legacy lock standby dedup window from 8.00s to 30.00s"
         )
         return True
+
+    @classmethod
+    def _flatten_user_data(cls, data: dict[str, Any]) -> dict[str, Any]:
+        flat: dict[str, Any] = {}
+        for section_name, field_names in _USER_SETTINGS_SECTION_FIELDS.items():
+            section_data = data.get(section_name)
+            if not isinstance(section_data, dict):
+                continue
+            for field_name in field_names:
+                if field_name in section_data:
+                    flat[field_name] = section_data[field_name]
+        flat.update(
+            {
+                key: value
+                for key, value in data.items()
+                if key in USER_SETTINGS_FIELD_PATHS
+            }
+        )
+        return flat
+
+    @classmethod
+    def _raw_user_value(cls, data: dict[str, Any], field_name: str) -> Any:
+        if field_name in data:
+            return data[field_name]
+        path = USER_SETTINGS_FIELD_PATHS.get(field_name)
+        if path is None:
+            return None
+        section_name, nested_field_name = path
+        section_data = data.get(section_name)
+        if isinstance(section_data, dict):
+            return section_data.get(nested_field_name)
+        return None
+
+    @classmethod
+    def _json_value(cls, value: Any) -> Any:
+        if isinstance(value, tuple):
+            return list(value)
+        if is_dataclass(value):
+            return {
+                field.name: cls._json_value(getattr(value, field.name))
+                for field in dataclass_fields(value)
+            }
+        return value
 
     @staticmethod
     def _format_value_for_log(value: Any, limit: int = 120) -> str:

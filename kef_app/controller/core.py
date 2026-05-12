@@ -11,6 +11,7 @@ from ..storage import PersistedSpeakerState, SpeakerStateStore
 from ..devices.speaker_backend import W2Backend
 from .actions import ControllerDeviceActionsMixin
 from .discovery import ControllerDiscoveryMixin
+from .feature_state import LockStandbyDedupState
 from .logging_mixin import ControllerLoggingMixin
 from .network_timeout import temporary_socket_timeout
 from .power_state import ControllerStateMixin
@@ -73,7 +74,7 @@ class KefPowerController(
         self._last_resume_event_mono = 0.0
         self._session_ending = False
 
-        self._last_lock_standby_ok_mono = 0.0
+        self._lock_standby_dedup = LockStandbyDedupState()
         self._system_sleep_pending = False
         self._last_system_suspend_mono = 0.0
         self._last_system_resume_mono = 0.0
@@ -113,7 +114,7 @@ class KefPowerController(
             self._controller_active_power_actions = max(0, self._controller_active_power_actions - 1)
         if success and action == "WAKE":
             self._set_speaker_runtime_state(speaker_on=True, source=f"power_action:{action}")
-        elif success and action in {"STANDBY", "LOCK_PRE_STANDBY", "ENDSESSION_STANDBY"}:
+        elif success and action in {"STANDBY", "EARLY_STANDBY", "ENDSESSION_STANDBY"}:
             self._set_speaker_runtime_state(speaker_on=False, source=f"power_action:{action}")
         self._emit_event(
             "power_action_finished",

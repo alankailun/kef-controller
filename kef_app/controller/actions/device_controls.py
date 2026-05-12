@@ -7,8 +7,8 @@ from typing import Callable, Optional, TypeVar
 from pykefcontrol.kef_connector import KefConnector
 
 from ..network_timeout import temporary_socket_timeout
+from ...devices.transport import is_host_unreachable
 from ...devices.speaker_models import normalize_input_source
-from .device_common import _is_host_unreachable
 
 
 T = TypeVar("T")
@@ -317,7 +317,7 @@ class ControllerDeviceControlsMixin:
                 speaker = self.get_speaker(fresh=False)
                 events = speaker.poll_speaker(timeout=max(1, int(timeout)))
         except Exception as exc:
-            unreachable = _is_host_unreachable(exc)
+            unreachable = is_host_unreachable(exc)
             failures, threshold, recovered = self._record_speaker_event_poll_failure(
                 reason=reason,
                 trigger=trigger,
@@ -466,11 +466,9 @@ class ControllerDeviceControlsMixin:
                         requested_input=requested_input,
                         new_input=new_input,
                         previous_input=previous_input or "<unknown>",
-                        previous_player_source="<not_read>",
                         attempt=attempt,
                         status="success",
                         actual_input=actual_input,
-                        actual_player_source="<skipped_input_confirmed>",
                         mono=f"{self.mono():.3f}",
                     )
                     return True

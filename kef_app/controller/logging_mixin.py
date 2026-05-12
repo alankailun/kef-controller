@@ -54,7 +54,7 @@ class ControllerLoggingMixin:
             action = str(fields.get("action") or "")
             step = str(fields.get("step") or "")
             if (
-                action in {"LOCK_PRE_STANDBY", "STANDBY", "ENDSESSION_STANDBY"}
+                action in {"EARLY_STANDBY", "STANDBY", "ENDSESSION_STANDBY"}
                 and step == "shutdown_request"
                 and str(fields.get("status") or "") == "sent"
             ):
@@ -116,9 +116,9 @@ class ControllerLoggingMixin:
             return
 
         with self._state_lock:
-            sleep_pending = bool(getattr(self, "_system_sleep_pending", False))
-            suspend_mono = float(getattr(self, "_last_system_suspend_mono", 0.0) or 0.0)
-            resume_mono = float(getattr(self, "_last_system_resume_mono", 0.0) or 0.0)
+            sleep_pending = bool(self._system_sleep_pending)
+            suspend_mono = float(self._last_system_suspend_mono or 0.0)
+            resume_mono = float(self._last_system_resume_mono or 0.0)
 
         suspend_inside_action = start_mono <= suspend_mono <= end_mono
         started_after_pending_suspend = sleep_pending and suspend_mono > 0 and suspend_mono <= start_mono

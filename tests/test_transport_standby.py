@@ -21,7 +21,7 @@ class _LoopbackTcpSink:
         self._server.listen(64)
         self._server.settimeout(0.05)
         self.port = self._server.getsockname()[1]
-        self._thread = threading.Thread(target=self._serve, daemon=True, name="RawShutdownLoopbackSink")
+        self._thread = threading.Thread(target=self._serve, daemon=True, name="TransportStandbyLoopbackSink")
 
     @property
     def accepted(self) -> int:
@@ -70,7 +70,7 @@ def _percentile(values: list[float], percentile: float) -> float:
     return ordered[index]
 
 
-class RawShutdownTests(unittest.TestCase):
+class TransportStandbyTests(unittest.TestCase):
     def test_standby_request_bytes_are_prebuilt_post_to_set_data(self):
         request = build_standby_request_bytes("10.0.0.222")
         header_blob, body = request.split(b"\r\n\r\n", 1)
@@ -109,7 +109,7 @@ class RawShutdownTests(unittest.TestCase):
         p95 = _percentile(samples_ms, 0.95)
         max_ms = max(samples_ms)
         print(
-            "RAW_SHUTDOWN_LOOPBACK_BENCHMARK "
+            "TRANSPORT_STANDBY_LOOPBACK_BENCHMARK "
             f"runs={runs} p50_ms={p50:.3f} p95_ms={p95:.3f} max_ms={max_ms:.3f}"
         )
         self.assertLess(p95, 100.0)

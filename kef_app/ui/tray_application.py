@@ -176,7 +176,7 @@ class KefTrayApp:
         return {
             "WAKE": "Waking Speaker",
             "STANDBY": "Putting Speaker in Standby",
-            "LOCK_PRE_STANDBY": "Preparing Standby",
+            "EARLY_STANDBY": "Preparing Standby",
             "ENDSESSION_STANDBY": "Processing Shutdown Standby",
         }.get(action, action or "Working")
 

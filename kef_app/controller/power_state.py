@@ -17,17 +17,17 @@ class ControllerStateMixin:
 
     def _clear_recent_lock_standby_marker(self):
         with self._state_lock:
-            self._last_lock_standby_ok_mono = 0.0
+            self._lock_standby_dedup.clear()
 
     def _mark_lock_prestandby_success(self):
         with self._state_lock:
-            self._last_lock_standby_ok_mono = self.mono()
+            self._lock_standby_dedup.mark_success(self.mono())
 
     def _set_session_ending(self, ending: bool):
         with self._state_lock:
             self._session_ending = ending
             if ending:
-                self._last_lock_standby_ok_mono = 0.0
+                self._lock_standby_dedup.clear()
 
     def _is_session_ending(self) -> bool:
         with self._state_lock:

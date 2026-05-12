@@ -455,7 +455,7 @@ class HomeInterface(QWidget):
         if success:
             if action == "WAKE":
                 self._power_on_hint = True
-            elif action in {"STANDBY", "LOCK_PRE_STANDBY", "ENDSESSION_STANDBY"}:
+            elif action in {"STANDBY", "EARLY_STANDBY", "ENDSESSION_STANDBY"}:
                 self._power_on_hint = False
         self._set_working(self._active_power_actions > 0)
         if success and action == "WAKE":
