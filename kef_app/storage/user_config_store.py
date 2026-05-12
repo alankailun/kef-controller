@@ -10,7 +10,6 @@ from ..config import AppConfig, UserSettings
 from ..config.user_settings import (
     USER_SETTINGS_FIELD_PATHS,
     USER_SETTINGS_FLAT_FIELD_NAMES,
-    USER_SETTINGS_LEGACY_FIELD_ALIASES,
     USER_SETTINGS_SECTION_NAMES,
 )
 from .json_file import write_json_atomic
@@ -31,11 +30,6 @@ _CONFIGURABLE_INPUT_SOURCES = {value for _, value in INPUT_SOURCE_OPTIONS}
 # Added 2026-05. Safe to remove after 2026-11 once released installs have auto-rewritten config.json.
 _LEGACY_MAC_DISCOVERY_PROBE_TIMEOUT = 0.20
 _DEFAULT_MAC_DISCOVERY_PROBE_TIMEOUT = 0.50
-# Added 2026-05. Safe to remove after 2026-11 once released installs have auto-rewritten config.json.
-_LEGACY_EARLY_STANDBY_DEDUP_WINDOW = 8.0
-_DEFAULT_EARLY_STANDBY_DEDUP_WINDOW = 30.0
-
-
 def _coerce_string(value: Any) -> str:
     return str(value or "")
 
@@ -167,7 +161,6 @@ class UserConfigStore:
         "early_standby_action_lock_timeout": _coerce_non_negative_float,
         "early_standby_dedup_window": _coerce_non_negative_float,
         "log_backup_days": _coerce_log_backup_days,
-        "diagnostic_logging": lambda value: UserConfigStore._coerce_bool(value),
         "persist_runtime_state": lambda value: UserConfigStore._coerce_bool(value),
         "fast_exit_on_endsession": lambda value: UserConfigStore._coerce_bool(value),
         "endsession_standby_on_shutdown": lambda value: UserConfigStore._coerce_bool(value),
@@ -199,8 +192,6 @@ class UserConfigStore:
             loaded = self._migrate_legacy_device_target(loaded, data)
             migrated = False
             if self._migrate_legacy_probe_timeout(loaded, data):
-                migrated = True
-            if self._migrate_legacy_early_standby_dedup_window(loaded, data):
                 migrated = True
             if migrated:
                 self.save(loaded)
@@ -289,25 +280,6 @@ class UserConfigStore:
         )
         return True
 
-    def _migrate_legacy_early_standby_dedup_window(self, config: AppConfig, data: dict[str, Any]) -> bool:
-        raw_value = self._raw_user_value(data, "early_standby_dedup_window")
-        if raw_value is None:
-            raw_value = self._raw_legacy_user_value(data, "lock_standby_dedup_window")
-        if raw_value is None:
-            return False
-        try:
-            window = float(raw_value)
-        except Exception:
-            return False
-        if not math.isclose(window, _LEGACY_EARLY_STANDBY_DEDUP_WINDOW, rel_tol=0.0, abs_tol=1e-9):
-            return False
-
-        config.early_standby_dedup_window = _DEFAULT_EARLY_STANDBY_DEDUP_WINDOW
-        self._startup_messages.append(
-            "Raised legacy early standby dedup window from 8.00s to 30.00s"
-        )
-        return True
-
     @classmethod
     def _flatten_user_data(cls, data: dict[str, Any]) -> dict[str, Any]:
         flat: dict[str, Any] = {}
@@ -325,12 +297,6 @@ class UserConfigStore:
                 if key in USER_SETTINGS_FIELD_PATHS
             }
         )
-        for legacy_name, (section_name, canonical_name) in USER_SETTINGS_LEGACY_FIELD_ALIASES.items():
-            if canonical_name in flat:
-                continue
-            legacy_value = cls._raw_field_value(data, section_name, legacy_name)
-            if legacy_value is not None:
-                flat[canonical_name] = legacy_value
         return flat
 
     @classmethod
@@ -340,14 +306,6 @@ class UserConfigStore:
             return None
         section_name, nested_field_name = path
         return cls._raw_field_value(data, section_name, nested_field_name)
-
-    @classmethod
-    def _raw_legacy_user_value(cls, data: dict[str, Any], legacy_name: str) -> Any:
-        path = USER_SETTINGS_LEGACY_FIELD_ALIASES.get(legacy_name)
-        if path is None:
-            return None
-        section_name, _canonical_name = path
-        return cls._raw_field_value(data, section_name, legacy_name)
 
     @classmethod
     def _raw_field_value(cls, data: dict[str, Any], section_name: str, field_name: str) -> Any:

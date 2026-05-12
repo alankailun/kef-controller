@@ -29,9 +29,6 @@ class ControllerLoggingMixin:
     def mono(self) -> float:
         return time.monotonic()
 
-    def _is_diagnostic_logging_enabled(self) -> bool:
-        return bool(getattr(self.config, "diagnostic_logging", False))
-
     @staticmethod
     def _coerce_log_level(level: object) -> Optional[int]:
         if level is None:
@@ -45,8 +42,6 @@ class ControllerLoggingMixin:
         if tag in {"WARN", "RETRY", "ABORT"}:
             return logging.WARNING
         if tag in {"BEGIN", "END", "EVENT", "STATE"}:
-            return logging.INFO
-        if self._is_diagnostic_logging_enabled():
             return logging.INFO
         if tag == "SKIP":
             return logging.DEBUG
@@ -77,21 +72,14 @@ class ControllerLoggingMixin:
         else:
             self.log.log(log_level_value, tag)
 
-    def _log_separator(self):
-        if self._is_diagnostic_logging_enabled():
-            self.log.info("-" * 100)
-
     def _log_action_begin(self, action: str, generation: int | None, reason: str) -> float:
         start_mono = self.mono()
-        self._log_separator()
         self._log_structured("BEGIN", action=action, gen=generation, reason=reason, mono=f"{start_mono:.3f}")
-        self._log_separator()
         return start_mono
 
     def _log_action_end(self, action: str, generation: int | None, reason: str, outcome: str, start_mono: float):
         end_mono = self.mono()
         self._log_action_sleep_crossing(action, generation, reason, start_mono, end_mono)
-        self._log_separator()
         self._log_structured(
             "END",
             action=action,
@@ -101,7 +89,6 @@ class ControllerLoggingMixin:
             duration_ms=int((end_mono - start_mono) * 1000),
             mono=f"{end_mono:.3f}",
         )
-        self._log_separator()
 
     def _log_action_sleep_crossing(
         self,
@@ -174,63 +161,12 @@ class ControllerLoggingMixin:
             f"home_event_poll={c.home_event_poll_enabled} | event_timeout={c.home_event_poll_timeout}s | "
             f"event_reconcile={c.home_event_reconcile_interval}s | "
             f"event_recovery_failures={c.speaker_event_recovery_failure_threshold} | "
-            f"offline_threshold={c.identity_probe_failure_threshold} | diagnostic_logging={c.diagnostic_logging}"
+            f"offline_threshold={c.identity_probe_failure_threshold}"
         )
         self.log.info(
             "  Files: "
             f"config={c.config_file} | state={c.state_file} | log={c.log_file}"
         )
-        if self._is_diagnostic_logging_enabled():
-            self.log.info(f"  Last remembered IP: {self._loaded_state.last_ip or '<empty>'}")
-            self.log.info(f"  Last remembered MAC: {self._loaded_state.last_mac or '<empty>'}")
-            self.log.info(f"  Current target MAC: {self.get_target_kef_mac() or '<empty>'}")
-            self.log.info(f"  Current speaker name: {self._speaker_name or '<empty>'}")
-            self.log.info(f"  Current speaker model: {self._speaker_model or '<empty>'}")
-            self.log.info(f"  Default input: {c.kef_input}")
-            self.log.info(
-                "  MAC recovery discovery: "
-                f"enabled | configured_mac={c.kef_mac or '<empty>'} | "
-                f"current_mac={self.get_target_kef_mac() or '<empty>'} | "
-                f"subnet_prefix=/{c.mac_discovery_subnet_prefix} | extra_cidrs={c.mac_discovery_extra_cidrs}"
-            )
-            self.log.info(
-                "  Full network scan: "
-                f"target-mac-only | http_timeout={c.blind_discovery_http_timeout:.2f}s | "
-                f"cooldown={c.blind_discovery_cooldown:.1f}s | workers={c.blind_discovery_max_workers}"
-            )
-            self.log.info(f"  Wake only after unlock: {c.wake_on_unlock_only}")
-            self.log.info(f"  Reachability wait timeout: {c.reachability_wait_timeout}s")
-            self.log.info(f"  Socket timeout: {c.socket_timeout}s")
-            self.log.info(f"  Wake retry delays: {c.wake_attempt_delays}")
-            self.log.info(f"  Standby action-lock timeout: {c.suspend_action_lock_timeout}s")
-            self.log.info(f"  Wake action-lock timeout: {c.wake_action_lock_timeout}s")
-            self.log.info(f"  Standby when Windows sleeps: {c.standby_on_sleep}")
-            self.log.info(
-                "  Fast standby on sleep broadcast: "
-                f"{c.suspend_fast_standby_enabled} | "
-                f"lock_timeout={c.suspend_fast_standby_action_lock_timeout}s | "
-                f"socket_timeout={c.suspend_fast_standby_socket_timeout}s"
-            )
-            self.log.info(
-                "  Standby on screen lock: "
-                f"{c.standby_on_lock}"
-            )
-            self.log.info(
-                "  Early standby triggers: "
-                f"lid_close={c.standby_on_lid_close} | "
-                f"sleep_countdown={c.standby_on_sleep_countdown} | "
-                f"countdown_threshold={c.sleep_countdown_threshold_s}s | "
-                f"countdown_poll={c.sleep_countdown_poll_interval_s}s"
-            )
-            self.log.info(
-                "  Early standby tuning: "
-                f"action_lock_timeout={c.early_standby_action_lock_timeout}s | "
-                f"dedupe_window={c.early_standby_dedup_window}s"
-            )
-            self.log.info(f"  Standby during shutdown/sign-out: {c.endsession_standby_on_shutdown}")
-            self.log.info(f"  Log retention days: {c.log_backup_days}")
-            self.log.info(f"  Runtime state persistence: {c.persist_runtime_state}")
-            self.log.info(f"  Fast exit during end-session: {c.fast_exit_on_endsession}")
         self.log.info("=" * 64)
 
     def log_power_event(self, name: str, wparam: int, lparam: int):

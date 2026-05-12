@@ -1,120 +1,118 @@
-# KEF Controller 1.2.0 — "Reliable Standby"
+# KEF Controller 1.2.0 - Reliable Standby
 
-Release date: 2026-05-11
+Release date: 2026-05-12
 
-This release is centred on making the speaker go to standby reliably
-when the PC sleeps, locks, dims its display, idles out, or closes its
-lid — even when Wi-Fi has already begun tearing down.
+Baseline for this note: GitHub tag `v1.1.0` at `6a82188`.
+
+This release focuses on making standby happen at the right time, with less
+guesswork and less log noise. The controller now tries to send standby before
+Windows tears down networking, keeps a last-resort suspend path, and avoids the
+two false-positive triggers that could shut the speaker off while the PC was
+only idle or the display was off.
 
 ## Highlights
 
-- **Lock-to-standby that actually works under flaky Wi-Fi.** A new
-  fire-and-forget HTTP transport sends the standby command inline on
-  the message-pump thread before Windows can drop the network route.
-  When all attempts return `WSAEHOSTUNREACH` the speaker is now
-  assumed to already be in standby (matching the existing
-  standard-path behaviour) instead of falling into a synchronous
-  fallback that could survive Modern Standby and incorrectly report
-  "success" 1–2 hours later.
-- **Earlier standby triggers.** Standby now also fires on
-  `GUID_SESSION_USER_PRESENCE` (user idle timeout),
-  `GUID_SESSION_DISPLAY_STATUS` (display off), and
-  `GUID_LIDSWITCH_STATE_CHANGE` (laptop lid closed) — not just on
-  session lock. All four sources share a 30-second dedup window so
-  the speaker only sees one command per "user is going away" event.
-- **Self-healing speaker event monitor.** Stale `pollQueue`
-  subscriptions are now refreshed in place after a single failure;
-  the connector is only rebuilt once the failure count crosses the
-  configured threshold, which also triggers an IP refresh.
-- **Hard 1.5 s ceiling on the standard standby fallback.** Even if
-  `socket.connect()` is throttled by Modern Standby it can no longer
-  hold the controller generation hostage past the next system event.
-- **Shared, pooled HTTP for all KEF API traffic.** A single
-  `requests.Session()` with a 16/32 connection pool replaces
-  per-call connects.
+- **Sleep countdown standby.** A new monitor reads Windows
+  `CallNtPowerInformation(SystemPowerInformation)` every two seconds and fires
+  standby when `TimeRemaining` is within the configured threshold, currently
+  `5s`. The value is read dynamically, so changing the Windows sleep timeout is
+  picked up without restarting the app.
+- **False-positive early triggers removed.** `standby_on_user_inactive` and
+  `standby_on_display_off` were removed. A quiet desk, video playback, or a
+  display-off state no longer implies the speaker should turn off.
+- **Early standby naming cleaned up.** Historical `lock_pre_standby` and
+  `recent_lock_pre_standby_ok` naming is now `early_standby` /
+  `recent_early_standby_ok`, matching the fact that the same path is used by
+  lock, lid-close, and sleep-countdown triggers.
+- **Faster standby send path.** Standby uses a raw fire-and-forget HTTP POST
+  with an inline first send, short socket timeouts, and parallel follow-up
+  attempts. It does not wait for a response when Windows is about to sleep.
+- **Modern Standby freeze protection.** The standard fallback is capped by a
+  hard deadline so a frozen process cannot wake up much later and report a
+  stale success.
+- **Shutdown and sign-out standby.** `WM_QUERYENDSESSION` sends standby with
+  the same fire-and-forget strategy, then lets Windows continue shutting down.
 
-## Bug fixes
+## Behavior Changes
 
-- Fast-standby fire-and-forget now distinguishes "all attempts were
-  host-unreachable" from "transport failed" and only enters the
-  standard fallback in the latter case.
-- Discovery scan tolerates KEF speakers that briefly respond as
-  non-KEF HTTP services during cold boot.
-- Speaker connector is no longer rebuilt on transient event-poll
-  read-timeouts.
-- End-session standby uses fire-and-forget so it does not block
-  `WM_QUERYENDSESSION` processing.
+- Automatic sleep is now primarily handled by `sleep_countdown`, not by broad
+  idle/display heuristics.
+- `PBT_APMSUSPEND` remains as a final fallback when the system is already
+  entering suspend.
+- Laptop lid-close remains an early trigger.
+- Screen lock remains an early trigger, controlled by `standby_on_lock`.
+- Old `lock_standby_*` config aliases were removed. This is intentional because
+  the app is self-use and the current config can be regenerated or saved again.
+- The `diagnostic_logging` setting and UI switch were removed. Normal logs keep
+  important events, outcomes, warnings, and standby sends; low-value debug
+  chatter stays out of the default log.
 
-## New settings (defaults are conservative)
+## Reliability Fixes
 
-- `standby_on_user_inactive`, `standby_on_display_off`,
-  `standby_on_lid_close`
-- `endsession_standby_on_shutdown`, `endsession_standby_action_lock_timeout`,
-  `endsession_standby_socket_timeout`
-- `suspend_fast_standby_enabled`, `suspend_fast_standby_action_lock_timeout`,
-  `suspend_fast_standby_socket_timeout`
-- `home_event_poll_enabled`, `home_event_poll_timeout`,
-  `home_event_reconcile_interval`,
-  `speaker_event_recovery_failure_threshold`
-- `tray_identity_poll_interval`, `identity_probe_failure_threshold`,
-  `resume_dedup_window`
+- Host-unreachable standby attempts are handled explicitly. If every
+  fire-and-forget attempt returns a host-unreachable error, the controller treats
+  that as an acceptable best-effort result instead of falling into a slow
+  synchronous path.
+- The speaker event monitor now recovers stale event subscriptions without
+  rebuilding the connector on every transient timeout.
+- KEF HTTP traffic uses pooled sessions to reduce connection churn.
+- Discovery tolerates speakers that briefly respond like generic HTTP services
+  during cold boot.
+- MAC-based recovery and identity probing are stricter about matching the
+  configured target speaker.
+- Resume/unlock deduping prevents duplicate wake attempts from closely spaced
+  Windows resume events.
 
-## Automatic migrations
+## Architecture
 
-Existing `config.json` files are upgraded in place on first launch:
+- Standby execution is now policy-driven through `StandbyPolicy` descriptors:
+  early standby, fast suspend, standard standby, and end-session standby share
+  one execution path.
+- Power triggers are first-class objects under `kef_app/controller/triggers/`.
+  Current triggers are lock, lid closed, sleep countdown, suspend,
+  query-end-session, and end-session.
+- Wake and standby code were split out of the old monolithic
+  `device_power.py`.
+- Raw transport primitives moved to `kef_app/devices/transport/`, including
+  reusable HTTP POST bytes and host-unreachable classification.
+- User settings are grouped into nested dataclasses for device, discovery,
+  wake, standby triggers, standby tuning, end-session behavior, startup,
+  polling, and diagnostics.
+- Early-standby dedup state lives in `EarlyStandbyDedupState` instead of being
+  a loose controller field.
 
-- `lock_standby_dedup_window`: `8.0 s` → `30.0 s`
-- `mac_discovery_probe_timeout`: `0.20 s` → `0.50 s`
-- Legacy `expected_speaker_mac` field → `kef_mac`
+## Packaging And Startup
 
-## Internal refactoring
+- The packaged app keeps a stable LocalAppData install copy for shortcuts and
+  startup entries.
+- Inno Setup closes a running `KEF Controller.exe` before install or uninstall.
+- Startup registration handling was cleaned up and reconciles task/registry
+  state more predictably.
 
-These do not change behaviour but make future feature additions or
-removals safer:
+## Removed
 
-- Standby execution collapsed to a single
-  `_execute_standby_policy(...)` driven by `StandbyPolicy` descriptors
-  (`PREEMPTIVE`, `FAST_SUSPEND`, `STANDARD`, `ENDSESSION`) instead of
-  four near-parallel methods with 15+ keyword arguments each.
-- Power-event triggers are now first-class objects under
-  `kef_app/controller/triggers/` (`lock`, `user_inactive`,
-  `display_off`, `lid_closed`, `suspend`, `query_end_session`,
-  `end_session`). Adding a new trigger is a single new file plus a
-  registry entry.
-- `UserSettings` is split into feature sub-dataclasses
-  (`DeviceSettings`, `WakeBehavior`, `StandbyTriggers`,
-  `StandbyTuning`, `EndSessionBehavior`, `DiscoverySettings`,
-  `StartupSettings`, `SpeakerEventPolling`, `DiagnosticsSettings`).
-  Flat field access is preserved via `__getattr__`/`__setattr__` for
-  backwards compatibility.
-- Transport primitives moved to `kef_app/devices/transport/`
-  (`raw_http.py`, `errors.py`, `standby.py`); the controller no
-  longer owns network bytes.
-- `LockStandbyDedupState` extracted to
-  `kef_app/controller/feature_state.py`.
+- `standby_on_user_inactive`
+- `standby_on_display_off`
+- `diagnostic_logging`
+- Legacy `lock_standby_action_lock_timeout` alias
+- Legacy `lock_standby_dedup_window` alias
+- Old `device_power.py`
+- Old raw shutdown shim and other dead exports
 
-## Changes since 1.1.0
+## Tests
 
-```
-9816e9e  Improve standby fast path reliability
-2187c74  Use fire-and-forget standby for end session
-74d06f4  Benchmark raw standby fast path
-7966ef9  Add raw standby fast path
-767dbd3  Raise KEF scan probe timeout
-cc4d5a2  Make KEF scan tolerate cold speaker startup
-5ad860d  Avoid rebuilding KEF connector after poll timeout
-b2d92c0  Move event monitor to controller and self-heal stale subscriptions
-3c694f9  Use pooled KEF HTTP and event polling
-4c8c46b  Gate blind recovery and share standby fast path
-f3324b2  Reduce KEF controller network churn
-1c9859d  Treat unreachable standby target as asleep
-ca4c870  Update packaging docs and runtime shutdown
-39f8dc1  Fix lock-time standby race; split power actions; trim dead exports
-c783438  Add fast standby path on system suspend
-60eab3b  Improve speaker discovery, identity resolution, and logging
-```
+- Unit test suite currently passes: `106 tests`.
+- Added coverage for sleep countdown polling, Windows power information reads,
+  fire-and-forget standby transport, timeout patching, discovery scans, trigger
+  routing, standby policy behavior, and UI power-behavior settings.
 
-Plus the 1.2.0 refactor: triggers package, StandbyPolicy descriptors,
-segmented UserSettings, transport package, LockStandbyDedupState,
-hard timeout on standard fallback, host-unreachable shortcut, and
-dedup window auto-migration.
+## Diff Size From GitHub v1.1.0
+
+Compared with GitHub `v1.1.0` (`6a82188`), the current tree changes roughly:
+
+- `68` files
+- `4475` insertions
+- `1275` deletions
+
+The main code movement is the replacement of the old device-power path with
+separate wake, standby, trigger, transport, and discovery modules.

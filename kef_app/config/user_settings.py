@@ -90,7 +90,6 @@ class EndSessionBehavior:
 @dataclass(slots=True)
 class DiagnosticsSettings:
     log_backup_days: int = 7
-    diagnostic_logging: bool = False
     persist_runtime_state: bool = True
 
 
@@ -109,11 +108,6 @@ USER_SETTINGS_FIELD_PATHS: dict[str, tuple[str, str]] = {
     **_section_field_paths("end_session", EndSessionBehavior),
     **_section_field_paths("diagnostics", DiagnosticsSettings),
 }
-USER_SETTINGS_LEGACY_FIELD_ALIASES: dict[str, tuple[str, str]] = {
-    "lock_standby_action_lock_timeout": ("standby_tuning", "early_standby_action_lock_timeout"),
-    "lock_standby_dedup_window": ("standby_triggers", "early_standby_dedup_window"),
-}
-
 USER_SETTINGS_FLAT_FIELD_NAMES = tuple(USER_SETTINGS_FIELD_PATHS)
 USER_SETTINGS_SECTION_NAMES = (
     "device",
@@ -126,11 +120,7 @@ USER_SETTINGS_SECTION_NAMES = (
     "end_session",
     "diagnostics",
 )
-USER_SETTINGS_FIELD_NAMES = (
-    USER_SETTINGS_SECTION_NAMES
-    + USER_SETTINGS_FLAT_FIELD_NAMES
-    + tuple(USER_SETTINGS_LEGACY_FIELD_ALIASES)
-)
+USER_SETTINGS_FIELD_NAMES = USER_SETTINGS_SECTION_NAMES + USER_SETTINGS_FLAT_FIELD_NAMES
 
 
 @dataclass(slots=True)
@@ -146,7 +136,7 @@ class UserSettings:
     diagnostics: DiagnosticsSettings = field(default_factory=DiagnosticsSettings)
 
     def __getattr__(self, name: str) -> Any:
-        path = USER_SETTINGS_FIELD_PATHS.get(name) or USER_SETTINGS_LEGACY_FIELD_ALIASES.get(name)
+        path = USER_SETTINGS_FIELD_PATHS.get(name)
         if path is None:
             raise AttributeError(f"{type(self).__name__!s} has no attribute {name!r}")
         section_name, field_name = path
@@ -157,8 +147,6 @@ class UserSettings:
             object.__setattr__(self, name, value)
             return
         path = USER_SETTINGS_FIELD_PATHS.get(name)
-        if path is None:
-            path = USER_SETTINGS_LEGACY_FIELD_ALIASES.get(name)
         if path is not None:
             section_name, field_name = path
             setattr(getattr(self, section_name), field_name, value)

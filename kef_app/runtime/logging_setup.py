@@ -10,7 +10,6 @@ from ..config import AppConfig
 
 def build_logger(config: AppConfig) -> logging.Logger:
     os.makedirs(config.log_dir, exist_ok=True)
-    log_level = logging.DEBUG if config.diagnostic_logging else logging.INFO
 
     file_formatter = logging.Formatter(
         fmt="[%(asctime)s][%(threadName)s] %(message)s",
@@ -28,7 +27,7 @@ def build_logger(config: AppConfig) -> logging.Logger:
     file_handler.setFormatter(file_formatter)
 
     logger = logging.getLogger("kef_controller")
-    logger.setLevel(log_level)
+    logger.setLevel(logging.INFO)
     logger.handlers.clear()
     logger.propagate = False
     logger.addHandler(file_handler)

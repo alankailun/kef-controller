@@ -322,14 +322,6 @@ class SettingsInterface(ScrollArea):
     def _build_diagnostics_group(self, container: QWidget, layout: QVBoxLayout) -> None:
         group = SettingCardGroup("Diagnostics", container)
 
-        self._diagnostic_logging = SwitchCard(
-            FIF.DOCUMENT,
-            "Diagnostic Logging",
-            "Write detailed internal logs for troubleshooting. Leave this off unless you are debugging a problem.",
-        )
-        self._diagnostic_logging.set_checked(self._runtime_config.diagnostic_logging)
-        group.addSettingCard(self._diagnostic_logging)
-
         self._event_tests_toggle = ButtonCard(
             FIF.SPEED_HIGH,
             "Event Tests",
@@ -358,10 +350,6 @@ class SettingsInterface(ScrollArea):
     def _apply_runtime_config(self, updated: AppConfig) -> None:
         apply_runtime_config(self._runtime_config, updated, self._config_store.USER_EDITABLE_FIELDS)
         self._controller.apply_configured_device_target(source="settings_save")
-        self._apply_runtime_logging()
-
-    def _apply_runtime_logging(self) -> None:
-        self._log.setLevel(logging.DEBUG if self._runtime_config.diagnostic_logging else logging.INFO)
 
     def _log_power_behavior_state(self) -> None:
         self._log.info(log_power_behavior_state_message(self._runtime_config))
@@ -410,7 +398,6 @@ class SettingsInterface(ScrollArea):
             standby_on_lock=self._power_behavior_cards["standby_on_lock"].is_checked(),
             endsession_standby_on_shutdown=self._power_behavior_cards["endsession_standby_on_shutdown"].is_checked(),
             startup_registration_mode=selected_startup_mode,
-            diagnostic_logging=self._diagnostic_logging.is_checked(),
         )
 
         desired_startup = selected_startup_mode != "off"
