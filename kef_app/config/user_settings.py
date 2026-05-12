@@ -53,8 +53,11 @@ class UserSettings:
     suspend_fast_standby_action_lock_timeout: float = 0.20
     suspend_fast_standby_socket_timeout: float = 0.60
     standby_on_lock: bool = True
+    standby_on_user_inactive: bool = True
+    standby_on_display_off: bool = True
+    standby_on_lid_close: bool = True
     lock_standby_action_lock_timeout: float = 0.3
-    lock_standby_dedup_window: float = 8.0
+    lock_standby_dedup_window: float = 30.0
 
     log_backup_days: int = 7
     diagnostic_logging: bool = False

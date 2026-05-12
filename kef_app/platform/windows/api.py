@@ -3,7 +3,9 @@ from __future__ import annotations
 import ctypes
 import os
 import sys
+import uuid
 from ctypes import wintypes
+from dataclasses import dataclass
 from typing import Optional
 
 MB_ICONINFORMATION = 0x40
@@ -14,6 +16,16 @@ WM_POWERBROADCAST = 0x0218
 PBT_APMSUSPEND = 0x0004
 PBT_APMRESUMESUSPEND = 0x0007
 PBT_APMRESUMEAUTOMATIC = 0x0012
+PBT_POWERSETTINGCHANGE = 0x8013
+DEVICE_NOTIFY_WINDOW_HANDLE = 0
+
+POWER_USER_PRESENT = 0
+POWER_USER_INACTIVE = 2
+POWER_MONITOR_OFF = 0
+POWER_MONITOR_ON = 1
+POWER_MONITOR_DIM = 2
+LID_CLOSED = 0
+LID_OPENED = 1
 
 WM_WTSSESSION_CHANGE = 0x02B1
 WTS_SESSION_LOCK = 0x0007
@@ -33,6 +45,13 @@ WTSUnRegisterSessionNotification = wtsapi32.WTSUnRegisterSessionNotification
 WTSUnRegisterSessionNotification.argtypes = [ctypes.c_void_p]
 WTSUnRegisterSessionNotification.restype = ctypes.c_int
 
+user32 = ctypes.WinDLL("user32", use_last_error=True)
+RegisterPowerSettingNotification = user32.RegisterPowerSettingNotification
+RegisterPowerSettingNotification.restype = wintypes.HANDLE
+UnregisterPowerSettingNotification = user32.UnregisterPowerSettingNotification
+UnregisterPowerSettingNotification.argtypes = [wintypes.HANDLE]
+UnregisterPowerSettingNotification.restype = wintypes.BOOL
+
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 GetCommandLineW = kernel32.GetCommandLineW
 GetCommandLineW.restype = wintypes.LPWSTR
@@ -48,6 +67,111 @@ QueryFullProcessImageNameW.restype = wintypes.BOOL
 CloseHandle = kernel32.CloseHandle
 CloseHandle.argtypes = [wintypes.HANDLE]
 CloseHandle.restype = wintypes.BOOL
+
+
+class GUID(ctypes.Structure):
+    _fields_ = [
+        ("Data1", wintypes.DWORD),
+        ("Data2", wintypes.WORD),
+        ("Data3", wintypes.WORD),
+        ("Data4", ctypes.c_ubyte * 8),
+    ]
+
+    @classmethod
+    def from_string(cls, value: str) -> "GUID":
+        parsed = uuid.UUID(value)
+        node = parsed.node.to_bytes(6, "big")
+        data4 = (ctypes.c_ubyte * 8)(parsed.clock_seq_hi_variant, parsed.clock_seq_low, *node)
+        return cls(parsed.time_low, parsed.time_mid, parsed.time_hi_version, data4)
+
+    def to_uuid(self) -> uuid.UUID:
+        node = int.from_bytes(bytes(self.Data4[2:]), "big")
+        return uuid.UUID(
+            fields=(
+                int(self.Data1),
+                int(self.Data2),
+                int(self.Data3),
+                int(self.Data4[0]),
+                int(self.Data4[1]),
+                node,
+            )
+        )
+
+    def canonical(self) -> str:
+        return str(self.to_uuid()).upper()
+
+
+class POWERBROADCAST_SETTING(ctypes.Structure):
+    _fields_ = [
+        ("PowerSetting", GUID),
+        ("DataLength", wintypes.DWORD),
+        ("Data", ctypes.c_ubyte * 1),
+    ]
+
+
+RegisterPowerSettingNotification.argtypes = [wintypes.HANDLE, ctypes.POINTER(GUID), wintypes.DWORD]
+
+GUID_SESSION_USER_PRESENCE = GUID.from_string("{3C0F4548-C03F-4C4D-B9F2-237EDE686376}")
+GUID_SESSION_DISPLAY_STATUS = GUID.from_string("{2B84C20E-AD23-4DDF-93DB-05FFBD7EFCA5}")
+GUID_LIDSWITCH_STATE_CHANGE = GUID.from_string("{BA3E0F4D-B817-4094-A2D1-D56379E6A0F3}")
+
+POWER_SETTING_GUIDS: tuple[tuple[str, GUID], ...] = (
+    ("GUID_SESSION_USER_PRESENCE", GUID_SESSION_USER_PRESENCE),
+    ("GUID_SESSION_DISPLAY_STATUS", GUID_SESSION_DISPLAY_STATUS),
+    ("GUID_LIDSWITCH_STATE_CHANGE", GUID_LIDSWITCH_STATE_CHANGE),
+)
+
+_POWER_SETTING_NAME_BY_GUID = {guid.canonical(): name for name, guid in POWER_SETTING_GUIDS}
+
+
+@dataclass(frozen=True)
+class PowerSettingChange:
+    name: str
+    guid: str
+    value: int | None
+    label: str
+    data_hex: str
+
+
+def _label_power_setting_value(name: str, value: int | None) -> str:
+    if value is None:
+        return "raw"
+    if name == "GUID_SESSION_USER_PRESENCE":
+        return {
+            POWER_USER_PRESENT: "PowerUserPresent",
+            POWER_USER_INACTIVE: "PowerUserInactive",
+        }.get(value, f"USER_ACTIVITY_PRESENCE({value})")
+    if name == "GUID_SESSION_DISPLAY_STATUS":
+        return {
+            POWER_MONITOR_OFF: "PowerMonitorOff",
+            POWER_MONITOR_ON: "PowerMonitorOn",
+            POWER_MONITOR_DIM: "PowerMonitorDim",
+        }.get(value, f"MONITOR_DISPLAY_STATE({value})")
+    if name == "GUID_LIDSWITCH_STATE_CHANGE":
+        return {
+            LID_CLOSED: "LidClosed",
+            LID_OPENED: "LidOpened",
+        }.get(value, f"LIDSWITCH_STATE({value})")
+    return str(value)
+
+
+def decode_power_setting_change(lparam: int) -> PowerSettingChange | None:
+    if not lparam:
+        return None
+    setting = ctypes.cast(lparam, ctypes.POINTER(POWERBROADCAST_SETTING)).contents
+    guid = setting.PowerSetting.canonical()
+    name = _POWER_SETTING_NAME_BY_GUID.get(guid, guid)
+    data_length = int(setting.DataLength)
+    data_offset = POWERBROADCAST_SETTING.Data.offset
+    data = ctypes.string_at(lparam + data_offset, data_length) if data_length > 0 else b""
+    value = int.from_bytes(data[:4], "little") if data_length == 4 else None
+    return PowerSettingChange(
+        name=name,
+        guid=guid,
+        value=value,
+        label=_label_power_setting_value(name, value),
+        data_hex=data.hex(),
+    )
 
 def ensure_single_instance(log, mutex_name: str) -> Optional[int]:
     kernel32_local = ctypes.WinDLL("kernel32", use_last_error=True)

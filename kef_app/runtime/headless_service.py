@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import ctypes
 import logging
 import os
 import signal
@@ -15,10 +16,18 @@ import win32gui
 from ..config import AppConfig
 from ..controller import KefPowerController
 from ..platform.windows import (
+    DEVICE_NOTIFY_WINDOW_HANDLE,
+    LID_CLOSED,
     NOTIFY_FOR_THIS_SESSION,
     PBT_APMSUSPEND,
     PBT_APMRESUMEAUTOMATIC,
     PBT_APMRESUMESUSPEND,
+    PBT_POWERSETTINGCHANGE,
+    POWER_MONITOR_OFF,
+    POWER_SETTING_GUIDS,
+    POWER_USER_INACTIVE,
+    RegisterPowerSettingNotification,
+    UnregisterPowerSettingNotification,
     WM_POWERBROADCAST,
     WM_WTSSESSION_CHANGE,
     WTSRegisterSessionNotification,
@@ -26,6 +35,7 @@ from ..platform.windows import (
     WTS_SESSION_DESKTOP_READY,
     WTS_SESSION_LOCK,
     WTS_SESSION_UNLOCK,
+    decode_power_setting_change,
     get_process_image_path,
     get_raw_command_line,
     guess_launch_source,
@@ -130,12 +140,13 @@ class HeadlessRuntime:
         resource_lock = threading.Lock()
         cleaned_up = False
         session_notify_registered = False
+        power_notify_handles: list[tuple[str, int]] = []
         class_registered = False
         hwnd = None
         wc = None
 
         def cleanup_resources(allow_destroy_window: bool = False):
-            nonlocal cleaned_up, session_notify_registered, class_registered, hwnd, wc
+            nonlocal cleaned_up, session_notify_registered, power_notify_handles, class_registered, hwnd, wc
             with resource_lock:
                 if cleaned_up:
                     return
@@ -152,6 +163,16 @@ class HeadlessRuntime:
                     self.log.info(f"Failed to unregister session notifications | hwnd={hwnd} | {exc}")
                 finally:
                     session_notify_registered = False
+
+            for setting_name, handle in power_notify_handles:
+                try:
+                    UnregisterPowerSettingNotification(handle)
+                    self.log.info(f"Unregistered power setting notification | setting={setting_name} | handle={handle}")
+                except Exception as exc:
+                    self.log.info(
+                        f"Failed to unregister power setting notification | setting={setting_name} | handle={handle} | {exc}"
+                    )
+            power_notify_handles = []
 
             if allow_destroy_window and hwnd:
                 try:
@@ -229,6 +250,21 @@ class HeadlessRuntime:
                     return 0
 
                 if msg == WM_POWERBROADCAST:
+                    if wparam == PBT_POWERSETTINGCHANGE:
+                        change = decode_power_setting_change(lparam)
+                        if change is None:
+                            self.controller.log_power_event("PBT_POWERSETTINGCHANGE_UNPARSED", wparam, lparam)
+                            return True
+
+                        self.controller.log_power_setting_event(change, wparam, lparam)
+                        if change.name == "GUID_SESSION_USER_PRESENCE" and change.value == POWER_USER_INACTIVE:
+                            self.controller.on_user_inactive("POWER_USER_INACTIVE")
+                        elif change.name == "GUID_SESSION_DISPLAY_STATUS" and change.value == POWER_MONITOR_OFF:
+                            self.controller.on_display_off("POWER_DISPLAY_OFF")
+                        elif change.name == "GUID_LIDSWITCH_STATE_CHANGE" and change.value == LID_CLOSED:
+                            self.controller.on_lid_closed("POWER_LID_CLOSED")
+                        return True
+
                     if wparam == PBT_APMSUSPEND:
                         self.controller.log_power_event("PBT_APMSUSPEND", wparam, lparam)
                         self.controller.on_suspend("PBT_APMSUSPEND")
@@ -313,6 +349,32 @@ class HeadlessRuntime:
                 self.log.info(f"Registered session lock/unlock notifications | hwnd={hwnd} | mono={self.controller.mono():.3f}")
             else:
                 self.log.info(f"Failed to register session notifications | hwnd={hwnd} | mono={self.controller.mono():.3f}")
+
+            for setting_name, setting_guid in POWER_SETTING_GUIDS:
+                try:
+                    handle = RegisterPowerSettingNotification(
+                        hwnd,
+                        ctypes.byref(setting_guid),
+                        DEVICE_NOTIFY_WINDOW_HANDLE,
+                    )
+                except Exception as exc:
+                    self.log.info(
+                        f"Failed to register power setting notification | setting={setting_name} | hwnd={hwnd} | {exc}"
+                    )
+                    continue
+
+                if handle:
+                    power_notify_handles.append((setting_name, handle))
+                    self.log.info(
+                        f"Registered power setting notification | setting={setting_name} | hwnd={hwnd} | handle={handle} | "
+                        f"mono={self.controller.mono():.3f}"
+                    )
+                else:
+                    err = ctypes.get_last_error()
+                    self.log.info(
+                        f"Failed to register power setting notification | setting={setting_name} | hwnd={hwnd} | err={err} | "
+                        f"mono={self.controller.mono():.3f}"
+                    )
 
             self.log.info(f"Listening for shutdown, sleep, and session events | hwnd={hwnd} | mono={self.controller.mono():.3f}")
             win32gui.PumpMessages()

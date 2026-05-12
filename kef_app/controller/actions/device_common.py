@@ -7,6 +7,7 @@ from typing import Callable, Optional
 from pykefcontrol.kef_connector import KefConnector
 
 from ..network_timeout import temporary_socket_timeout
+from ...devices.transport import is_host_unreachable as _is_host_unreachable
 from ...devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source
 
 
@@ -17,55 +18,6 @@ _STANDBY_VERIFY_READ_TIMEOUT = 0.20
 _STANDBY_VERIFY_TIMEOUT = 0.40
 _STANDBY_VERIFY_OFFLINE_FAILURES = 2
 _CONFIGURABLE_INPUT_SOURCES = {value for _, value in INPUT_SOURCE_OPTIONS}
-_HOST_UNREACHABLE_CODES = {10065, 10051, 113, 101}
-_HOST_UNREACHABLE_MARKERS = (
-    "winerror 10065",
-    "wsaehostunreach",
-    "winerror 10051",
-    "wsaenetunreach",
-    "errno 10065",
-    "errno 10051",
-    "errno 113",
-    "ehostunreach",
-    "errno 101",
-    "enetunreach",
-    "network is unreachable",
-    "no route to host",
-    "unreachable host",
-)
-_HOST_UNREACHABLE_PATTERN = re.compile("|".join(re.escape(marker) for marker in _HOST_UNREACHABLE_MARKERS))
-
-
-def _is_host_unreachable(exc: BaseException) -> bool:
-    seen: set[int] = set()
-    pending: list[BaseException] = [exc]
-
-    while pending:
-        current = pending.pop()
-        current_id = id(current)
-        if current_id in seen:
-            continue
-        seen.add(current_id)
-
-        errno_value = getattr(current, "errno", None)
-        winerror_value = getattr(current, "winerror", None)
-        if errno_value in _HOST_UNREACHABLE_CODES or winerror_value in _HOST_UNREACHABLE_CODES:
-            return True
-
-        text = f"{type(current).__name__}: {current!r} {current}".casefold()
-        if _HOST_UNREACHABLE_PATTERN.search(text):
-            return True
-
-        cause = getattr(current, "__cause__", None)
-        context = getattr(current, "__context__", None)
-        if isinstance(cause, BaseException):
-            pending.append(cause)
-        if isinstance(context, BaseException):
-            pending.append(context)
-
-    return False
-
-
 class StandbyVerificationError(RuntimeError):
     pass
 

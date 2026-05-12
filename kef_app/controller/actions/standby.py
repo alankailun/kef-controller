@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from .device_common import _STANDBY_VERIFY_TIMEOUT, StandbyVerificationError, _is_host_unreachable
-from .raw_shutdown import FireAndForgetShutdownResult, fire_and_forget_standby
+from ...devices.transport import FireAndForgetShutdownResult, fire_and_forget_standby
 
 
 _FAST_STANDBY_FIRE_AND_FORGET_ATTEMPTS = 3
 _FAST_STANDBY_FIRE_AND_FORGET_SOCKET_TIMEOUT = 0.18
 _FAST_STANDBY_FIRE_AND_FORGET_JOIN_TIMEOUT = 0.25
+_FAST_STANDBY_STANDARD_HARD_TIMEOUT = 1.5
 
 
 class ControllerDeviceStandbyMixin:
@@ -65,14 +66,20 @@ class ControllerDeviceStandbyMixin:
             )
             return False, outcome
 
-        if fire_and_forget and self._try_fire_and_forget_shutdown(
-            action=action,
-            generation=generation,
-            reason=reason,
-            current_ip=current_ip,
-            mark_lock_success=mark_lock_success,
-        ):
-            return True, fire_and_forget_outcome or success_outcome
+        if fire_and_forget:
+            fire_and_forget_result = self._try_fire_and_forget_shutdown(
+                action=action,
+                generation=generation,
+                reason=reason,
+                current_ip=current_ip,
+                mark_lock_success=mark_lock_success,
+                success_outcome=fire_and_forget_outcome or success_outcome,
+                host_unreachable_outcome=host_unreachable_outcome,
+                host_unreachable_status=host_unreachable_status,
+                host_unreachable_cause=host_unreachable_cause,
+            )
+            if fire_and_forget_result is not None:
+                return True, fire_and_forget_result
 
         outcome = self._acquire_generation_action_lock(
             action=action,
@@ -85,7 +92,26 @@ class ControllerDeviceStandbyMixin:
             return False, outcome
 
         try:
+            request_start_mono = self.mono()
             self._request_shutdown(fresh=False, timeout=socket_timeout)
+            request_finished_mono = self.mono()
+            request_duration_ms = int(max(0.0, request_finished_mono - request_start_mono) * 1000)
+            if request_duration_ms > int(_FAST_STANDBY_STANDARD_HARD_TIMEOUT * 1000):
+                outcome = "failed_standard_request_deadline_exceeded"
+                self._log_structured(
+                    "WARN",
+                    action=action,
+                    gen=generation,
+                    reason=reason,
+                    step=success_step,
+                    status="late_success_ignored",
+                    cause="standard_fallback_deadline_exceeded",
+                    target_ip=current_ip,
+                    duration_ms=request_duration_ms,
+                    deadline_s=f"{_FAST_STANDBY_STANDARD_HARD_TIMEOUT:.2f}",
+                    mono=f"{request_finished_mono:.3f}",
+                )
+                return False, outcome
             if mark_lock_success:
                 self._mark_lock_prestandby_success()
             outcome = success_outcome
@@ -98,11 +124,34 @@ class ControllerDeviceStandbyMixin:
                 status="sent",
                 target_ip=current_ip,
                 timeout_s=f"{socket_timeout:.2f}",
-                mono=f"{self.mono():.3f}",
+                duration_ms=request_duration_ms,
+                mono=f"{request_finished_mono:.3f}",
             )
             return True, outcome
         except Exception as exc:
+            request_finished_mono = self.mono()
+            request_duration_ms = int(max(0.0, request_finished_mono - request_start_mono) * 1000)
             self.reset_speaker()
+            if request_duration_ms > int(_FAST_STANDBY_STANDARD_HARD_TIMEOUT * 1000):
+                outcome = "failed_standard_request_deadline_exceeded"
+                fields = {
+                    "action": action,
+                    "gen": generation,
+                    "reason": reason,
+                    "step": success_step,
+                    "status": "late_error_ignored",
+                    "cause": "standard_fallback_deadline_exceeded",
+                    "error": repr(exc),
+                    "target_ip": current_ip,
+                    "duration_ms": request_duration_ms,
+                    "deadline_s": f"{_FAST_STANDBY_STANDARD_HARD_TIMEOUT:.2f}",
+                    "mono": f"{request_finished_mono:.3f}",
+                }
+                if attempt is not None:
+                    fields["attempt"] = attempt
+                self._log_structured("WARN", **fields)
+                return False, outcome
+
             if _is_host_unreachable(exc):
                 if mark_lock_success:
                     self._mark_lock_prestandby_success()
@@ -160,9 +209,21 @@ class ControllerDeviceStandbyMixin:
         current_ip: str,
         mark_lock_success: bool,
         extra_fields: dict[str, object] | None = None,
-    ) -> bool:
+        success_outcome: str = "success_fire_and_forget",
+        host_unreachable_outcome: str = "success_assumed_host_unreachable",
+        host_unreachable_status: str = "host_unreachable_assumed_standby",
+        host_unreachable_cause: str = "fire_and_forget_host_unreachable",
+    ) -> str | None:
         result = self._send_fire_and_forget_shutdown(current_ip)
-        status = "sent" if result.success else "failed_fallback_standard"
+        if result.success:
+            status = "sent"
+            outcome = success_outcome
+        elif result.all_host_unreachable:
+            status = host_unreachable_status
+            outcome = host_unreachable_outcome
+        else:
+            status = "failed_fallback_standard"
+            outcome = None
         fields = {
             "action": action,
             "gen": generation,
@@ -178,15 +239,18 @@ class ControllerDeviceStandbyMixin:
             "read_response": False,
             "mono": f"{self.mono():.3f}",
         }
+        if result.all_host_unreachable:
+            fields["cause"] = host_unreachable_cause
+            fields["all_host_unreachable"] = True
         if extra_fields:
             fields.update(extra_fields)
         if result.errors:
             fields["errors"] = "; ".join(result.errors)
 
         self._log_structured("STEP", log_level="info", **fields)
-        if result.success and mark_lock_success:
+        if outcome is not None and mark_lock_success:
             self._mark_lock_prestandby_success()
-        return result.success
+        return outcome
 
     def standby_kef_preemptive(self, generation: int, reason: str) -> bool:
         outcome = "unknown"
@@ -206,6 +270,19 @@ class ControllerDeviceStandbyMixin:
                     mono=f"{self.mono():.3f}",
                 )
                 return False
+
+            if self._recently_lock_standby_ok():
+                outcome = "skipped_recent_lock_pre_standby_ok"
+                self._log_structured(
+                    "SKIP",
+                    action="LOCK_PRE_STANDBY",
+                    gen=generation,
+                    reason=reason,
+                    cause="recent_lock_pre_standby_ok",
+                    window_s=f"{c.lock_standby_dedup_window:.2f}",
+                    mono=f"{self.mono():.3f}",
+                )
+                return True
 
             success, outcome = self._perform_fast_shutdown(
                 action="LOCK_PRE_STANDBY",
@@ -265,15 +342,16 @@ class ControllerDeviceStandbyMixin:
                 )
                 return False
 
-            if self._try_fire_and_forget_shutdown(
+            fire_and_forget_outcome = self._try_fire_and_forget_shutdown(
                 action="ENDSESSION_STANDBY",
                 generation=None,
                 reason=reason,
                 current_ip=current_ip,
                 mark_lock_success=False,
                 extra_fields={"flags": flags},
-            ):
-                outcome = "success_fire_and_forget"
+            )
+            if fire_and_forget_outcome is not None:
+                outcome = fire_and_forget_outcome
                 return True
 
             if not self._action_lock.acquire(timeout=self.config.endsession_standby_action_lock_timeout):

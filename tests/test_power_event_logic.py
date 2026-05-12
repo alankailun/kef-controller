@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 from kef_app.config import AppConfig
 from kef_app.controller import KefPowerController
 from kef_app.controller.actions.device_common import _is_host_unreachable
-from kef_app.controller.actions.raw_shutdown import FireAndForgetShutdownResult
+from kef_app.devices.transport import FireAndForgetShutdownResult
 from kef_app.devices.speaker_models import SpeakerIdentity
 from kef_app.platform.windows import ENDSESSION_CLOSEAPP
 
@@ -25,14 +25,19 @@ class PowerEventLogicTests(unittest.TestCase):
         return OSError("[WinError 10065] A socket operation was attempted to an unreachable host")
 
     @staticmethod
-    def fire_and_forget_result(success: bool) -> FireAndForgetShutdownResult:
+    def fire_and_forget_result(success: bool, *, all_host_unreachable: bool = False) -> FireAndForgetShutdownResult:
         return FireAndForgetShutdownResult(
             success=success,
             attempts=3,
             completed=3,
             pending=0,
             duration_ms=2,
-            errors=() if success else ("TimeoutError('timed out')",),
+            errors=() if success else (
+                "OSError(10065, 'A socket operation was attempted to an unreachable host')"
+                if all_host_unreachable
+                else "TimeoutError('timed out')",
+            ),
+            all_host_unreachable=all_host_unreachable,
         )
 
     def capture_events(self, controller: KefPowerController) -> list[tuple[str, dict[str, object]]]:
@@ -167,6 +172,46 @@ class PowerEventLogicTests(unittest.TestCase):
 
         controller.standby_kef_preemptive.assert_not_called()
         self.assertEqual(controller._current_generation(), 0)
+
+    def test_on_user_inactive_triggers_preemptive_standby(self):
+        controller = self.make_controller(standby_on_user_inactive=True)
+        controller.standby_kef_preemptive = Mock(return_value=True)
+
+        result = controller.on_user_inactive("POWER_USER_INACTIVE")
+
+        self.assertTrue(result)
+        controller.standby_kef_preemptive.assert_called_once_with(1, "POWER_USER_INACTIVE")
+        self.assertEqual(controller._current_generation(), 1)
+
+    def test_on_user_inactive_skips_when_disabled(self):
+        controller = self.make_controller(standby_on_user_inactive=False)
+        controller.standby_kef_preemptive = Mock(return_value=True)
+
+        result = controller.on_user_inactive("POWER_USER_INACTIVE")
+
+        self.assertFalse(result)
+        controller.standby_kef_preemptive.assert_not_called()
+        self.assertEqual(controller._current_generation(), 0)
+
+    def test_on_display_off_triggers_preemptive_standby(self):
+        controller = self.make_controller(standby_on_display_off=True)
+        controller.standby_kef_preemptive = Mock(return_value=True)
+
+        result = controller.on_display_off("POWER_DISPLAY_OFF")
+
+        self.assertTrue(result)
+        controller.standby_kef_preemptive.assert_called_once_with(1, "POWER_DISPLAY_OFF")
+        self.assertEqual(controller._current_generation(), 1)
+
+    def test_on_lid_closed_triggers_preemptive_standby(self):
+        controller = self.make_controller(standby_on_lid_close=True)
+        controller.standby_kef_preemptive = Mock(return_value=True)
+
+        result = controller.on_lid_closed("POWER_LID_CLOSED")
+
+        self.assertTrue(result)
+        controller.standby_kef_preemptive.assert_called_once_with(1, "POWER_LID_CLOSED")
+        self.assertEqual(controller._current_generation(), 1)
 
     def test_on_resume_waits_for_unlock_when_unlock_wake_enabled(self):
         controller = self.make_controller(wake_on_unlock_only=True)
@@ -388,6 +433,64 @@ class PowerEventLogicTests(unittest.TestCase):
             )
         )
 
+    def test_preemptive_standby_assumes_fire_and_forget_host_unreachable_without_standard_fallback(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+            suspend_fast_standby_socket_timeout=0.25,
+        )
+        events = self.capture_events(controller)
+        generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
+        controller._log_structured = Mock()
+        controller._send_fire_and_forget_shutdown = Mock(
+            return_value=self.fire_and_forget_result(False, all_host_unreachable=True)
+        )
+        controller._request_shutdown = Mock()
+
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+
+        self.assertTrue(result)
+        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller._request_shutdown.assert_not_called()
+        self.assertTrue(controller._recently_lock_standby_ok())
+        self.assertTrue(self.emitted_outcome(events, "success_assumed_host_unreachable"))
+        self.assertTrue(
+            any(
+                call.args[:1] == ("STEP",)
+                and call.kwargs.get("action") == "LOCK_PRE_STANDBY"
+                and call.kwargs.get("status") == "host_unreachable_assumed_standby"
+                and call.kwargs.get("all_host_unreachable") is True
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
+    def test_preemptive_standby_skips_when_recent_early_standby_already_succeeded(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+        )
+        events = self.capture_events(controller)
+        generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
+        controller._log_structured = Mock()
+        controller._send_fire_and_forget_shutdown = Mock()
+        controller._request_shutdown = Mock()
+        controller._mark_lock_prestandby_success()
+
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+
+        self.assertTrue(result)
+        controller._send_fire_and_forget_shutdown.assert_not_called()
+        controller._request_shutdown.assert_not_called()
+        self.assertTrue(self.emitted_outcome(events, "skipped_recent_lock_pre_standby_ok"))
+        self.assertTrue(
+            any(
+                call.args[:1] == ("SKIP",)
+                and call.kwargs.get("action") == "LOCK_PRE_STANDBY"
+                and call.kwargs.get("cause") == "recent_lock_pre_standby_ok"
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
     def test_preemptive_standby_skips_without_current_ip(self):
         controller = self.make_controller(kef_ip="")
         generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
@@ -447,6 +550,27 @@ class PowerEventLogicTests(unittest.TestCase):
                 for call in controller._log_structured.mock_calls
             )
         )
+
+    def test_fast_suspend_standby_assumes_fire_and_forget_host_unreachable_without_standard_fallback(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+            suspend_fast_standby_socket_timeout=0.25,
+        )
+        events = self.capture_events(controller)
+        generation = controller._new_generation("sleep", "PBT_APMSUSPEND")
+        controller._log_structured = Mock()
+        controller._send_fire_and_forget_shutdown = Mock(
+            return_value=self.fire_and_forget_result(False, all_host_unreachable=True)
+        )
+        controller._request_shutdown = Mock()
+
+        result = controller.standby_kef_fast_suspend(generation, "PBT_APMSUSPEND")
+
+        self.assertTrue(result)
+        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller._request_shutdown.assert_not_called()
+        self.assertTrue(self.emitted_outcome(events, "success_best_effort_host_unreachable"))
 
     def test_fast_suspend_standby_skips_without_current_ip(self):
         controller = self.make_controller(kef_ip="")

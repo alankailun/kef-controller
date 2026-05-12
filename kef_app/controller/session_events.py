@@ -68,15 +68,55 @@ class ControllerSessionEventsMixin:
         self._start_controller_thread(lambda: self.standby_kef(generation, reason), f"SuspendStandby-{generation}")
 
     def on_lock(self, reason: str):
-        if not self.config.standby_on_lock:
-            return
+        return self._on_early_standby_signal(
+            reason,
+            enabled=self.config.standby_on_lock,
+            disabled_cause="lock_standby_disabled",
+        )
+
+    def _on_early_standby_signal(self, reason: str, *, enabled: bool, disabled_cause: str) -> bool:
+        if not enabled:
+            self._log_structured(
+                "SKIP",
+                action="LOCK_PRE_STANDBY",
+                reason=reason,
+                cause=disabled_cause,
+                mono=f"{self.mono():.3f}",
+            )
+            return False
         if self._is_session_ending():
-            return
+            self._log_structured(
+                "SKIP",
+                action="LOCK_PRE_STANDBY",
+                reason=reason,
+                cause="session_ending",
+                mono=f"{self.mono():.3f}",
+            )
+            return False
+
         generation = self._new_generation("sleep", reason)
-        # Run synchronously on the message-pump thread so the HTTP shutdown
-        # fires before Windows can deliver PBT_APMSUSPEND and tear down
-        # networking — by suspend time the route is already gone.
-        self.standby_kef_preemptive(generation, reason)
+        return self.standby_kef_preemptive(generation, reason)
+
+    def on_user_inactive(self, reason: str = "POWER_USER_INACTIVE") -> bool:
+        return self._on_early_standby_signal(
+            reason,
+            enabled=self.config.standby_on_user_inactive,
+            disabled_cause="user_inactive_standby_disabled",
+        )
+
+    def on_display_off(self, reason: str = "POWER_DISPLAY_OFF") -> bool:
+        return self._on_early_standby_signal(
+            reason,
+            enabled=self.config.standby_on_display_off,
+            disabled_cause="display_off_standby_disabled",
+        )
+
+    def on_lid_closed(self, reason: str = "POWER_LID_CLOSED") -> bool:
+        return self._on_early_standby_signal(
+            reason,
+            enabled=self.config.standby_on_lid_close,
+            disabled_cause="lid_close_standby_disabled",
+        )
 
     def on_resume(self, reason: str):
         if self._should_dedupe_resume_and_mark(reason):

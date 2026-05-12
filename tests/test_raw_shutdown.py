@@ -5,8 +5,9 @@ import socket
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
-from kef_app.controller.actions.raw_shutdown import build_standby_request_bytes, fire_and_forget_standby
+from kef_app.devices.transport.standby import build_standby_request_bytes, fire_and_forget_standby
 
 
 class _LoopbackTcpSink:
@@ -112,6 +113,41 @@ class RawShutdownTests(unittest.TestCase):
             f"runs={runs} p50_ms={p50:.3f} p95_ms={p95:.3f} max_ms={max_ms:.3f}"
         )
         self.assertLess(p95, 100.0)
+
+    def test_fire_and_forget_marks_all_host_unreachable_failures(self):
+        with patch(
+            "kef_app.devices.transport.raw_http._send_one_http_request",
+            side_effect=OSError(10065, "A socket operation was attempted to an unreachable host"),
+        ):
+            result = fire_and_forget_standby(
+                "10.0.0.222",
+                attempts=3,
+                socket_timeout=0.01,
+                join_timeout=0.25,
+            )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.completed, 3)
+        self.assertEqual(result.pending, 0)
+        self.assertTrue(result.all_host_unreachable)
+
+    def test_fire_and_forget_sends_first_attempt_inline(self):
+        calls: list[str] = []
+
+        def fake_send(*_args, **_kwargs):
+            calls.append(threading.current_thread().name)
+
+        with patch("kef_app.devices.transport.raw_http._send_one_http_request", side_effect=fake_send):
+            result = fire_and_forget_standby(
+                "10.0.0.222",
+                attempts=3,
+                socket_timeout=0.01,
+                join_timeout=0.25,
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.completed, 1)
+        self.assertEqual(calls, [threading.current_thread().name])
 
 
 if __name__ == "__main__":

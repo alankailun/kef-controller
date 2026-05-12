@@ -216,6 +216,12 @@ class ControllerLoggingMixin:
                 f"{c.standby_on_lock} | lock_timeout={c.lock_standby_action_lock_timeout}s | "
                 f"dedupe_window={c.lock_standby_dedup_window}s"
             )
+            self.log.info(
+                "  Early standby triggers: "
+                f"user_inactive={c.standby_on_user_inactive} | "
+                f"display_off={c.standby_on_display_off} | "
+                f"lid_close={c.standby_on_lid_close}"
+            )
             self.log.info(f"  Standby during shutdown/sign-out: {c.endsession_standby_on_shutdown}")
             self.log.info(f"  Log retention days: {c.log_backup_days}")
             self.log.info(f"  Runtime state persistence: {c.persist_runtime_state}")
@@ -239,6 +245,20 @@ class ControllerLoggingMixin:
             wparam=f"0x{wparam:04X}",
             lparam=f"0x{lparam:016X}",
             mono=f"{event_mono:.3f}",
+        )
+
+    def log_power_setting_event(self, change, wparam: int, lparam: int):
+        self._log_structured(
+            "EVENT",
+            kind="POWER_SETTING",
+            name=change.name,
+            guid=change.guid,
+            value=change.value if change.value is not None else "<raw>",
+            label=change.label,
+            data_hex=change.data_hex,
+            wparam=f"0x{wparam:04X}",
+            lparam=f"0x{lparam:016X}",
+            mono=f"{self.mono():.3f}",
         )
 
     def log_session_event(self, name: str, wparam: int, lparam: int):

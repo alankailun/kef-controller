@@ -16,6 +16,8 @@ _USER_SETTINGS_FIELD_NAMES = tuple(field.name for field in dataclass_fields(User
 _CONFIGURABLE_INPUT_SOURCES = {value for _, value in INPUT_SOURCE_OPTIONS}
 _LEGACY_MAC_DISCOVERY_PROBE_TIMEOUT = 0.20
 _DEFAULT_MAC_DISCOVERY_PROBE_TIMEOUT = 0.50
+_LEGACY_LOCK_STANDBY_DEDUP_WINDOW = 8.0
+_DEFAULT_LOCK_STANDBY_DEDUP_WINDOW = 30.0
 
 
 def _coerce_string(value: Any) -> str:
@@ -142,6 +144,9 @@ class UserConfigStore:
         "suspend_fast_standby_action_lock_timeout": _coerce_non_negative_float,
         "suspend_fast_standby_socket_timeout": _coerce_positive_float,
         "standby_on_lock": lambda value: UserConfigStore._coerce_bool(value),
+        "standby_on_user_inactive": lambda value: UserConfigStore._coerce_bool(value),
+        "standby_on_display_off": lambda value: UserConfigStore._coerce_bool(value),
+        "standby_on_lid_close": lambda value: UserConfigStore._coerce_bool(value),
         "lock_standby_action_lock_timeout": _coerce_non_negative_float,
         "lock_standby_dedup_window": _coerce_non_negative_float,
         "log_backup_days": _coerce_log_backup_days,
@@ -175,7 +180,12 @@ class UserConfigStore:
 
             loaded = self._apply_to_config(self._base_config.clone(), data)
             loaded = self._migrate_legacy_device_target(loaded, data)
+            migrated = False
             if self._migrate_legacy_probe_timeout(loaded, data):
+                migrated = True
+            if self._migrate_legacy_lock_standby_dedup_window(loaded, data):
+                migrated = True
+            if migrated:
                 self.save(loaded)
             if "log_dir" in data:
                 self._startup_messages.append(
@@ -257,6 +267,22 @@ class UserConfigStore:
         config.mac_discovery_probe_timeout = _DEFAULT_MAC_DISCOVERY_PROBE_TIMEOUT
         self._startup_messages.append(
             "Raised legacy MAC discovery probe timeout from 0.20s to 0.50s"
+        )
+        return True
+
+    def _migrate_legacy_lock_standby_dedup_window(self, config: AppConfig, data: dict[str, Any]) -> bool:
+        if "lock_standby_dedup_window" not in data:
+            return False
+        try:
+            window = float(data["lock_standby_dedup_window"])
+        except Exception:
+            return False
+        if not math.isclose(window, _LEGACY_LOCK_STANDBY_DEDUP_WINDOW, rel_tol=0.0, abs_tol=1e-9):
+            return False
+
+        config.lock_standby_dedup_window = _DEFAULT_LOCK_STANDBY_DEDUP_WINDOW
+        self._startup_messages.append(
+            "Raised legacy lock standby dedup window from 8.00s to 30.00s"
         )
         return True
 
