@@ -19,8 +19,6 @@ PBT_APMRESUMEAUTOMATIC = 0x0012
 PBT_POWERSETTINGCHANGE = 0x8013
 DEVICE_NOTIFY_WINDOW_HANDLE = 0
 
-SystemPowerInformation = 12
-
 LID_CLOSED = 0
 LID_OPENED = 1
 
@@ -48,17 +46,6 @@ RegisterPowerSettingNotification.restype = wintypes.HANDLE
 UnregisterPowerSettingNotification = user32.UnregisterPowerSettingNotification
 UnregisterPowerSettingNotification.argtypes = [wintypes.HANDLE]
 UnregisterPowerSettingNotification.restype = wintypes.BOOL
-
-powrprof = ctypes.WinDLL("PowrProf.dll")
-CallNtPowerInformation = powrprof.CallNtPowerInformation
-CallNtPowerInformation.argtypes = [
-    ctypes.c_int,
-    ctypes.c_void_p,
-    wintypes.ULONG,
-    ctypes.c_void_p,
-    wintypes.ULONG,
-]
-CallNtPowerInformation.restype = ctypes.c_long
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 GetCommandLineW = kernel32.GetCommandLineW
@@ -117,15 +104,6 @@ class POWERBROADCAST_SETTING(ctypes.Structure):
     ]
 
 
-class SYSTEM_POWER_INFORMATION(ctypes.Structure):
-    _fields_ = [
-        ("MaxIdlenessAllowed", wintypes.ULONG),
-        ("Idleness", wintypes.ULONG),
-        ("TimeRemaining", wintypes.ULONG),
-        ("CoolingMode", ctypes.c_ubyte),
-    ]
-
-
 RegisterPowerSettingNotification.argtypes = [wintypes.HANDLE, ctypes.POINTER(GUID), wintypes.DWORD]
 
 GUID_LIDSWITCH_STATE_CHANGE = GUID.from_string("{BA3E0F4D-B817-4094-A2D1-D56379E6A0F3}")
@@ -174,18 +152,6 @@ def decode_power_setting_change(lparam: int) -> PowerSettingChange | None:
         label=_label_power_setting_value(name, value),
         data_hex=data.hex(),
     )
-
-
-def read_system_idle_info() -> SYSTEM_POWER_INFORMATION | None:
-    info = SYSTEM_POWER_INFORMATION()
-    status = CallNtPowerInformation(
-        SystemPowerInformation,
-        None,
-        0,
-        ctypes.byref(info),
-        ctypes.sizeof(info),
-    )
-    return info if status == 0 else None
 
 
 def ensure_single_instance(log, mutex_name: str) -> Optional[int]:

@@ -164,6 +164,11 @@ class ControllerLoggingMixin:
             f"offline_threshold={c.identity_probe_failure_threshold}"
         )
         self.log.info(
+            "  Standby prewarm: "
+            f"enabled={c.prewarmed_standby_enabled} | interval={c.prewarmed_keepalive_interval_s}s | "
+            f"deadline={c.prewarmed_send_deadline_s}s | persist_socket={c.prewarmed_persist_socket}"
+        )
+        self.log.info(
             "  Files: "
             f"config={c.config_file} | state={c.state_file} | log={c.log_file}"
         )
@@ -172,6 +177,8 @@ class ControllerLoggingMixin:
     def log_power_event(self, name: str, wparam: int, lparam: int):
         event_mono = self.mono()
         with self._state_lock:
+            self._last_windows_event_name = name
+            self._last_windows_event_mono = event_mono
             if name == "PBT_APMSUSPEND":
                 self._system_sleep_pending = True
                 self._last_system_suspend_mono = event_mono
@@ -189,6 +196,11 @@ class ControllerLoggingMixin:
         )
 
     def log_power_setting_event(self, change, wparam: int, lparam: int):
+        event_mono = self.mono()
+        with self._state_lock:
+            self._last_windows_event_name = change.name
+            self._last_windows_event_mono = event_mono
+
         self._log_structured(
             "EVENT",
             kind="POWER_SETTING",
@@ -199,15 +211,20 @@ class ControllerLoggingMixin:
             data_hex=change.data_hex,
             wparam=f"0x{wparam:04X}",
             lparam=f"0x{lparam:016X}",
-            mono=f"{self.mono():.3f}",
+            mono=f"{event_mono:.3f}",
         )
 
     def log_session_event(self, name: str, wparam: int, lparam: int):
+        event_mono = self.mono()
+        with self._state_lock:
+            self._last_windows_event_name = name
+            self._last_windows_event_mono = event_mono
+
         self._log_structured(
             "EVENT",
             kind="SESSION",
             name=name,
             wparam=f"0x{wparam:04X}",
             session=lparam,
-            mono=f"{self.mono():.3f}",
+            mono=f"{event_mono:.3f}",
         )

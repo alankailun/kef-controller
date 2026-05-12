@@ -4,7 +4,6 @@ from .base import ControllerTrigger, EarlyStandbyTrigger
 from .endsession import END_SESSION_TRIGGER, QUERY_END_SESSION_TRIGGER
 from .lid_closed import LID_CLOSED_TRIGGER
 from .lock import LOCK_TRIGGER
-from .sleep_countdown import SLEEP_COUNTDOWN_TRIGGER
 from .suspend import SUSPEND_TRIGGER
 
 
@@ -13,7 +12,6 @@ TRIGGERS: dict[str, ControllerTrigger] = {
     for trigger in (
         LOCK_TRIGGER,
         LID_CLOSED_TRIGGER,
-        SLEEP_COUNTDOWN_TRIGGER,
         SUSPEND_TRIGGER,
         QUERY_END_SESSION_TRIGGER,
         END_SESSION_TRIGGER,
@@ -32,7 +30,6 @@ __all__ = [
     "LID_CLOSED_TRIGGER",
     "LOCK_TRIGGER",
     "QUERY_END_SESSION_TRIGGER",
-    "SLEEP_COUNTDOWN_TRIGGER",
     "SUSPEND_TRIGGER",
     "TRIGGERS",
     "get_trigger",

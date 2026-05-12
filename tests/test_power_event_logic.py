@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import unittest
-from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from kef_app.config import AppConfig
@@ -13,6 +12,7 @@ from kef_app.controller.actions.standby import (
     PREEMPTIVE_STANDBY_POLICY,
     STANDARD_STANDBY_POLICY,
 )
+from kef_app.controller.prewarmed_standby_socket import PrewarmedStandbySendResult
 from kef_app.controller.triggers import TRIGGERS
 from kef_app.devices.transport import FireAndForgetShutdownResult
 from kef_app.devices.transport import is_host_unreachable
@@ -66,7 +66,6 @@ class PowerEventLogicTests(unittest.TestCase):
             {
                 "lock",
                 "lid_closed",
-                "sleep_countdown",
                 "suspend",
                 "query_end_session",
                 "end_session",
@@ -211,61 +210,6 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertTrue(result)
         controller.standby_kef_preemptive.assert_called_once_with(1, "POWER_LID_CLOSED")
         self.assertEqual(controller._current_generation(), 1)
-
-    def test_sleep_countdown_trigger_preemptive_standby(self):
-        controller = self.make_controller(standby_on_sleep_countdown=True)
-        controller.standby_kef_preemptive = Mock(return_value=True)
-
-        result = TRIGGERS["sleep_countdown"].fire(controller, 4)
-
-        self.assertTrue(result)
-        controller.standby_kef_preemptive.assert_called_once_with(1, "SLEEP_COUNTDOWN")
-        self.assertEqual(controller._current_generation(), 1)
-
-    def test_sleep_countdown_trigger_skips_when_disabled(self):
-        controller = self.make_controller(standby_on_sleep_countdown=False)
-        controller.standby_kef_preemptive = Mock(return_value=True)
-
-        result = TRIGGERS["sleep_countdown"].fire(controller, 4)
-
-        self.assertFalse(result)
-        controller.standby_kef_preemptive.assert_not_called()
-        self.assertEqual(controller._current_generation(), 0)
-
-    def test_sleep_countdown_poll_triggers_inside_threshold_once(self):
-        controller = self.make_controller(
-            standby_on_sleep_countdown=True,
-            sleep_countdown_threshold_s=5.0,
-        )
-        controller.standby_kef_preemptive = Mock(return_value=True)
-        info = SimpleNamespace(TimeRemaining=4, Idleness=90, MaxIdlenessAllowed=80)
-
-        with patch("kef_app.controller.sleep_countdown_monitor.read_system_idle_info", return_value=info):
-            fired = controller._poll_sleep_countdown_once(False, reason="unit_test")
-            still_fired = controller._poll_sleep_countdown_once(True, reason="unit_test")
-
-        self.assertTrue(fired)
-        self.assertTrue(still_fired)
-        controller.standby_kef_preemptive.assert_called_once_with(1, "SLEEP_COUNTDOWN")
-
-    def test_sleep_countdown_poll_skips_zero_and_resets_after_countdown_recovers(self):
-        controller = self.make_controller(
-            standby_on_sleep_countdown=True,
-            sleep_countdown_threshold_s=5.0,
-        )
-        never_sleep = SimpleNamespace(TimeRemaining=0, Idleness=100, MaxIdlenessAllowed=80)
-        inactive_countdown = SimpleNamespace(TimeRemaining=0xFFFFFFFF, Idleness=78, MaxIdlenessAllowed=0)
-        recovered = SimpleNamespace(TimeRemaining=20, Idleness=10, MaxIdlenessAllowed=80)
-        controller.standby_kef_preemptive = Mock(return_value=True)
-
-        with patch("kef_app.controller.sleep_countdown_monitor.read_system_idle_info", return_value=never_sleep):
-            self.assertFalse(controller._poll_sleep_countdown_once(False, reason="unit_test"))
-        with patch("kef_app.controller.sleep_countdown_monitor.read_system_idle_info", return_value=inactive_countdown):
-            self.assertFalse(controller._poll_sleep_countdown_once(False, reason="unit_test"))
-        with patch("kef_app.controller.sleep_countdown_monitor.read_system_idle_info", return_value=recovered):
-            self.assertFalse(controller._poll_sleep_countdown_once(True, reason="unit_test"))
-
-        controller.standby_kef_preemptive.assert_not_called()
 
     def test_on_resume_waits_for_unlock_when_unlock_wake_enabled(self):
         controller = self.make_controller(wake_on_unlock_only=True)
@@ -441,6 +385,73 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
         controller._request_shutdown.assert_not_called()
         self.assertTrue(controller._recently_early_standby_ok())
+
+    def test_preemptive_standby_uses_prewarmed_send_before_fire_and_forget(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+        )
+        events = self.capture_events(controller)
+        generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
+        controller.try_send_prewarmed_standby = Mock(
+            return_value=PrewarmedStandbySendResult(
+                attempted=True,
+                success=True,
+                status="sent",
+                duration_ms=4,
+                target_ip="192.168.1.10",
+                mode="short_connection",
+            )
+        )
+        controller._send_fire_and_forget_shutdown = Mock()
+        controller._request_shutdown = Mock()
+
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+
+        self.assertTrue(result)
+        controller.try_send_prewarmed_standby.assert_called_once_with("192.168.1.10")
+        controller._send_fire_and_forget_shutdown.assert_not_called()
+        controller._request_shutdown.assert_not_called()
+        self.assertTrue(controller._recently_early_standby_ok())
+        self.assertTrue(self.emitted_outcome(events, "success_prewarmed_send"))
+
+    def test_preemptive_standby_falls_back_when_prewarmed_send_was_frozen(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+        )
+        generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
+        controller._log_structured = Mock()
+        controller.try_send_prewarmed_standby = Mock(
+            return_value=PrewarmedStandbySendResult(
+                attempted=True,
+                success=False,
+                status="frozen_during_send",
+                duration_ms=420,
+                target_ip="192.168.1.10",
+                mode="short_connection",
+                frozen_s="0.420",
+            )
+        )
+        controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
+        controller._request_shutdown = Mock()
+
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+
+        self.assertTrue(result)
+        controller.try_send_prewarmed_standby.assert_called_once_with("192.168.1.10")
+        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller._request_shutdown.assert_not_called()
+        self.assertTrue(
+            any(
+                call.args[:1] == ("WARN",)
+                and call.kwargs.get("action") == "EARLY_STANDBY"
+                and call.kwargs.get("step") == "prewarmed_standby_send"
+                and call.kwargs.get("status") == "frozen_during_send"
+                and call.kwargs.get("cause") == "prewarmed_send_deadline_exceeded"
+                for call in controller._log_structured.mock_calls
+            )
+        )
 
     def test_preemptive_standby_fire_and_forget_bypasses_busy_action_lock(self):
         controller = self.make_controller(

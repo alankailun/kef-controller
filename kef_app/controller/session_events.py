@@ -7,6 +7,12 @@ from .triggers import get_trigger
 
 
 class ControllerSessionEventsMixin:
+    @staticmethod
+    def _early_standby_event_matches_reason(event_name: str, reason: str) -> bool:
+        if event_name == reason:
+            return True
+        return event_name == "GUID_LIDSWITCH_STATE_CHANGE" and reason == "POWER_LID_CLOSED"
+
     def _start_controller_thread(self, target, thread_name: str):
         def guarded():
             try:
@@ -72,6 +78,7 @@ class ControllerSessionEventsMixin:
         )
 
     def _on_early_standby_signal(self, reason: str, *, enabled: bool, disabled_cause: str, action: str) -> bool:
+        entry_mono = self.mono()
         if not enabled:
             self._log_structured(
                 "SKIP",
@@ -90,6 +97,25 @@ class ControllerSessionEventsMixin:
                 mono=f"{self.mono():.3f}",
             )
             return False
+
+        with self._state_lock:
+            event_name = self._last_windows_event_name
+            event_mono = float(self._last_windows_event_mono or 0.0)
+        if (
+            event_mono > 0
+            and self._early_standby_event_matches_reason(event_name, reason)
+            and entry_mono - event_mono > 5.0
+        ):
+            self._log_structured(
+                "WARN",
+                action=action,
+                reason=reason,
+                cause="thread_frozen_before_trigger_entry",
+                event=event_name,
+                frozen_s=f"{entry_mono - event_mono:.1f}",
+                note="modern_standby_likely_froze_message_pump",
+                mono=f"{entry_mono:.3f}",
+            )
 
         generation = self._new_generation("sleep", reason)
         return self.standby_kef_preemptive(generation, reason)

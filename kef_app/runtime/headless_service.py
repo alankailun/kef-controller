@@ -134,7 +134,7 @@ class HeadlessRuntime:
 
         threading.Thread(target=self.controller.on_startup, daemon=True, name="StartupWake").start()
         self.controller.start_speaker_event_monitor("headless_runtime")
-        self.controller.start_sleep_countdown_monitor("headless_runtime")
+        self.controller.start_prewarmed_standby_socket_monitor("headless_runtime")
 
         resource_lock = threading.Lock()
         cleaned_up = False
@@ -153,7 +153,7 @@ class HeadlessRuntime:
             with self._hwnd_lock:
                 self._hwnd = 0
             self.controller.stop_speaker_event_monitor()
-            self.controller.stop_sleep_countdown_monitor()
+            self.controller.stop_prewarmed_standby_socket_monitor()
 
             if session_notify_registered and hwnd:
                 try:
@@ -262,18 +262,18 @@ class HeadlessRuntime:
                         return True
 
                     if wparam == PBT_APMSUSPEND:
+                        self.controller.stop_prewarmed_standby_socket_monitor()
                         self.controller.log_power_event("PBT_APMSUSPEND", wparam, lparam)
-                        self.controller.stop_sleep_countdown_monitor()
                         self.controller.on_suspend("PBT_APMSUSPEND")
                         return True
                     if wparam == PBT_APMRESUMEAUTOMATIC:
                         self.controller.log_power_event("PBT_APMRESUMEAUTOMATIC", wparam, lparam)
-                        self.controller.start_sleep_countdown_monitor("PBT_APMRESUMEAUTOMATIC")
+                        self.controller.start_prewarmed_standby_socket_monitor("PBT_APMRESUMEAUTOMATIC")
                         self.controller.on_resume("PBT_APMRESUMEAUTOMATIC")
                         return True
                     if wparam == PBT_APMRESUMESUSPEND:
                         self.controller.log_power_event("PBT_APMRESUMESUSPEND", wparam, lparam)
-                        self.controller.start_sleep_countdown_monitor("PBT_APMRESUMESUSPEND")
+                        self.controller.start_prewarmed_standby_socket_monitor("PBT_APMRESUMESUSPEND")
                         self.controller.on_resume("PBT_APMRESUMESUSPEND")
                         return True
                     self.controller.log_power_event("WM_POWERBROADCAST_OTHER", wparam, lparam)

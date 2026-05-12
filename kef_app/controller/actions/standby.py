@@ -409,6 +409,7 @@ class ControllerDeviceStandbyMixin:
         current_ip = self.get_current_kef_ip()
         self._log_structured(
             "STEP",
+            log_level="info",
             action=action,
             gen=generation,
             reason=reason,
@@ -583,6 +584,40 @@ class ControllerDeviceStandbyMixin:
         host_unreachable_status: str = "host_unreachable_assumed_standby",
         host_unreachable_cause: str = "fire_and_forget_host_unreachable",
     ) -> str | None:
+        prewarmed_result = self.try_send_prewarmed_standby(current_ip)
+        if prewarmed_result.attempted:
+            fields = {
+                "action": action,
+                "gen": generation,
+                "reason": reason,
+                "step": "prewarmed_standby_send",
+                "status": prewarmed_result.status,
+                "target_ip": current_ip,
+                "duration_ms": prewarmed_result.duration_ms,
+                "mode": prewarmed_result.mode,
+                "deadline_s": f"{self.config.prewarmed_send_deadline_s:.2f}",
+                "bypass_action_lock": True,
+                "read_response": False,
+                "mono": f"{self.mono():.3f}",
+            }
+            if extra_fields:
+                fields.update(extra_fields)
+            if prewarmed_result.error:
+                fields["error"] = prewarmed_result.error
+            if prewarmed_result.frozen_s:
+                fields["cause"] = "prewarmed_send_deadline_exceeded"
+                fields["frozen_s"] = prewarmed_result.frozen_s
+
+            self._log_structured(
+                "STEP" if prewarmed_result.success else "WARN",
+                log_level="info",
+                **fields,
+            )
+            if prewarmed_result.success:
+                if mark_early_standby_success:
+                    self._mark_early_standby_success()
+                return "success_prewarmed_send"
+
         result = self._send_fire_and_forget_shutdown(current_ip)
         if result.success:
             status = "sent"

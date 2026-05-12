@@ -15,8 +15,8 @@ from .feature_state import EarlyStandbyDedupState
 from .logging_mixin import ControllerLoggingMixin
 from .network_timeout import temporary_socket_timeout
 from .power_state import ControllerStateMixin
+from .prewarmed_standby_socket import PrewarmedStandbySocketMonitorMixin
 from .session_events import ControllerSessionEventsMixin
-from .sleep_countdown_monitor import SleepCountdownMonitorMixin
 
 from ..devices.speaker_models import normalize_mac
 
@@ -26,7 +26,7 @@ class KefPowerController(
     ControllerStateMixin,
     ControllerDiscoveryMixin,
     ControllerDeviceActionsMixin,
-    SleepCountdownMonitorMixin,
+    PrewarmedStandbySocketMonitorMixin,
     ControllerSessionEventsMixin,
 ):
     def __init__(self, config: AppConfig, log: logging.Logger, state_store: Optional[SpeakerStateStore] = None):
@@ -51,9 +51,11 @@ class KefPowerController(
         self._blind_discovery_lock = threading.Lock()
         self._speaker_event_monitor_lock = threading.Lock()
         self._speaker_event_monitor_stop = threading.Event()
-        self._sleep_countdown_monitor_lock = threading.Lock()
-        self._sleep_countdown_monitor_stop = threading.Event()
-        self._sleep_countdown_monitor_thread: threading.Thread | None = None
+        self._prewarmed_standby_lock = threading.Lock()
+        self._prewarmed_standby_stop = threading.Event()
+        self._prewarmed_standby_thread: threading.Thread | None = None
+        self._prewarmed_standby_holder = None
+        self._prewarmed_standby_restart_reason: str | None = None
         self._event_listeners: list[Callable[[str, dict[str, Any]], None]] = []
 
         self._current_kef_ip = self._loaded_state.last_ip or config.kef_ip
@@ -69,8 +71,11 @@ class KefPowerController(
         self._mac_discovery_miss_count = 0
         self._last_mac_discovery_scanned_miss = False
         self._speaker_event_monitor_running = False
-        self._sleep_countdown_monitor_running = False
-        self._sleep_countdown_monitor_restart_pending = False
+        self._prewarmed_standby_running = False
+        self._prewarmed_standby_last_ip = ""
+        self._prewarmed_standby_last_ok_mono = 0.0
+        self._prewarmed_standby_failures = 0
+        self._prewarmed_standby_ready_logged = False
         self._speaker_event_poll_failures = 0
         self._speaker_runtime_input_source = ""
         self._speaker_runtime_volume: int | None = None
@@ -80,6 +85,8 @@ class KefPowerController(
         self._controller_active_power_actions = 0
         self._last_resume_event_mono = 0.0
         self._session_ending = False
+        self._last_windows_event_name = ""
+        self._last_windows_event_mono = 0.0
 
         self._early_standby_dedup = EarlyStandbyDedupState()
         self._system_sleep_pending = False

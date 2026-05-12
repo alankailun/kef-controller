@@ -13,8 +13,6 @@ from .api import (
     PBT_POWERSETTINGCHANGE,
     POWER_SETTING_GUIDS,
     RegisterPowerSettingNotification,
-    SYSTEM_POWER_INFORMATION,
-    SystemPowerInformation,
     UnregisterPowerSettingNotification,
     WM_POWERBROADCAST,
     WM_WTSSESSION_CHANGE,
@@ -29,7 +27,6 @@ from .api import (
     get_process_image_path,
     get_raw_command_line,
     guess_launch_source,
-    read_system_idle_info,
 )
 from .startup_registration import (
     REMOVE_TASK_FLAG,
@@ -75,8 +72,6 @@ __all__ = [
     "REMOVE_TASK_FLAG",
     "REPAIR_TASK_FLAG",
     "STARTUP_KEY",
-    "SYSTEM_POWER_INFORMATION",
-    "SystemPowerInformation",
     "TASK_NAME_FLAG",
     "VALID_STARTUP_MODES",
     "StartupLaunchSpec",
@@ -108,7 +103,6 @@ __all__ = [
     "preferred_executable_path",
     "remove_startup_task_with_uac",
     "repair_task_startup_with_uac",
-    "read_system_idle_info",
     "runtime_launch_spec",
     "set_startup_registered",
     "startup_error_suggests_repair",

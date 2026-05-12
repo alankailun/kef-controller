@@ -64,9 +64,6 @@ class StandbyTriggers:
     standby_on_sleep: bool = True
     standby_on_lock: bool = True
     standby_on_lid_close: bool = True
-    standby_on_sleep_countdown: bool = True
-    sleep_countdown_threshold_s: float = 5.0
-    sleep_countdown_poll_interval_s: float = 2.0
     early_standby_dedup_window: float = 30.0
 
 
@@ -77,6 +74,12 @@ class StandbyTuning:
     suspend_fast_standby_action_lock_timeout: float = 0.20
     suspend_fast_standby_socket_timeout: float = 0.60
     early_standby_action_lock_timeout: float = 0.3
+    prewarmed_standby_enabled: bool = True
+    prewarmed_persist_socket: bool = False
+    prewarmed_keepalive_interval_s: float = 20.0
+    prewarmed_socket_timeout_s: float = 0.35
+    prewarmed_send_deadline_s: float = 0.10
+    prewarmed_frozen_send_multiplier: float = 3.0
 
 
 @dataclass(slots=True)
