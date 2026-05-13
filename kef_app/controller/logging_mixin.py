@@ -57,10 +57,15 @@ class ControllerLoggingMixin:
             return logging.DEBUG
         return logging.INFO
 
-    def _log_structured(self, tag: str, *, log_level: object = None, **fields):
+    def _log_structured(self, tag: str, *, log_level: object = None, mono: object = None, **fields):
         log_level_value = self._coerce_log_level(log_level) or self._get_structured_log_level(tag, fields)
         if not self.log.isEnabledFor(log_level_value):
             return
+
+        if mono is not None:
+            fields["mono"] = mono
+        elif "mono" not in fields:
+            fields["mono"] = f"{self.mono():.3f}"
 
         parts = []
         for key, value in fields.items():

@@ -128,6 +128,23 @@ class ControllerDeviceStandbyMixin:
     def _standby_log_fields(self, policy: StandbyPolicy, generation: int | None, reason: str) -> dict[str, object]:
         return {"action": policy.action, "gen": generation, "reason": reason}
 
+    def _log_standby(
+        self,
+        tag: str,
+        policy: StandbyPolicy,
+        generation: int | None,
+        reason: str,
+        *,
+        log_level: object = None,
+        **fields: object,
+    ) -> None:
+        self._log_structured(
+            tag,
+            log_level=log_level,
+            **self._standby_log_fields(policy, generation, reason),
+            **fields,
+        )
+
     def _standby_skip_recent_early_standby(
         self,
         policy: StandbyPolicy,
@@ -137,12 +154,13 @@ class ControllerDeviceStandbyMixin:
         if not policy.skip_if_recent_early_standby or not self._recently_early_standby_ok():
             return False, ""
         outcome = "skipped_recent_early_standby_ok"
-        self._log_structured(
+        self._log_standby(
             "SKIP",
-            **self._standby_log_fields(policy, generation, reason),
+            policy,
+            generation,
+            reason,
             cause="recent_early_standby_ok",
             window_s=f"{self.config.early_standby_dedup_window:.2f}",
-            mono=f"{self.mono():.3f}",
         )
         return True, outcome
 
@@ -150,11 +168,12 @@ class ControllerDeviceStandbyMixin:
         if not policy.skip_if_session_ending or not self._is_session_ending():
             return False, ""
         outcome = "skipped_session_ending"
-        self._log_structured(
+        self._log_standby(
             "SKIP",
-            **self._standby_log_fields(policy, generation, reason),
+            policy,
+            generation,
+            reason,
             cause="session_ending",
-            mono=f"{self.mono():.3f}",
         )
         return True, outcome
 
@@ -169,14 +188,13 @@ class ControllerDeviceStandbyMixin:
         if not policy.disabled_field or bool(self._config_value(policy.disabled_field)):
             return False, ""
         outcome = "disabled"
-        fields = self._standby_log_fields(policy, generation, reason)
-        if extra_fields:
-            fields.update(extra_fields)
-        self._log_structured(
+        self._log_standby(
             "SKIP",
-            **fields,
+            policy,
+            generation,
+            reason,
             cause=policy.disabled_cause,
-            mono=f"{self.mono():.3f}",
+            **(extra_fields or {}),
         )
         return True, outcome
 
@@ -228,26 +246,7 @@ class ControllerDeviceStandbyMixin:
         if skipped:
             return True, outcome
 
-        return self._perform_fast_shutdown(
-            action=policy.action,
-            generation=generation,
-            reason=reason,
-            begin_step=policy.begin_step,
-            success_step=policy.success_step,
-            lock_timeout=float(self._config_value(policy.lock_timeout_field)),
-            lock_purpose=policy.lock_purpose,
-            socket_timeout=float(self._config_value(policy.socket_timeout_field)),
-            success_outcome=policy.success_outcome,
-            host_unreachable_outcome=policy.host_unreachable_outcome,
-            host_unreachable_status=policy.host_unreachable_status,
-            host_unreachable_cause=policy.host_unreachable_cause,
-            failed_outcome=policy.failed_outcome,
-            failed_status=policy.failed_status,
-            attempt=policy.attempt,
-            mark_early_standby_success=policy.mark_early_standby_success,
-            fire_and_forget=policy.fire_and_forget,
-            fire_and_forget_outcome=policy.fire_and_forget_outcome,
-        )
+        return self._perform_fast_shutdown(policy, generation=generation, reason=reason)
 
     def _execute_verified_standby_policy(
         self,
@@ -255,11 +254,12 @@ class ControllerDeviceStandbyMixin:
         generation: int | None,
         reason: str,
     ) -> tuple[bool, str]:
-        self._log_structured(
+        self._log_standby(
             "STEP",
-            **self._standby_log_fields(policy, generation, reason),
+            policy,
+            generation,
+            reason,
             step=policy.begin_step,
-            mono=f"{self.mono():.3f}",
         )
 
         skipped, outcome = self._standby_skip_recent_early_standby(policy, generation, reason)
@@ -297,16 +297,15 @@ class ControllerDeviceStandbyMixin:
                 return True, policy.success_outcome
             except Exception as exc:
                 self.reset_speaker()
-                self._log_structured(
+                self._log_standby(
                     "WARN",
-                    action=policy.action,
-                    gen=generation,
-                    reason=reason,
+                    policy,
+                    generation,
+                    reason,
                     attempt=policy.attempt or 1,
                     cause=("standby_not_verified" if isinstance(exc, StandbyVerificationError) else "shutdown_failed"),
                     status=policy.failed_status,
                     error=repr(exc),
-                    mono=f"{self.mono():.3f}",
                 )
                 return False, policy.failed_outcome
         finally:
@@ -318,13 +317,13 @@ class ControllerDeviceStandbyMixin:
 
         current_ip = self.get_current_kef_ip()
         if not current_ip:
-            self._log_structured(
+            self._log_standby(
                 "SKIP",
-                action=policy.action,
-                reason=reason,
+                policy,
+                None,
+                reason,
                 cause="no_current_ip",
                 flags=flags,
-                mono=f"{self.mono():.3f}",
             )
             return False, "skipped_no_current_ip"
 
@@ -343,42 +342,42 @@ class ControllerDeviceStandbyMixin:
 
         lock_timeout = float(self._config_value(policy.lock_timeout_field))
         if not self._action_lock.acquire(timeout=lock_timeout):
-            self._log_structured(
+            self._log_standby(
                 "SKIP",
-                action=policy.action,
-                reason=reason,
+                policy,
+                None,
+                reason,
                 cause="action_lock_busy",
                 flags=flags,
                 timeout_s=f"{lock_timeout:.2f}",
-                mono=f"{self.mono():.3f}",
             )
             return False, "skipped_action_lock_busy"
 
         try:
             self._request_shutdown(fresh=False, timeout=float(self._config_value(policy.socket_timeout_field)))
-            self._log_structured(
+            self._log_standby(
                 "STEP",
-                action=policy.action,
-                reason=reason,
+                policy,
+                None,
+                reason,
                 step=policy.success_step,
                 status="success",
                 flags=flags,
                 target_ip=current_ip,
-                mono=f"{self.mono():.3f}",
             )
             return True, policy.success_outcome
         except Exception as exc:
             self.reset_speaker()
-            self._log_structured(
+            self._log_standby(
                 "RETRY",
-                action=policy.action,
-                reason=reason,
+                policy,
+                None,
+                reason,
                 attempt=1,
                 cause="shutdown_failed",
                 flags=flags,
                 error=repr(exc),
                 target_ip=current_ip,
-                mono=f"{self.mono():.3f}",
             )
             return False, policy.failed_outcome
         finally:
@@ -386,64 +385,48 @@ class ControllerDeviceStandbyMixin:
 
     def _perform_fast_shutdown(
         self,
+        policy: StandbyPolicy,
         *,
-        action: str,
         generation: int | None,
         reason: str,
-        begin_step: str,
-        success_step: str,
-        lock_timeout: float,
-        lock_purpose: str,
-        socket_timeout: float,
-        success_outcome: str,
-        host_unreachable_outcome: str,
-        host_unreachable_status: str,
-        host_unreachable_cause: str,
-        failed_outcome: str,
-        failed_status: str | None = None,
-        attempt: int | None = None,
-        mark_early_standby_success: bool = False,
-        fire_and_forget: bool = False,
-        fire_and_forget_outcome: str | None = None,
     ) -> tuple[bool, str]:
         current_ip = self.get_current_kef_ip()
-        self._log_structured(
+        socket_timeout = float(self._config_value(policy.socket_timeout_field))
+        self._log_standby(
             "STEP",
+            policy,
+            generation,
+            reason,
             log_level="info",
-            action=action,
-            gen=generation,
-            reason=reason,
-            step=begin_step,
+            step=policy.begin_step,
             status="begin",
             target_ip=current_ip or "<empty>",
             target_mac=self.get_effective_target_mac() or "<empty>",
             identity_check="cached_target_only",
             verify_standby=False,
-            mono=f"{self.mono():.3f}",
         )
         if not current_ip:
             outcome = "skipped_no_current_ip"
-            self._log_structured(
+            self._log_standby(
                 "SKIP",
-                action=action,
-                gen=generation,
-                reason=reason,
+                policy,
+                generation,
+                reason,
                 cause="no_current_ip",
-                mono=f"{self.mono():.3f}",
             )
             return False, outcome
 
-        if fire_and_forget:
+        if policy.fire_and_forget:
             fire_and_forget_result = self._try_fire_and_forget_shutdown(
-                action=action,
+                action=policy.action,
                 generation=generation,
                 reason=reason,
                 current_ip=current_ip,
-                mark_early_standby_success=mark_early_standby_success,
-                success_outcome=fire_and_forget_outcome or success_outcome,
-                host_unreachable_outcome=host_unreachable_outcome,
-                host_unreachable_status=host_unreachable_status,
-                host_unreachable_cause=host_unreachable_cause,
+                mark_early_standby_success=policy.mark_early_standby_success,
+                success_outcome=policy.fire_and_forget_outcome or policy.success_outcome,
+                host_unreachable_outcome=policy.host_unreachable_outcome,
+                host_unreachable_status=policy.host_unreachable_status,
+                host_unreachable_cause=policy.host_unreachable_cause,
             )
             if fire_and_forget_result is not None:
                 return True, fire_and_forget_result
@@ -452,11 +435,11 @@ class ControllerDeviceStandbyMixin:
             return False, "skipped_missing_generation"
 
         outcome = self._acquire_generation_action_lock(
-            action=action,
+            action=policy.action,
             generation=generation,
             reason=reason,
-            lock_timeout=lock_timeout,
-            purpose=lock_purpose,
+            lock_timeout=float(self._config_value(policy.lock_timeout_field)),
+            purpose=policy.lock_purpose,
         )
         if outcome is not None:
             return False, outcome
@@ -468,12 +451,12 @@ class ControllerDeviceStandbyMixin:
             request_duration_ms = int(max(0.0, request_finished_mono - request_start_mono) * 1000)
             if request_duration_ms > int(_FAST_STANDBY_STANDARD_HARD_TIMEOUT * 1000):
                 outcome = "failed_standard_request_deadline_exceeded"
-                self._log_structured(
+                self._log_standby(
                     "WARN",
-                    action=action,
-                    gen=generation,
-                    reason=reason,
-                    step=success_step,
+                    policy,
+                    generation,
+                    reason,
+                    step=policy.success_step,
                     status="late_success_ignored",
                     cause="standard_fallback_deadline_exceeded",
                     target_ip=current_ip,
@@ -482,15 +465,15 @@ class ControllerDeviceStandbyMixin:
                     mono=f"{request_finished_mono:.3f}",
                 )
                 return False, outcome
-            if mark_early_standby_success:
+            if policy.mark_early_standby_success:
                 self._mark_early_standby_success()
-            outcome = success_outcome
-            self._log_structured(
+            outcome = policy.success_outcome
+            self._log_standby(
                 "STEP",
-                action=action,
-                gen=generation,
-                reason=reason,
-                step=success_step,
+                policy,
+                generation,
+                reason,
+                step=policy.success_step,
                 status="sent",
                 target_ip=current_ip,
                 timeout_s=f"{socket_timeout:.2f}",
@@ -505,10 +488,7 @@ class ControllerDeviceStandbyMixin:
             if request_duration_ms > int(_FAST_STANDBY_STANDARD_HARD_TIMEOUT * 1000):
                 outcome = "failed_standard_request_deadline_exceeded"
                 fields = {
-                    "action": action,
-                    "gen": generation,
-                    "reason": reason,
-                    "step": success_step,
+                    "step": policy.success_step,
                     "status": "late_error_ignored",
                     "cause": "standard_fallback_deadline_exceeded",
                     "error": repr(exc),
@@ -517,46 +497,38 @@ class ControllerDeviceStandbyMixin:
                     "deadline_s": f"{_FAST_STANDBY_STANDARD_HARD_TIMEOUT:.2f}",
                     "mono": f"{request_finished_mono:.3f}",
                 }
-                if attempt is not None:
-                    fields["attempt"] = attempt
-                self._log_structured("WARN", **fields)
+                if policy.attempt is not None:
+                    fields["attempt"] = policy.attempt
+                self._log_standby("WARN", policy, generation, reason, **fields)
                 return False, outcome
 
             if is_host_unreachable(exc):
-                if mark_early_standby_success:
+                if policy.mark_early_standby_success:
                     self._mark_early_standby_success()
-                outcome = host_unreachable_outcome
+                outcome = policy.host_unreachable_outcome
                 fields = {
-                    "action": action,
-                    "gen": generation,
-                    "reason": reason,
-                    "step": success_step,
-                    "status": host_unreachable_status,
-                    "cause": host_unreachable_cause,
+                    "step": policy.success_step,
+                    "status": policy.host_unreachable_status,
+                    "cause": policy.host_unreachable_cause,
                     "error": repr(exc),
                     "target_ip": current_ip,
-                    "mono": f"{self.mono():.3f}",
                 }
-                if attempt is not None:
-                    fields["attempt"] = attempt
-                self._log_structured("STEP", **fields)
+                if policy.attempt is not None:
+                    fields["attempt"] = policy.attempt
+                self._log_standby("STEP", policy, generation, reason, **fields)
                 return True, outcome
 
-            outcome = failed_outcome
+            outcome = policy.failed_outcome
             fields = {
-                "action": action,
-                "gen": generation,
-                "reason": reason,
                 "cause": "shutdown_failed",
                 "error": repr(exc),
                 "target_ip": current_ip,
-                "mono": f"{self.mono():.3f}",
             }
-            if attempt is not None:
-                fields["attempt"] = attempt
-            if failed_status is not None:
-                fields["status"] = failed_status
-            self._log_structured("WARN", **fields)
+            if policy.attempt is not None:
+                fields["attempt"] = policy.attempt
+            if policy.failed_status is not None:
+                fields["status"] = policy.failed_status
+            self._log_standby("WARN", policy, generation, reason, **fields)
             return False, outcome
         finally:
             self._action_lock.release()
