@@ -5,6 +5,7 @@ from typing import Literal
 
 from .device_common import _STANDBY_VERIFY_TIMEOUT, StandbyVerificationError
 from ...devices.transport import FireAndForgetShutdownResult, fire_and_forget_standby, is_host_unreachable
+from ...platform.windows import temporary_system_required_request
 
 
 _FAST_STANDBY_FIRE_AND_FORGET_ATTEMPTS = 3
@@ -32,6 +33,8 @@ class StandbyPolicy:
     host_unreachable_outcome: str = "success_assumed_host_unreachable"
     host_unreachable_status: str = "host_unreachable_assumed_standby"
     host_unreachable_cause: str = "host_unreachable_assume_standby"
+    host_unreachable_is_success: bool = True
+    host_unreachable_fallback_standard: bool = False
     fire_and_forget: bool = False
     fire_and_forget_outcome: str | None = None
     mark_early_standby_success: bool = False
@@ -52,6 +55,11 @@ PREEMPTIVE_STANDBY_POLICY = StandbyPolicy(
     socket_timeout_field="suspend_fast_standby_socket_timeout",
     success_outcome="success",
     failed_outcome="failed",
+    host_unreachable_outcome="failed_local_network_unavailable",
+    host_unreachable_status="local_network_unavailable_before_suspend",
+    host_unreachable_cause="local_route_unavailable_before_suspend",
+    host_unreachable_is_success=False,
+    host_unreachable_fallback_standard=True,
     fire_and_forget=True,
     fire_and_forget_outcome="success_fire_and_forget",
     mark_early_standby_success=True,
@@ -246,7 +254,34 @@ class ControllerDeviceStandbyMixin:
         if skipped:
             return True, outcome
 
+        if policy.action == "EARLY_STANDBY":
+            return self._perform_early_standby_with_suspend_hold(policy, generation=generation, reason=reason)
         return self._perform_fast_shutdown(policy, generation=generation, reason=reason)
+
+    def _perform_early_standby_with_suspend_hold(
+        self,
+        policy: StandbyPolicy,
+        *,
+        generation: int | None,
+        reason: str,
+    ) -> tuple[bool, str]:
+        with temporary_system_required_request("KEF Controller early standby") as hold:
+            fields: dict[str, object] = {
+                "step": "system_required_hold",
+                "status": "active" if hold.active else "unavailable",
+                "api": "PowerCreateRequest",
+            }
+            if hold.error:
+                fields["error"] = hold.error
+            self._log_standby(
+                "STEP" if hold.active else "WARN",
+                policy,
+                generation,
+                reason,
+                log_level="info",
+                **fields,
+            )
+            return self._perform_fast_shutdown(policy, generation=generation, reason=reason)
 
     def _execute_verified_standby_policy(
         self,
@@ -427,6 +462,7 @@ class ControllerDeviceStandbyMixin:
                 host_unreachable_outcome=policy.host_unreachable_outcome,
                 host_unreachable_status=policy.host_unreachable_status,
                 host_unreachable_cause=policy.host_unreachable_cause,
+                host_unreachable_fallback_standard=policy.host_unreachable_fallback_standard,
             )
             if fire_and_forget_result is not None:
                 return True, fire_and_forget_result
@@ -503,7 +539,7 @@ class ControllerDeviceStandbyMixin:
                 return False, outcome
 
             if is_host_unreachable(exc):
-                if policy.mark_early_standby_success:
+                if policy.host_unreachable_is_success and policy.mark_early_standby_success:
                     self._mark_early_standby_success()
                 outcome = policy.host_unreachable_outcome
                 fields = {
@@ -515,8 +551,14 @@ class ControllerDeviceStandbyMixin:
                 }
                 if policy.attempt is not None:
                     fields["attempt"] = policy.attempt
-                self._log_standby("STEP", policy, generation, reason, **fields)
-                return True, outcome
+                self._log_standby(
+                    "STEP" if policy.host_unreachable_is_success else "WARN",
+                    policy,
+                    generation,
+                    reason,
+                    **fields,
+                )
+                return policy.host_unreachable_is_success, outcome
 
             outcome = policy.failed_outcome
             fields = {
@@ -555,6 +597,7 @@ class ControllerDeviceStandbyMixin:
         host_unreachable_outcome: str = "success_assumed_host_unreachable",
         host_unreachable_status: str = "host_unreachable_assumed_standby",
         host_unreachable_cause: str = "fire_and_forget_host_unreachable",
+        host_unreachable_fallback_standard: bool = False,
     ) -> str | None:
         prewarmed_result = self.try_send_prewarmed_standby(current_ip)
         if prewarmed_result.attempted:
@@ -596,7 +639,7 @@ class ControllerDeviceStandbyMixin:
             outcome = success_outcome
         elif result.all_host_unreachable:
             status = host_unreachable_status
-            outcome = host_unreachable_outcome
+            outcome = None if host_unreachable_fallback_standard else host_unreachable_outcome
         else:
             status = "failed_fallback_standard"
             outcome = None

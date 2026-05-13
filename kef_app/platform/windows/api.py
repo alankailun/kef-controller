@@ -11,6 +11,9 @@ from typing import Optional
 MB_ICONINFORMATION = 0x40
 ERROR_ALREADY_EXISTS = 183
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+POWER_REQUEST_CONTEXT_VERSION = 0
+POWER_REQUEST_CONTEXT_SIMPLE_STRING = 0x1
+PowerRequestSystemRequired = 1
 
 WM_POWERBROADCAST = 0x0218
 PBT_APMSUSPEND = 0x0004
@@ -62,6 +65,77 @@ QueryFullProcessImageNameW.restype = wintypes.BOOL
 CloseHandle = kernel32.CloseHandle
 CloseHandle.argtypes = [wintypes.HANDLE]
 CloseHandle.restype = wintypes.BOOL
+
+
+class _POWER_REQUEST_REASON(ctypes.Union):
+    _fields_ = [("SimpleReasonString", wintypes.LPWSTR)]
+
+
+class REASON_CONTEXT(ctypes.Structure):
+    _fields_ = [
+        ("Version", wintypes.ULONG),
+        ("Flags", wintypes.DWORD),
+        ("Reason", _POWER_REQUEST_REASON),
+    ]
+
+
+PowerCreateRequest = kernel32.PowerCreateRequest
+PowerCreateRequest.argtypes = [ctypes.POINTER(REASON_CONTEXT)]
+PowerCreateRequest.restype = wintypes.HANDLE
+
+PowerSetRequest = kernel32.PowerSetRequest
+PowerSetRequest.argtypes = [wintypes.HANDLE, ctypes.c_int]
+PowerSetRequest.restype = wintypes.BOOL
+
+PowerClearRequest = kernel32.PowerClearRequest
+PowerClearRequest.argtypes = [wintypes.HANDLE, ctypes.c_int]
+PowerClearRequest.restype = wintypes.BOOL
+
+
+class TemporarySystemRequiredRequest:
+    def __init__(self, reason: str):
+        self.reason = reason
+        self.handle = None
+        self.active = False
+        self.error = ""
+
+    def __enter__(self) -> "TemporarySystemRequiredRequest":
+        context = REASON_CONTEXT(
+            Version=POWER_REQUEST_CONTEXT_VERSION,
+            Flags=POWER_REQUEST_CONTEXT_SIMPLE_STRING,
+            Reason=_POWER_REQUEST_REASON(SimpleReasonString=self.reason),
+        )
+        handle = PowerCreateRequest(ctypes.byref(context))
+        last_error = ctypes.get_last_error()
+        if not handle:
+            self.error = f"PowerCreateRequest failed: {last_error}"
+            return self
+
+        self.handle = handle
+        if not PowerSetRequest(handle, PowerRequestSystemRequired):
+            self.error = f"PowerSetRequest failed: {ctypes.get_last_error()}"
+            CloseHandle(handle)
+            self.handle = None
+            return self
+
+        self.active = True
+        return self
+
+    def __exit__(self, _exc_type, _exc, _tb) -> None:
+        handle = self.handle
+        self.handle = None
+        if not handle:
+            return
+        try:
+            if self.active:
+                PowerClearRequest(handle, PowerRequestSystemRequired)
+        finally:
+            self.active = False
+            CloseHandle(handle)
+
+
+def temporary_system_required_request(reason: str) -> TemporarySystemRequiredRequest:
+    return TemporarySystemRequiredRequest(reason)
 
 
 class GUID(ctypes.Structure):
