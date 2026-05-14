@@ -4,7 +4,7 @@ import socket
 import threading
 from dataclasses import dataclass
 
-from ..devices.transport import build_standby_request_bytes
+from ..devices.transport import build_standby_request_bytes, is_host_unreachable
 
 
 _PREWARM_RETRY_DELAY_S = 2.0
@@ -23,6 +23,7 @@ class PrewarmedStandbySendResult:
     mode: str = ""
     error: str = ""
     frozen_s: str = ""
+    host_unreachable: bool = False
 
 
 class PrewarmedSocketHolder:
@@ -344,6 +345,7 @@ class PrewarmedStandbySocketMonitorMixin:
                 target_ip=current_ip,
                 mode=mode,
                 error=repr(exc),
+                host_unreachable=is_host_unreachable(exc),
             )
         finally:
             _close_socket(sock)

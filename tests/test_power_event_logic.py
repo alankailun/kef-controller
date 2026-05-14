@@ -77,7 +77,7 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertEqual(PREEMPTIVE_STANDBY_POLICY.action, "EARLY_STANDBY")
         self.assertTrue(PREEMPTIVE_STANDBY_POLICY.mark_early_standby_success)
         self.assertFalse(PREEMPTIVE_STANDBY_POLICY.host_unreachable_is_success)
-        self.assertTrue(PREEMPTIVE_STANDBY_POLICY.host_unreachable_fallback_standard)
+        self.assertFalse(PREEMPTIVE_STANDBY_POLICY.host_unreachable_fallback_standard)
         self.assertEqual(FAST_SUSPEND_STANDBY_POLICY.host_unreachable_outcome, "success_best_effort_host_unreachable")
         self.assertEqual(STANDARD_STANDBY_POLICY.mode, "verified_request")
         self.assertEqual(ENDSESSION_STANDBY_POLICY.mode, "end_session")
@@ -455,6 +455,56 @@ class PowerEventLogicTests(unittest.TestCase):
             )
         )
 
+    def test_preemptive_standby_short_circuits_prewarmed_host_unreachable(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+            suspend_fast_standby_socket_timeout=0.25,
+        )
+        events = self.capture_events(controller)
+        generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
+        controller._log_structured = Mock()
+        controller.try_send_prewarmed_standby = Mock(
+            return_value=PrewarmedStandbySendResult(
+                attempted=True,
+                success=False,
+                status="send_failed:OSError",
+                duration_ms=18,
+                target_ip="192.168.1.10",
+                mode="short_connection",
+                error="OSError(10065, 'A socket operation was attempted to an unreachable host')",
+                host_unreachable=True,
+            )
+        )
+        controller._send_fire_and_forget_shutdown = Mock()
+        controller._request_shutdown = Mock()
+
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+
+        self.assertFalse(result)
+        controller.try_send_prewarmed_standby.assert_called_once_with("192.168.1.10")
+        controller._send_fire_and_forget_shutdown.assert_not_called()
+        controller._request_shutdown.assert_not_called()
+        self.assertFalse(controller._recently_early_standby_ok())
+        self.assertTrue(
+            any(
+                name == "power_action_finished"
+                and payload.get("success") is False
+                and payload.get("outcome") == "failed_local_network_unavailable"
+                for name, payload in events
+            )
+        )
+        self.assertTrue(
+            any(
+                call.args[:1] == ("WARN",)
+                and call.kwargs.get("action") == "EARLY_STANDBY"
+                and call.kwargs.get("step") == "prewarmed_standby_send"
+                and call.kwargs.get("cause") == "local_route_unavailable_before_suspend"
+                and call.kwargs.get("host_unreachable") is True
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
     def test_preemptive_standby_fire_and_forget_bypasses_busy_action_lock(self):
         controller = self.make_controller(
             kef_ip="192.168.1.10",
@@ -509,7 +559,7 @@ class PowerEventLogicTests(unittest.TestCase):
             )
         )
 
-    def test_preemptive_standby_fire_and_forget_host_unreachable_falls_back_to_standard_request(self):
+    def test_preemptive_standby_fire_and_forget_host_unreachable_fails_fast(self):
         controller = self.make_controller(
             kef_ip="192.168.1.10",
             kef_mac="AA:BB:CC:DD:EE:01",
@@ -525,14 +575,21 @@ class PowerEventLogicTests(unittest.TestCase):
 
         result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
 
-        self.assertTrue(result)
+        self.assertFalse(result)
         controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
-        controller._request_shutdown.assert_called_once_with(fresh=False, timeout=0.25)
-        self.assertTrue(controller._recently_early_standby_ok())
-        self.assertTrue(self.emitted_outcome(events, "success"))
+        controller._request_shutdown.assert_not_called()
+        self.assertFalse(controller._recently_early_standby_ok())
         self.assertTrue(
             any(
-                call.args[:1] == ("STEP",)
+                name == "power_action_finished"
+                and payload.get("success") is False
+                and payload.get("outcome") == "failed_local_network_unavailable"
+                for name, payload in events
+            )
+        )
+        self.assertTrue(
+            any(
+                call.args[:1] == ("WARN",)
                 and call.kwargs.get("action") == "EARLY_STANDBY"
                 and call.kwargs.get("status") == "local_network_unavailable_before_suspend"
                 and call.kwargs.get("all_host_unreachable") is True

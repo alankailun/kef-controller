@@ -59,7 +59,7 @@ PREEMPTIVE_STANDBY_POLICY = StandbyPolicy(
     host_unreachable_status="local_network_unavailable_before_suspend",
     host_unreachable_cause="local_route_unavailable_before_suspend",
     host_unreachable_is_success=False,
-    host_unreachable_fallback_standard=True,
+    host_unreachable_fallback_standard=False,
     fire_and_forget=True,
     fire_and_forget_outcome="success_fire_and_forget",
     mark_early_standby_success=True,
@@ -123,6 +123,10 @@ ENDSESSION_STANDBY_POLICY = StandbyPolicy(
     ensure_identity=True,
     identity_step="endsession_before_request",
 )
+
+
+def _outcome_is_success(outcome: str) -> bool:
+    return outcome.startswith("success") or outcome == "skipped_recent_early_standby_ok"
 
 
 class ControllerDeviceStandbyMixin:
@@ -465,7 +469,7 @@ class ControllerDeviceStandbyMixin:
                 host_unreachable_fallback_standard=policy.host_unreachable_fallback_standard,
             )
             if fire_and_forget_result is not None:
-                return True, fire_and_forget_result
+                return _outcome_is_success(fire_and_forget_result), fire_and_forget_result
 
         if generation is None:
             return False, "skipped_missing_generation"
@@ -622,6 +626,9 @@ class ControllerDeviceStandbyMixin:
             if prewarmed_result.frozen_s:
                 fields["cause"] = "prewarmed_send_deadline_exceeded"
                 fields["frozen_s"] = prewarmed_result.frozen_s
+            if prewarmed_result.host_unreachable:
+                fields["cause"] = host_unreachable_cause
+                fields["host_unreachable"] = True
 
             self._log_structured(
                 "STEP" if prewarmed_result.success else "WARN",
@@ -632,6 +639,8 @@ class ControllerDeviceStandbyMixin:
                 if mark_early_standby_success:
                     self._mark_early_standby_success()
                 return "success_prewarmed_send"
+            if prewarmed_result.host_unreachable:
+                return host_unreachable_outcome
 
         result = self._send_fire_and_forget_shutdown(current_ip)
         if result.success:
@@ -666,8 +675,9 @@ class ControllerDeviceStandbyMixin:
         if result.errors:
             fields["errors"] = "; ".join(result.errors)
 
-        self._log_structured("STEP", log_level="info", **fields)
-        if outcome is not None and mark_early_standby_success:
+        log_tag = "WARN" if outcome is not None and not _outcome_is_success(outcome) else "STEP"
+        self._log_structured(log_tag, log_level="info", **fields)
+        if result.success and mark_early_standby_success:
             self._mark_early_standby_success()
         return outcome
 
