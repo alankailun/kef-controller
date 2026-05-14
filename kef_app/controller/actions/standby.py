@@ -4,13 +4,11 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .device_common import _STANDBY_VERIFY_TIMEOUT, StandbyVerificationError
-from ...devices.transport import FireAndForgetShutdownResult, fire_and_forget_standby, is_host_unreachable
+from .fast_standby import ControllerFastStandbyMixin, _outcome_is_success
+from ...devices.transport import is_host_unreachable
 from ...platform.windows import temporary_system_required_request
 
 
-_FAST_STANDBY_FIRE_AND_FORGET_ATTEMPTS = 3
-_FAST_STANDBY_FIRE_AND_FORGET_SOCKET_TIMEOUT = 0.18
-_FAST_STANDBY_FIRE_AND_FORGET_JOIN_TIMEOUT = 0.25
 _FAST_STANDBY_STANDARD_HARD_TIMEOUT = 1.5
 
 StandbyPolicyMode = Literal["fast_request", "verified_request", "end_session"]
@@ -34,7 +32,6 @@ class StandbyPolicy:
     host_unreachable_status: str = "host_unreachable_assumed_standby"
     host_unreachable_cause: str = "host_unreachable_assume_standby"
     host_unreachable_is_success: bool = True
-    host_unreachable_fallback_standard: bool = False
     fire_and_forget: bool = False
     fire_and_forget_outcome: str | None = None
     mark_early_standby_success: bool = False
@@ -59,7 +56,6 @@ PREEMPTIVE_STANDBY_POLICY = StandbyPolicy(
     host_unreachable_status="local_network_unavailable_before_suspend",
     host_unreachable_cause="local_route_unavailable_before_suspend",
     host_unreachable_is_success=False,
-    host_unreachable_fallback_standard=False,
     fire_and_forget=True,
     fire_and_forget_outcome="success_fire_and_forget",
     mark_early_standby_success=True,
@@ -125,11 +121,7 @@ ENDSESSION_STANDBY_POLICY = StandbyPolicy(
 )
 
 
-def _outcome_is_success(outcome: str) -> bool:
-    return outcome.startswith("success") or outcome == "skipped_recent_early_standby_ok"
-
-
-class ControllerDeviceStandbyMixin:
+class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
     def _recently_early_standby_ok(self) -> bool:
         with self._state_lock:
             return self._early_standby_dedup.is_recent(self.mono(), self.config.early_standby_dedup_window)
@@ -367,7 +359,7 @@ class ControllerDeviceStandbyMixin:
             return False, "skipped_no_current_ip"
 
         if policy.fire_and_forget:
-            fire_and_forget_outcome = self._try_fire_and_forget_shutdown(
+            fast_send_outcome = self._try_fast_standby_send(
                 action=policy.action,
                 generation=None,
                 reason=reason,
@@ -376,8 +368,8 @@ class ControllerDeviceStandbyMixin:
                 extra_fields={"flags": flags},
                 success_outcome=policy.fire_and_forget_outcome or policy.success_outcome,
             )
-            if fire_and_forget_outcome is not None:
-                return True, fire_and_forget_outcome
+            if fast_send_outcome is not None:
+                return True, fast_send_outcome
 
         lock_timeout = float(self._config_value(policy.lock_timeout_field))
         if not self._action_lock.acquire(timeout=lock_timeout):
@@ -456,7 +448,7 @@ class ControllerDeviceStandbyMixin:
             return False, outcome
 
         if policy.fire_and_forget:
-            fire_and_forget_result = self._try_fire_and_forget_shutdown(
+            fast_send_result = self._try_fast_standby_send(
                 action=policy.action,
                 generation=generation,
                 reason=reason,
@@ -466,10 +458,9 @@ class ControllerDeviceStandbyMixin:
                 host_unreachable_outcome=policy.host_unreachable_outcome,
                 host_unreachable_status=policy.host_unreachable_status,
                 host_unreachable_cause=policy.host_unreachable_cause,
-                host_unreachable_fallback_standard=policy.host_unreachable_fallback_standard,
             )
-            if fire_and_forget_result is not None:
-                return _outcome_is_success(fire_and_forget_result), fire_and_forget_result
+            if fast_send_result is not None:
+                return _outcome_is_success(fast_send_result), fast_send_result
 
         if generation is None:
             return False, "skipped_missing_generation"
@@ -578,108 +569,6 @@ class ControllerDeviceStandbyMixin:
             return False, outcome
         finally:
             self._action_lock.release()
-
-    def _send_fire_and_forget_shutdown(self, current_ip: str) -> FireAndForgetShutdownResult:
-        return fire_and_forget_standby(
-            current_ip,
-            port=self.config.mac_discovery_tcp_port,
-            attempts=_FAST_STANDBY_FIRE_AND_FORGET_ATTEMPTS,
-            socket_timeout=_FAST_STANDBY_FIRE_AND_FORGET_SOCKET_TIMEOUT,
-            join_timeout=_FAST_STANDBY_FIRE_AND_FORGET_JOIN_TIMEOUT,
-        )
-
-    def _try_fire_and_forget_shutdown(
-        self,
-        *,
-        action: str,
-        generation: int | None,
-        reason: str,
-        current_ip: str,
-        mark_early_standby_success: bool,
-        extra_fields: dict[str, object] | None = None,
-        success_outcome: str = "success_fire_and_forget",
-        host_unreachable_outcome: str = "success_assumed_host_unreachable",
-        host_unreachable_status: str = "host_unreachable_assumed_standby",
-        host_unreachable_cause: str = "fire_and_forget_host_unreachable",
-        host_unreachable_fallback_standard: bool = False,
-    ) -> str | None:
-        prewarmed_result = self.try_send_prewarmed_standby(current_ip)
-        if prewarmed_result.attempted:
-            fields = {
-                "action": action,
-                "gen": generation,
-                "reason": reason,
-                "step": "prewarmed_standby_send",
-                "status": prewarmed_result.status,
-                "target_ip": current_ip,
-                "duration_ms": prewarmed_result.duration_ms,
-                "mode": prewarmed_result.mode,
-                "deadline_s": f"{self.config.prewarmed_send_deadline_s:.2f}",
-                "bypass_action_lock": True,
-                "read_response": False,
-                "mono": f"{self.mono():.3f}",
-            }
-            if extra_fields:
-                fields.update(extra_fields)
-            if prewarmed_result.error:
-                fields["error"] = prewarmed_result.error
-            if prewarmed_result.frozen_s:
-                fields["cause"] = "prewarmed_send_deadline_exceeded"
-                fields["frozen_s"] = prewarmed_result.frozen_s
-            if prewarmed_result.host_unreachable:
-                fields["cause"] = host_unreachable_cause
-                fields["host_unreachable"] = True
-
-            self._log_structured(
-                "STEP" if prewarmed_result.success else "WARN",
-                log_level="info",
-                **fields,
-            )
-            if prewarmed_result.success:
-                if mark_early_standby_success:
-                    self._mark_early_standby_success()
-                return "success_prewarmed_send"
-            if prewarmed_result.host_unreachable:
-                return host_unreachable_outcome
-
-        result = self._send_fire_and_forget_shutdown(current_ip)
-        if result.success:
-            status = "sent"
-            outcome = success_outcome
-        elif result.all_host_unreachable:
-            status = host_unreachable_status
-            outcome = None if host_unreachable_fallback_standard else host_unreachable_outcome
-        else:
-            status = "failed_fallback_standard"
-            outcome = None
-        fields = {
-            "action": action,
-            "gen": generation,
-            "reason": reason,
-            "step": "fire_and_forget_shutdown",
-            "status": status,
-            "target_ip": current_ip,
-            "attempts": result.attempts,
-            "completed": result.completed,
-            "pending": result.pending,
-            "duration_ms": result.duration_ms,
-            "bypass_action_lock": True,
-            "read_response": False,
-            "mono": f"{self.mono():.3f}",
-        }
-        if result.all_host_unreachable:
-            fields["cause"] = host_unreachable_cause
-            fields["all_host_unreachable"] = True
-        if extra_fields:
-            fields.update(extra_fields)
-        if result.errors:
-            fields["errors"] = "; ".join(result.errors)
-
-        log_tag = "WARN" if outcome is not None and not _outcome_is_success(outcome) else "STEP"
-        self._log_structured(log_tag, log_level="info", **fields)
-        if result.success and mark_early_standby_success:
-            self._mark_early_standby_success()
-        return outcome
 
     def standby_kef_preemptive(self, generation: int, reason: str) -> bool:
         return self._execute_standby_policy(PREEMPTIVE_STANDBY_POLICY, generation=generation, reason=reason)

@@ -77,7 +77,6 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertEqual(PREEMPTIVE_STANDBY_POLICY.action, "EARLY_STANDBY")
         self.assertTrue(PREEMPTIVE_STANDBY_POLICY.mark_early_standby_success)
         self.assertFalse(PREEMPTIVE_STANDBY_POLICY.host_unreachable_is_success)
-        self.assertFalse(PREEMPTIVE_STANDBY_POLICY.host_unreachable_fallback_standard)
         self.assertEqual(FAST_SUSPEND_STANDBY_POLICY.host_unreachable_outcome, "success_best_effort_host_unreachable")
         self.assertEqual(STANDARD_STANDBY_POLICY.mode, "verified_request")
         self.assertEqual(ENDSESSION_STANDBY_POLICY.mode, "end_session")
