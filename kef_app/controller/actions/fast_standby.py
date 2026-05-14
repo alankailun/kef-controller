@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from ..prewarmed_standby_socket import PrewarmedStandbySendResult
 from ..fast_standby_sender import FastStandbySender, FastStandbySendResult
 from ...devices.transport import FireAndForgetShutdownResult, fire_and_forget_standby
 from ...platform.windows import temporary_system_required_request
@@ -27,33 +26,31 @@ class ControllerFastStandbyMixin:
             join_timeout=_FAST_STANDBY_FIRE_AND_FORGET_JOIN_TIMEOUT,
         )
 
-    def _prewarmed_sender(
+    def _fire_and_forget_sender(
         self,
         *,
-        hold_prewarmed_send: bool,
+        hold_fire_and_forget: bool,
         action: str,
         generation: int | None,
         reason: str,
-    ) -> Callable[[str], PrewarmedStandbySendResult]:
-        if not hold_prewarmed_send:
-            return self.try_send_prewarmed_standby
-        if not self.config.prewarmed_standby_enabled or not self._has_recent_prewarmed_keepalive():
-            return self.try_send_prewarmed_standby
-        return lambda current_ip: self._send_prewarmed_with_system_required_hold(
+    ) -> Callable[[str], FireAndForgetShutdownResult]:
+        if not hold_fire_and_forget:
+            return self._send_fire_and_forget_shutdown
+        return lambda current_ip: self._send_fire_and_forget_with_system_required_hold(
             current_ip,
             action=action,
             generation=generation,
             reason=reason,
         )
 
-    def _send_prewarmed_with_system_required_hold(
+    def _send_fire_and_forget_with_system_required_hold(
         self,
         current_ip: str,
         *,
         action: str,
         generation: int | None,
         reason: str,
-    ) -> PrewarmedStandbySendResult:
+    ) -> FireAndForgetShutdownResult:
         with temporary_system_required_request("KEF Controller early standby") as hold:
             fields: dict[str, object] = {
                 "action": action,
@@ -62,7 +59,7 @@ class ControllerFastStandbyMixin:
                 "step": "system_required_hold",
                 "status": "active" if hold.active else "unavailable",
                 "api": "PowerCreateRequest",
-                "scope": "prewarmed_standby_send",
+                "scope": "fire_and_forget_shutdown",
                 "mono": f"{self.mono():.3f}",
             }
             if hold.error:
@@ -72,25 +69,25 @@ class ControllerFastStandbyMixin:
                 log_level="info",
                 **fields,
             )
-            return self.try_send_prewarmed_standby(current_ip)
+            return self._send_fire_and_forget_shutdown(current_ip)
 
     def _send_fast_standby(
         self,
         current_ip: str,
         *,
-        hold_prewarmed_send: bool = False,
+        hold_fire_and_forget: bool = False,
         action: str = "",
         generation: int | None = None,
         reason: str = "",
     ) -> FastStandbySendResult:
         return FastStandbySender(
-            self._prewarmed_sender(
-                hold_prewarmed_send=hold_prewarmed_send,
+            self.try_send_prewarmed_standby,
+            self._fire_and_forget_sender(
+                hold_fire_and_forget=hold_fire_and_forget,
                 action=action,
                 generation=generation,
                 reason=reason,
             ),
-            self._send_fire_and_forget_shutdown,
         ).send(current_ip)
 
     def _log_prewarmed_fast_send(
@@ -205,11 +202,11 @@ class ControllerFastStandbyMixin:
         host_unreachable_outcome: str = "success_assumed_host_unreachable",
         host_unreachable_status: str = "host_unreachable_assumed_standby",
         host_unreachable_cause: str = "fire_and_forget_host_unreachable",
-        hold_prewarmed_send: bool = False,
+        hold_fire_and_forget: bool = False,
     ) -> str | None:
         fast_result = self._send_fast_standby(
             current_ip,
-            hold_prewarmed_send=hold_prewarmed_send,
+            hold_fire_and_forget=hold_fire_and_forget,
             action=action,
             generation=generation,
             reason=reason,

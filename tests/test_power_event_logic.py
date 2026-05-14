@@ -454,7 +454,7 @@ class PowerEventLogicTests(unittest.TestCase):
             )
         )
 
-    def test_preemptive_standby_releases_system_required_hold_before_fire_and_forget(self):
+    def test_preemptive_standby_holds_only_fire_and_forget_fallback(self):
         controller = self.make_controller(
             kef_ip="192.168.1.10",
             kef_mac="AA:BB:CC:DD:EE:01",
@@ -462,7 +462,6 @@ class PowerEventLogicTests(unittest.TestCase):
         order: list[str] = []
         generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
         controller._log_structured = Mock()
-        controller._has_recent_prewarmed_keepalive = Mock(return_value=True)
         controller.try_send_prewarmed_standby = Mock(
             side_effect=lambda _ip: order.append("prewarmed")
             or PrewarmedStandbySendResult(
@@ -498,14 +497,14 @@ class PowerEventLogicTests(unittest.TestCase):
             result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
 
         self.assertTrue(result)
-        self.assertEqual(order, ["hold_enter", "prewarmed", "hold_exit", "fire_and_forget"])
+        self.assertEqual(order, ["prewarmed", "hold_enter", "fire_and_forget", "hold_exit"])
         controller._request_shutdown.assert_not_called()
         self.assertTrue(
             any(
                 call.args[:1] == ("STEP",)
                 and call.kwargs.get("action") == "EARLY_STANDBY"
                 and call.kwargs.get("step") == "system_required_hold"
-                and call.kwargs.get("scope") == "prewarmed_standby_send"
+                and call.kwargs.get("scope") == "fire_and_forget_shutdown"
                 for call in controller._log_structured.mock_calls
             )
         )
@@ -534,12 +533,14 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown = Mock()
         controller._request_shutdown = Mock()
 
-        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+        with patch("kef_app.controller.actions.fast_standby.temporary_system_required_request") as power_request:
+            result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
 
         self.assertFalse(result)
         controller.try_send_prewarmed_standby.assert_called_once_with("192.168.1.10")
         controller._send_fire_and_forget_shutdown.assert_not_called()
         controller._request_shutdown.assert_not_called()
+        power_request.assert_not_called()
         self.assertFalse(controller._recently_early_standby_ok())
         self.assertTrue(
             any(
