@@ -454,6 +454,62 @@ class PowerEventLogicTests(unittest.TestCase):
             )
         )
 
+    def test_preemptive_standby_releases_system_required_hold_before_fire_and_forget(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+        )
+        order: list[str] = []
+        generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
+        controller._log_structured = Mock()
+        controller._has_recent_prewarmed_keepalive = Mock(return_value=True)
+        controller.try_send_prewarmed_standby = Mock(
+            side_effect=lambda _ip: order.append("prewarmed")
+            or PrewarmedStandbySendResult(
+                attempted=True,
+                success=False,
+                status="frozen_during_send",
+                duration_ms=420,
+                target_ip="192.168.1.10",
+                mode="short_connection",
+                frozen_s="0.420",
+            )
+        )
+        controller._send_fire_and_forget_shutdown = Mock(
+            side_effect=lambda _ip: order.append("fire_and_forget") or self.fire_and_forget_result(True)
+        )
+        controller._request_shutdown = Mock()
+
+        class FakeHold:
+            active = True
+            error = ""
+
+            def __enter__(self):
+                order.append("hold_enter")
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                order.append("hold_exit")
+
+        with patch(
+            "kef_app.controller.actions.fast_standby.temporary_system_required_request",
+            return_value=FakeHold(),
+        ):
+            result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+
+        self.assertTrue(result)
+        self.assertEqual(order, ["hold_enter", "prewarmed", "hold_exit", "fire_and_forget"])
+        controller._request_shutdown.assert_not_called()
+        self.assertTrue(
+            any(
+                call.args[:1] == ("STEP",)
+                and call.kwargs.get("action") == "EARLY_STANDBY"
+                and call.kwargs.get("step") == "system_required_hold"
+                and call.kwargs.get("scope") == "prewarmed_standby_send"
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
     def test_preemptive_standby_short_circuits_prewarmed_host_unreachable(self):
         controller = self.make_controller(
             kef_ip="192.168.1.10",

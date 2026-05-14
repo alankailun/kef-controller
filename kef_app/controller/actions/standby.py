@@ -6,7 +6,6 @@ from typing import Literal
 from .device_common import _STANDBY_VERIFY_TIMEOUT, StandbyVerificationError
 from .fast_standby import ControllerFastStandbyMixin, _outcome_is_success
 from ...devices.transport import is_host_unreachable
-from ...platform.windows import temporary_system_required_request
 
 
 _FAST_STANDBY_STANDARD_HARD_TIMEOUT = 1.5
@@ -250,34 +249,12 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         if skipped:
             return True, outcome
 
-        if policy.action == "EARLY_STANDBY":
-            return self._perform_early_standby_with_suspend_hold(policy, generation=generation, reason=reason)
-        return self._perform_fast_shutdown(policy, generation=generation, reason=reason)
-
-    def _perform_early_standby_with_suspend_hold(
-        self,
-        policy: StandbyPolicy,
-        *,
-        generation: int | None,
-        reason: str,
-    ) -> tuple[bool, str]:
-        with temporary_system_required_request("KEF Controller early standby") as hold:
-            fields: dict[str, object] = {
-                "step": "system_required_hold",
-                "status": "active" if hold.active else "unavailable",
-                "api": "PowerCreateRequest",
-            }
-            if hold.error:
-                fields["error"] = hold.error
-            self._log_standby(
-                "STEP" if hold.active else "WARN",
-                policy,
-                generation,
-                reason,
-                log_level="info",
-                **fields,
-            )
-            return self._perform_fast_shutdown(policy, generation=generation, reason=reason)
+        return self._perform_fast_shutdown(
+            policy,
+            generation=generation,
+            reason=reason,
+            hold_prewarmed_send=(policy.action == "EARLY_STANDBY"),
+        )
 
     def _execute_verified_standby_policy(
         self,
@@ -420,6 +397,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         *,
         generation: int | None,
         reason: str,
+        hold_prewarmed_send: bool = False,
     ) -> tuple[bool, str]:
         current_ip = self.get_current_kef_ip()
         socket_timeout = float(self._config_value(policy.socket_timeout_field))
@@ -458,6 +436,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
                 host_unreachable_outcome=policy.host_unreachable_outcome,
                 host_unreachable_status=policy.host_unreachable_status,
                 host_unreachable_cause=policy.host_unreachable_cause,
+                hold_prewarmed_send=hold_prewarmed_send,
             )
             if fast_send_result is not None:
                 return _outcome_is_success(fast_send_result), fast_send_result
