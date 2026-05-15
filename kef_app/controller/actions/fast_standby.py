@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from ..fast_standby_sender import FastStandbySender, FastStandbySendResult
 from ...devices.transport import FireAndForgetShutdownResult, fire_and_forget_standby
-from ...platform.windows import temporary_system_required_request
 
 
 _FAST_STANDBY_FIRE_AND_FORGET_ATTEMPTS = 3
@@ -26,68 +23,13 @@ class ControllerFastStandbyMixin:
             join_timeout=_FAST_STANDBY_FIRE_AND_FORGET_JOIN_TIMEOUT,
         )
 
-    def _fire_and_forget_sender(
-        self,
-        *,
-        hold_fire_and_forget: bool,
-        action: str,
-        generation: int | None,
-        reason: str,
-    ) -> Callable[[str], FireAndForgetShutdownResult]:
-        if not hold_fire_and_forget:
-            return self._send_fire_and_forget_shutdown
-        return lambda current_ip: self._send_fire_and_forget_with_system_required_hold(
-            current_ip,
-            action=action,
-            generation=generation,
-            reason=reason,
-        )
-
-    def _send_fire_and_forget_with_system_required_hold(
-        self,
-        current_ip: str,
-        *,
-        action: str,
-        generation: int | None,
-        reason: str,
-    ) -> FireAndForgetShutdownResult:
-        with temporary_system_required_request("KEF Controller early standby") as hold:
-            fields: dict[str, object] = {
-                "action": action,
-                "gen": generation,
-                "reason": reason,
-                "step": "system_required_hold",
-                "status": "active" if hold.active else "unavailable",
-                "api": "PowerCreateRequest",
-                "scope": "fire_and_forget_shutdown",
-                "mono": f"{self.mono():.3f}",
-            }
-            if hold.error:
-                fields["error"] = hold.error
-            self._log_structured(
-                "STEP" if hold.active else "WARN",
-                log_level="info",
-                **fields,
-            )
-            return self._send_fire_and_forget_shutdown(current_ip)
-
     def _send_fast_standby(
         self,
         current_ip: str,
-        *,
-        hold_fire_and_forget: bool = False,
-        action: str = "",
-        generation: int | None = None,
-        reason: str = "",
     ) -> FastStandbySendResult:
         return FastStandbySender(
             self.try_send_prewarmed_standby,
-            self._fire_and_forget_sender(
-                hold_fire_and_forget=hold_fire_and_forget,
-                action=action,
-                generation=generation,
-                reason=reason,
-            ),
+            self._send_fire_and_forget_shutdown,
         ).send(current_ip)
 
     def _log_prewarmed_fast_send(
@@ -204,15 +146,8 @@ class ControllerFastStandbyMixin:
         host_unreachable_outcome: str = "success_assumed_host_unreachable",
         host_unreachable_status: str = "host_unreachable_assumed_standby",
         host_unreachable_cause: str = "fire_and_forget_host_unreachable",
-        hold_fire_and_forget: bool = False,
     ) -> str | None:
-        fast_result = self._send_fast_standby(
-            current_ip,
-            hold_fire_and_forget=hold_fire_and_forget,
-            action=action,
-            generation=generation,
-            reason=reason,
-        )
+        fast_result = self._send_fast_standby(current_ip)
         self._log_prewarmed_fast_send(
             fast_result,
             action=action,

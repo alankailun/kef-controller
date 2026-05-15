@@ -15,7 +15,6 @@ from .api import (
     PBT_POWERSETTINGCHANGE,
     POWER_SETTING_GUIDS,
     RegisterPowerSettingNotification,
-    TemporarySystemRequiredRequest,
     UnregisterPowerSettingNotification,
     WM_POWERBROADCAST,
     WM_WTSSESSION_CHANGE,
@@ -30,7 +29,6 @@ from .api import (
     get_process_image_path,
     get_raw_command_line,
     guess_launch_source,
-    temporary_system_required_request,
 )
 from .startup_registration import (
     REMOVE_TASK_FLAG,
@@ -79,7 +77,6 @@ __all__ = [
     "REPAIR_TASK_FLAG",
     "STARTUP_KEY",
     "TASK_NAME_FLAG",
-    "TemporarySystemRequiredRequest",
     "VALID_STARTUP_MODES",
     "StartupLaunchSpec",
     "UnregisterPowerSettingNotification",
@@ -113,5 +110,4 @@ __all__ = [
     "runtime_launch_spec",
     "set_startup_registered",
     "startup_error_suggests_repair",
-    "temporary_system_required_request",
 ]

@@ -504,7 +504,7 @@ class PowerEventLogicTests(unittest.TestCase):
             )
         )
 
-    def test_preemptive_standby_holds_only_fire_and_forget_fallback(self):
+    def test_preemptive_standby_falls_back_to_fire_and_forget_without_sleep_hold(self):
         controller = self.make_controller(
             kef_ip="192.168.1.10",
             kef_mac="AA:BB:CC:DD:EE:01",
@@ -529,34 +529,13 @@ class PowerEventLogicTests(unittest.TestCase):
         )
         controller._request_shutdown = Mock()
 
-        class FakeHold:
-            active = True
-            error = ""
-
-            def __enter__(self):
-                order.append("hold_enter")
-                return self
-
-            def __exit__(self, _exc_type, _exc, _tb):
-                order.append("hold_exit")
-
-        with patch(
-            "kef_app.controller.actions.fast_standby.temporary_system_required_request",
-            return_value=FakeHold(),
-        ):
-            result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
 
         self.assertTrue(result)
-        self.assertEqual(order, ["prewarmed", "hold_enter", "fire_and_forget", "hold_exit"])
+        self.assertEqual(order, ["prewarmed", "fire_and_forget"])
         controller._request_shutdown.assert_not_called()
-        self.assertTrue(
-            any(
-                call.args[:1] == ("STEP",)
-                and call.kwargs.get("action") == "EARLY_STANDBY"
-                and call.kwargs.get("step") == "system_required_hold"
-                and call.kwargs.get("scope") == "fire_and_forget_shutdown"
-                for call in controller._log_structured.mock_calls
-            )
+        self.assertFalse(
+            any(call.kwargs.get("step") == "system_required_hold" for call in controller._log_structured.mock_calls)
         )
 
     def test_preemptive_standby_short_circuits_prewarmed_host_unreachable(self):
@@ -584,14 +563,12 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown = Mock()
         controller._request_shutdown = Mock()
 
-        with patch("kef_app.controller.actions.fast_standby.temporary_system_required_request") as power_request:
-            result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
 
         self.assertTrue(result)
         controller.try_send_prewarmed_standby.assert_called_once_with("192.168.1.10")
         controller._send_fire_and_forget_shutdown.assert_not_called()
         controller._request_shutdown.assert_not_called()
-        power_request.assert_not_called()
         self.assertFalse(controller._recently_early_standby_ok())
         self.assertTrue(controller._recently_early_standby_host_unreachable())
         controller.log_wifi_diagnostics.assert_called_once_with(

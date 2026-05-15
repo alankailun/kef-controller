@@ -268,7 +268,6 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             policy,
             generation=generation,
             reason=reason,
-            hold_fire_and_forget=(policy.action == "EARLY_STANDBY"),
         )
 
     def _execute_verified_standby_policy(
@@ -412,7 +411,6 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         *,
         generation: int | None,
         reason: str,
-        hold_fire_and_forget: bool = False,
     ) -> tuple[bool, str]:
         current_ip = self.get_current_kef_ip()
         socket_timeout = float(self._config_value(policy.socket_timeout_field))
@@ -451,7 +449,6 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
                 host_unreachable_outcome=policy.host_unreachable_outcome,
                 host_unreachable_status=policy.host_unreachable_status,
                 host_unreachable_cause=policy.host_unreachable_cause,
-                hold_fire_and_forget=hold_fire_and_forget,
             )
             if fast_send_result is not None:
                 return _outcome_is_success(fast_send_result), fast_send_result
