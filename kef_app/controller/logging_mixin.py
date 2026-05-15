@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Optional
 
 _SLEEP_CROSSING_MIN_DURATION_S = 5.0
+_NETWORK_INTERFACE_DEDUP_WINDOW_S = 0.2
 
 
 def _get_pykefcontrol_version() -> str:
@@ -181,15 +183,7 @@ class ControllerLoggingMixin:
 
     def log_power_event(self, name: str, wparam: int, lparam: int):
         event_mono = self.mono()
-        with self._state_lock:
-            self._last_windows_event_name = name
-            self._last_windows_event_mono = event_mono
-            if name == "PBT_APMSUSPEND":
-                self._system_sleep_pending = True
-                self._last_system_suspend_mono = event_mono
-            elif name in {"PBT_APMRESUMESUSPEND", "PBT_APMRESUMEAUTOMATIC"}:
-                self._last_system_resume_mono = event_mono
-                self._system_sleep_pending = False
+        self._record_power_event_state(name, event_mono)
 
         self._log_structured(
             "EVENT",
@@ -199,6 +193,17 @@ class ControllerLoggingMixin:
             lparam=f"0x{lparam:016X}",
             mono=f"{event_mono:.3f}",
         )
+
+    def _record_power_event_state(self, name: str, event_mono: float) -> None:
+        with self._state_lock:
+            self._last_windows_event_name = name
+            self._last_windows_event_mono = event_mono
+            if name == "PBT_APMSUSPEND":
+                self._system_sleep_pending = True
+                self._last_system_suspend_mono = event_mono
+            elif name in {"PBT_APMRESUMESUSPEND", "PBT_APMRESUMEAUTOMATIC"}:
+                self._last_system_resume_mono = event_mono
+                self._system_sleep_pending = False
 
     def log_power_setting_event(self, change, wparam: int, lparam: int):
         event_mono = self.mono()
@@ -221,10 +226,15 @@ class ControllerLoggingMixin:
 
     def log_session_event(self, name: str, wparam: int, lparam: int):
         event_mono = self.mono()
+        self._record_session_event_state(name, event_mono)
+        self._log_session_event_line(name, wparam, lparam, event_mono)
+
+    def _record_session_event_state(self, name: str, event_mono: float) -> None:
         with self._state_lock:
             self._last_windows_event_name = name
             self._last_windows_event_mono = event_mono
 
+    def _log_session_event_line(self, name: str, wparam: int, lparam: int, event_mono: float) -> None:
         self._log_structured(
             "EVENT",
             kind="SESSION",
@@ -235,24 +245,139 @@ class ControllerLoggingMixin:
         )
 
     def log_network_interface_event(self, event):
+        event_mono = self.mono()
+        notification = getattr(event, "notification", "<unknown>")
+        interface = getattr(event, "interface_alias", "<unknown>")
+        interface_index = getattr(event, "interface_index", "<unknown>")
+        connected = getattr(event, "connected", None)
+        if_state = "up" if connected is True else "down" if connected is False else "<unknown>"
+        family = getattr(event, "family", "<unknown>")
+        metric = getattr(event, "metric", "<unknown>")
+        nl_mtu = getattr(event, "nl_mtu", "<unknown>")
+        target_ip = self.get_current_kef_ip() or "<empty>"
+        if self._should_suppress_network_interface_event(
+            notification=notification,
+            interface=interface,
+            interface_index=interface_index,
+            if_state=if_state,
+            family=family,
+            metric=metric,
+            nl_mtu=nl_mtu,
+            target_ip=target_ip,
+            event_mono=event_mono,
+        ):
+            return
+
         self._log_structured(
             "EVENT",
             log_level="info",
             kind="NETWORK",
             name="INTERFACE_CHANGE",
-            notification=getattr(event, "notification", "<unknown>"),
-            interface=getattr(event, "interface_alias", "<unknown>"),
-            interface_index=getattr(event, "interface_index", "<unknown>"),
-            if_state=(
-                "up"
-                if getattr(event, "connected", None) is True
-                else "down"
-                if getattr(event, "connected", None) is False
-                else "<unknown>"
-            ),
-            family=getattr(event, "family", "<unknown>"),
-            metric=getattr(event, "metric", "<unknown>"),
-            nl_mtu=getattr(event, "nl_mtu", "<unknown>"),
-            target_ip=self.get_current_kef_ip() or "<empty>",
+            notification=notification,
+            interface=interface,
+            interface_index=interface_index,
+            if_state=if_state,
+            family=family,
+            metric=metric,
+            nl_mtu=nl_mtu,
+            target_ip=target_ip,
+            mono=f"{event_mono:.3f}",
+        )
+
+    def _should_suppress_network_interface_event(
+        self,
+        *,
+        notification: object,
+        interface: object,
+        interface_index: object,
+        if_state: str,
+        family: object,
+        metric: object,
+        nl_mtu: object,
+        target_ip: str,
+        event_mono: float,
+    ) -> bool:
+        if str(notification) != "ParameterNotification":
+            return False
+
+        key = (str(notification), str(interface_index), str(interface), if_state)
+        summary: dict[str, object] = {
+            "notification": notification,
+            "interface": interface,
+            "interface_index": interface_index,
+            "if_state": if_state,
+            "families": {str(family)},
+            "metric": metric,
+            "nl_mtu": nl_mtu,
+            "target_ip": target_ip,
+            "first_mono": event_mono,
+            "last_mono": event_mono,
+            "repeats": 0,
+        }
+
+        expired_summary = None
+        with self._state_lock:
+            existing = self._network_interface_dedup.get(key)
+            if existing is not None and event_mono - float(existing["first_mono"]) <= _NETWORK_INTERFACE_DEDUP_WINDOW_S:
+                existing["last_mono"] = event_mono
+                existing["repeats"] = int(existing["repeats"]) + 1
+                families = existing.get("families")
+                if isinstance(families, set):
+                    families.add(str(family))
+                return True
+
+            expired_summary = existing
+            self._network_interface_dedup[key] = summary
+
+        if expired_summary is not None:
+            self._log_network_interface_dedup_summary(expired_summary)
+
+        timer = threading.Timer(
+            _NETWORK_INTERFACE_DEDUP_WINDOW_S + 0.05,
+            self._flush_network_interface_dedup,
+            args=(key, event_mono),
+        )
+        timer.daemon = True
+        timer.start()
+        return False
+
+    def _flush_network_interface_dedup(self, key, first_mono: float) -> None:
+        with self._state_lock:
+            summary = self._network_interface_dedup.get(key)
+            if summary is not None and float(summary.get("first_mono") or 0.0) == first_mono:
+                self._network_interface_dedup.pop(key, None)
+            else:
+                summary = None
+
+        if not summary:
+            return
+        self._log_network_interface_dedup_summary(summary)
+
+    def _log_network_interface_dedup_summary(self, summary: dict[str, object]) -> None:
+        repeats = int(summary.get("repeats") or 0)
+        if repeats <= 0:
+            return
+
+        first_mono = float(summary.get("first_mono") or 0.0)
+        last_mono = float(summary.get("last_mono") or first_mono)
+        families = summary.get("families")
+        if isinstance(families, set):
+            family_text = ",".join(sorted(families))
+        else:
+            family_text = "<unknown>"
+
+        self._log_structured(
+            "EVENT",
+            log_level="info",
+            kind="NETWORK",
+            name="INTERFACE_CHANGE_DEDUP",
+            notification=summary.get("notification", "<unknown>"),
+            interface=summary.get("interface", "<unknown>"),
+            interface_index=summary.get("interface_index", "<unknown>"),
+            if_state=summary.get("if_state", "<unknown>"),
+            families=family_text,
+            repeats=repeats,
+            window_ms=int(max(0.0, last_mono - first_mono) * 1000),
+            target_ip=summary.get("target_ip", "<empty>"),
             mono=f"{self.mono():.3f}",
         )

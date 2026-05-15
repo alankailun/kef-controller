@@ -78,6 +78,55 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertTrue(PREEMPTIVE_STANDBY_POLICY.mark_early_standby_success)
         self.assertTrue(PREEMPTIVE_STANDBY_POLICY.host_unreachable_is_success)
         self.assertEqual(FAST_SUSPEND_STANDBY_POLICY.host_unreachable_outcome, "success_best_effort_host_unreachable")
+
+    def test_network_parameter_notifications_are_deduped_with_summary(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        controller._log_structured = Mock()
+
+        first = controller._should_suppress_network_interface_event(
+            notification="ParameterNotification",
+            interface="Ethernet",
+            interface_index=11,
+            if_state="down",
+            family=2,
+            metric=0,
+            nl_mtu=0,
+            target_ip="192.168.1.10",
+            event_mono=100.0,
+        )
+        second = controller._should_suppress_network_interface_event(
+            notification="ParameterNotification",
+            interface="Ethernet",
+            interface_index=11,
+            if_state="down",
+            family=23,
+            metric=0,
+            nl_mtu=0,
+            target_ip="192.168.1.10",
+            event_mono=100.1,
+        )
+
+        self.assertFalse(first)
+        self.assertTrue(second)
+        controller._flush_network_interface_dedup(("ParameterNotification", "11", "Ethernet", "down"), 100.0)
+        self.assertTrue(
+            any(
+                call.args[:1] == ("EVENT",)
+                and call.kwargs.get("name") == "INTERFACE_CHANGE_DEDUP"
+                and call.kwargs.get("repeats") == 1
+                and call.kwargs.get("families") == "2,23"
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
+    def test_event_monitor_records_restart_request_while_stopping(self):
+        controller = self.make_controller(home_event_poll_enabled=True)
+        with controller._speaker_event_monitor_lock:
+            controller._speaker_event_monitor_running = True
+            controller._speaker_event_monitor_stop.set()
+
+        self.assertFalse(controller.start_speaker_event_monitor("PBT_APMRESUMEAUTOMATIC"))
+        self.assertEqual(controller._finish_speaker_event_monitor(), "PBT_APMRESUMEAUTOMATIC")
         self.assertEqual(STANDARD_STANDBY_POLICY.mode, "verified_request")
         self.assertEqual(ENDSESSION_STANDBY_POLICY.mode, "end_session")
 

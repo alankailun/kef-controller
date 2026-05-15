@@ -77,6 +77,7 @@ class KefPowerController(
         self._mac_discovery_miss_count = 0
         self._last_mac_discovery_scanned_miss = False
         self._speaker_event_monitor_running = False
+        self._speaker_event_monitor_restart_reason: str | None = None
         self._prewarmed_standby_running = False
         self._prewarmed_standby_last_ip = ""
         self._prewarmed_standby_last_ok_mono = 0.0
@@ -98,6 +99,7 @@ class KefPowerController(
         self._system_sleep_pending = False
         self._last_system_suspend_mono = 0.0
         self._last_system_resume_mono = 0.0
+        self._network_interface_dedup: dict[tuple[str, str, str, str], dict[str, Any]] = {}
 
     def add_event_listener(self, listener: Callable[[str, dict[str, Any]], None]) -> None:
         with self._event_listener_lock:

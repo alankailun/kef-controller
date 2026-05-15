@@ -166,8 +166,11 @@ class ControllerDeviceControlsMixin:
 
         with self._speaker_event_monitor_lock:
             if self._speaker_event_monitor_running:
+                if self._speaker_event_monitor_stop.is_set():
+                    self._speaker_event_monitor_restart_reason = reason
                 return False
             self._speaker_event_monitor_running = True
+            self._speaker_event_monitor_restart_reason = None
             self._speaker_event_monitor_stop.clear()
 
         def run() -> None:
@@ -180,9 +183,21 @@ class ControllerDeviceControlsMixin:
     def stop_speaker_event_monitor(self) -> None:
         self._speaker_event_monitor_stop.set()
 
-    def _finish_speaker_event_monitor(self) -> None:
+    def _finish_speaker_event_monitor(self) -> str | None:
         with self._speaker_event_monitor_lock:
             self._speaker_event_monitor_running = False
+            restart_reason = self._speaker_event_monitor_restart_reason
+            self._speaker_event_monitor_restart_reason = None
+            return restart_reason
+
+    def _speaker_event_monitor_pause_cause(self) -> str:
+        with self._state_lock:
+            if self._system_sleep_pending:
+                return "system_sleep_pending"
+        with self._prewarmed_standby_lock:
+            if self._prewarmed_standby_failures > 0:
+                return "prewarmed_standby_unavailable"
+        return ""
 
     def _run_speaker_event_monitor(self, reason: str) -> None:
         self._log_structured(
@@ -207,6 +222,11 @@ class ControllerDeviceControlsMixin:
                         return
                     continue
 
+                if self._speaker_event_monitor_pause_cause():
+                    if self._speaker_event_monitor_stop.wait(_EVENT_MONITOR_RETRY_DELAY_S):
+                        return
+                    continue
+
                 if not self.get_current_kef_ip():
                     if self._speaker_event_monitor_stop.wait(_EVENT_MONITOR_RETRY_DELAY_S):
                         return
@@ -224,7 +244,7 @@ class ControllerDeviceControlsMixin:
                 if self._speaker_event_monitor_stop.wait(delay):
                     return
         finally:
-            self._finish_speaker_event_monitor()
+            restart_reason = self._finish_speaker_event_monitor()
             self._log_structured(
                 "STEP",
                 log_level="info",
@@ -234,6 +254,8 @@ class ControllerDeviceControlsMixin:
                 status="stopped",
                 mono=f"{self.mono():.3f}",
             )
+            if restart_reason and self.config.home_event_poll_enabled:
+                self.start_speaker_event_monitor(restart_reason)
 
     def poll_external_ui_state(self, reason: str, trigger: str) -> tuple[Optional[str], Optional[int], Optional[bool]]:
         if not self.get_current_kef_ip():
@@ -317,6 +339,20 @@ class ControllerDeviceControlsMixin:
                 speaker = self.get_speaker(fresh=False)
                 events = speaker.poll_speaker(timeout=max(1, int(timeout)))
         except Exception as exc:
+            pause_cause = "monitor_stopping" if self._speaker_event_monitor_stop.is_set() else self._speaker_event_monitor_pause_cause()
+            if pause_cause:
+                self._log_structured(
+                    "STEP",
+                    action="POLL_SPEAKER_EVENTS",
+                    reason=reason,
+                    trigger=trigger,
+                    status="paused_failure_suppressed",
+                    cause=pause_cause,
+                    error=repr(exc),
+                    mono=f"{self.mono():.3f}",
+                )
+                return None, None, None
+
             unreachable = is_host_unreachable(exc)
             failures, threshold, recovered = self._record_speaker_event_poll_failure(
                 reason=reason,

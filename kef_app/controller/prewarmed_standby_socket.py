@@ -24,6 +24,7 @@ class PrewarmedStandbySendResult:
     error: str = ""
     frozen_s: str = ""
     host_unreachable: bool = False
+    so_error: int | None = None
 
 
 class PrewarmedSocketHolder:
@@ -315,6 +316,7 @@ class PrewarmedStandbySocketMonitorMixin:
         request = build_standby_request_bytes(current_ip)
         started = self.mono()
         sock = None
+        so_error: int | None = None
         mode = "persistent_socket" if self.config.prewarmed_persist_socket else "short_connection"
         with self._state_lock:
             event_name = self._last_windows_event_name
@@ -347,21 +349,30 @@ class PrewarmedStandbySocketMonitorMixin:
 
             sock.settimeout(deadline_s)
             sock.sendall(request)
+            so_error = int(sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR))
+            if so_error != 0:
+                raise OSError(so_error, "socket SO_ERROR was non-zero after standby send")
             try:
                 sock.shutdown(socket.SHUT_WR)
             except OSError:
                 pass
         except OSError as exc:
             duration_ms = int(max(0.0, self.mono() - started) * 1000)
+            status = (
+                f"so_error_after_send:{so_error}"
+                if so_error not in {None, 0}
+                else f"send_failed:{type(exc).__name__}"
+            )
             return PrewarmedStandbySendResult(
                 True,
                 False,
-                f"send_failed:{type(exc).__name__}",
+                status,
                 duration_ms=duration_ms,
                 target_ip=current_ip,
                 mode=mode,
                 error=repr(exc),
                 host_unreachable=is_host_unreachable(exc),
+                so_error=so_error,
             )
         finally:
             _close_socket(sock)
@@ -386,4 +397,5 @@ class PrewarmedStandbySocketMonitorMixin:
             duration_ms=duration_ms,
             target_ip=current_ip,
             mode=mode,
+            so_error=0,
         )

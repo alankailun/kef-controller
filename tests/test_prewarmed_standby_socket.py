@@ -115,6 +115,7 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
                 samples_ms.append((time.perf_counter() - started) * 1000.0)
                 self.assertTrue(result.success, result)
                 self.assertEqual(result.status, "sent")
+                self.assertEqual(result.so_error, 0)
 
             deadline = time.monotonic() + 1.0
             expected_requests = runs + 1

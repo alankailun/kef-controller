@@ -123,6 +123,8 @@ class ControllerFastStandbyMixin:
             fields.update(extra_fields)
         if prewarmed_result.error:
             fields["error"] = prewarmed_result.error
+        if prewarmed_result.so_error is not None:
+            fields["so_error"] = prewarmed_result.so_error
         if prewarmed_result.frozen_s:
             fields["cause"] = "prewarmed_send_deadline_exceeded"
             fields["frozen_s"] = prewarmed_result.frozen_s

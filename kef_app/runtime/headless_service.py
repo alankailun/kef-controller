@@ -273,6 +273,7 @@ class HeadlessRuntime:
                         return True
 
                     if wparam == PBT_APMSUSPEND:
+                        self.controller.stop_speaker_event_monitor()
                         self.controller.stop_prewarmed_standby_socket_monitor()
                         self.controller.log_power_event("PBT_APMSUSPEND", wparam, lparam)
                         self.controller.on_suspend("PBT_APMSUSPEND")
@@ -280,11 +281,13 @@ class HeadlessRuntime:
                     if wparam == PBT_APMRESUMEAUTOMATIC:
                         self.controller.log_power_event("PBT_APMRESUMEAUTOMATIC", wparam, lparam)
                         self.controller.start_prewarmed_standby_socket_monitor("PBT_APMRESUMEAUTOMATIC")
+                        self.controller.start_speaker_event_monitor("PBT_APMRESUMEAUTOMATIC")
                         self.controller.on_resume("PBT_APMRESUMEAUTOMATIC")
                         return True
                     if wparam == PBT_APMRESUMESUSPEND:
                         self.controller.log_power_event("PBT_APMRESUMESUSPEND", wparam, lparam)
                         self.controller.start_prewarmed_standby_socket_monitor("PBT_APMRESUMESUSPEND")
+                        self.controller.start_speaker_event_monitor("PBT_APMRESUMESUSPEND")
                         self.controller.on_resume("PBT_APMRESUMESUSPEND")
                         return True
                     self.controller.log_power_event("WM_POWERBROADCAST_OTHER", wparam, lparam)
@@ -293,6 +296,10 @@ class HeadlessRuntime:
                 if msg == WM_WTSSESSION_CHANGE:
                     if wparam == WTS_SESSION_LOCK:
                         msg_entry_mono = self.controller.mono()
+                        self.controller._record_session_event_state("WTS_SESSION_LOCK", msg_entry_mono)
+                        state_recorded_mono = self.controller.mono()
+                        self.controller.on_lock("WTS_SESSION_LOCK")
+                        after_on_lock_mono = self.controller.mono()
                         self.controller._log_structured(
                             "EVENT",
                             log_level="info",
@@ -300,20 +307,24 @@ class HeadlessRuntime:
                             name="WTS_SESSION_LOCK_MSG_ENTRY",
                             wparam=f"0x{wparam:04X}",
                             session=lparam,
+                            deferred=True,
                             mono=f"{msg_entry_mono:.3f}",
                         )
-                        self.controller.log_session_event("WTS_SESSION_LOCK", wparam, lparam)
-                        after_log_mono = self.controller.mono()
+                        self.controller._log_session_event_line("WTS_SESSION_LOCK", wparam, lparam, msg_entry_mono)
+                        after_deferred_log_mono = self.controller.mono()
                         self.controller._log_structured(
                             "STEP",
                             log_level="info",
                             action="WINDOW_MESSAGE",
                             reason="WTS_SESSION_LOCK",
-                            step="session_event_logged",
-                            duration_ms=int(max(0.0, after_log_mono - msg_entry_mono) * 1000),
-                            mono=f"{after_log_mono:.3f}",
+                            step="lock_fast_path",
+                            state_recorded_ms=int(max(0.0, state_recorded_mono - msg_entry_mono) * 1000),
+                            before_on_lock_ms=int(max(0.0, state_recorded_mono - msg_entry_mono) * 1000),
+                            after_on_lock_ms=int(max(0.0, after_on_lock_mono - msg_entry_mono) * 1000),
+                            on_lock_duration_ms=int(max(0.0, after_on_lock_mono - state_recorded_mono) * 1000),
+                            deferred_logging_ms=int(max(0.0, after_deferred_log_mono - after_on_lock_mono) * 1000),
+                            mono=f"{after_deferred_log_mono:.3f}",
                         )
-                        self.controller.on_lock("WTS_SESSION_LOCK")
                         return 0
                     if wparam == WTS_SESSION_UNLOCK:
                         self.controller.log_session_event("WTS_SESSION_UNLOCK", wparam, lparam)
