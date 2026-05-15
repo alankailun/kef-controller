@@ -316,6 +316,22 @@ class PrewarmedStandbySocketMonitorMixin:
         started = self.mono()
         sock = None
         mode = "persistent_socket" if self.config.prewarmed_persist_socket else "short_connection"
+        with self._state_lock:
+            event_name = self._last_windows_event_name
+            event_mono = float(self._last_windows_event_mono or 0.0)
+        fields: dict[str, object] = {
+            "action": "PREWARMED_STANDBY_SOCKET",
+            "reason": event_name or "fast_standby",
+            "step": "send_enter",
+            "target_ip": current_ip,
+            "mode": mode,
+            "deadline_s": f"{deadline_s:.2f}",
+            "mono": f"{started:.3f}",
+        }
+        if event_mono > 0:
+            fields["since_windows_event_ms"] = int(max(0.0, started - event_mono) * 1000)
+        self._log_structured("STEP", log_level="info", **fields)
+
         try:
             if self.config.prewarmed_persist_socket:
                 sock = self._take_prewarmed_socket_holder(current_ip)

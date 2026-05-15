@@ -237,5 +237,14 @@ class ControllerFastStandbyMixin:
         if fast_result.success:
             return "success_prewarmed_send" if fast_result.source == "prewarmed" else success_outcome
         if fast_result.host_unreachable:
+            if mark_early_standby_success:
+                self._mark_early_standby_host_unreachable()
+                if action == "EARLY_STANDBY":
+                    self.log_wifi_diagnostics(
+                        reason=reason,
+                        trigger="early_standby_host_unreachable",
+                        fresh=True,
+                        timeout=0.15,
+                    )
             return host_unreachable_outcome
         return None

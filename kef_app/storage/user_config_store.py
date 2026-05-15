@@ -30,6 +30,12 @@ _CONFIGURABLE_INPUT_SOURCES = {value for _, value in INPUT_SOURCE_OPTIONS}
 # Added 2026-05. Safe to remove after 2026-11 once released installs have auto-rewritten config.json.
 _LEGACY_MAC_DISCOVERY_PROBE_TIMEOUT = 0.20
 _DEFAULT_MAC_DISCOVERY_PROBE_TIMEOUT = 0.50
+_LEGACY_PREWARMED_PERSIST_SOCKET = False
+_LEGACY_PREWARMED_KEEPALIVE_INTERVAL_S = 20.0
+_DEFAULT_PREWARMED_PERSIST_SOCKET = True
+_DEFAULT_PREWARMED_KEEPALIVE_INTERVAL_S = 5.0
+
+
 def _coerce_string(value: Any) -> str:
     return str(value or "")
 
@@ -196,6 +202,8 @@ class UserConfigStore:
             migrated = False
             if self._migrate_legacy_probe_timeout(loaded, data):
                 migrated = True
+            if self._migrate_legacy_prewarmed_standby_tuning(loaded, data):
+                migrated = True
             if migrated:
                 self.save(loaded)
             if "log_dir" in data:
@@ -280,6 +288,35 @@ class UserConfigStore:
         config.mac_discovery_probe_timeout = _DEFAULT_MAC_DISCOVERY_PROBE_TIMEOUT
         self._startup_messages.append(
             "Raised legacy MAC discovery probe timeout from 0.20s to 0.50s"
+        )
+        return True
+
+    def _migrate_legacy_prewarmed_standby_tuning(self, config: AppConfig, data: dict[str, Any]) -> bool:
+        raw_persist_socket = self._raw_user_value(data, "prewarmed_persist_socket")
+        raw_keepalive_interval = self._raw_user_value(data, "prewarmed_keepalive_interval_s")
+        if raw_persist_socket is None or raw_keepalive_interval is None:
+            return False
+
+        try:
+            persist_socket = self._coerce_bool(raw_persist_socket)
+            keepalive_interval = float(raw_keepalive_interval)
+        except Exception:
+            return False
+
+        if persist_socket != _LEGACY_PREWARMED_PERSIST_SOCKET:
+            return False
+        if not math.isclose(
+            keepalive_interval,
+            _LEGACY_PREWARMED_KEEPALIVE_INTERVAL_S,
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        ):
+            return False
+
+        config.prewarmed_persist_socket = _DEFAULT_PREWARMED_PERSIST_SOCKET
+        config.prewarmed_keepalive_interval_s = _DEFAULT_PREWARMED_KEEPALIVE_INTERVAL_S
+        self._startup_messages.append(
+            "Raised legacy prewarmed standby tuning to persistent sockets with a 5.0s keepalive interval"
         )
         return True
 

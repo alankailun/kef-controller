@@ -376,12 +376,19 @@ class ControllerDeviceControlsMixin:
         )
         return input_source, volume, speaker_on
 
-    def log_wifi_diagnostics(self, reason: str, trigger: str, *, fresh: bool = False) -> dict[str, object]:
+    def log_wifi_diagnostics(
+        self,
+        reason: str,
+        trigger: str,
+        *,
+        fresh: bool = False,
+        timeout: float | None = None,
+    ) -> dict[str, object]:
         if not self.get_current_kef_ip():
             return {}
 
         try:
-            with temporary_socket_timeout(self.config.socket_timeout):
+            with temporary_socket_timeout(float(timeout if timeout is not None else self.config.socket_timeout)):
                 speaker = self.get_speaker(fresh=fresh)
                 info = speaker.get_wifi_information()
         except Exception as exc:

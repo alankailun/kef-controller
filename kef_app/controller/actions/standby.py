@@ -51,10 +51,10 @@ PREEMPTIVE_STANDBY_POLICY = StandbyPolicy(
     socket_timeout_field="suspend_fast_standby_socket_timeout",
     success_outcome="success",
     failed_outcome="failed",
-    host_unreachable_outcome="failed_local_network_unavailable",
+    host_unreachable_outcome="success_best_effort_local_network_unavailable",
     host_unreachable_status="local_network_unavailable_before_suspend",
     host_unreachable_cause="local_route_unavailable_before_suspend",
-    host_unreachable_is_success=False,
+    host_unreachable_is_success=True,
     fire_and_forget=True,
     fire_and_forget_outcome="success_fire_and_forget",
     mark_early_standby_success=True,
@@ -155,6 +155,21 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         reason: str,
     ) -> tuple[bool, str]:
         if not policy.skip_if_recent_early_standby or not self._recently_early_standby_ok():
+            if (
+                policy.skip_if_recent_early_standby
+                and policy.action == "STANDBY"
+                and self._recently_early_standby_host_unreachable()
+            ):
+                outcome = "success_best_effort_inherited_local_network_unavailable"
+                self._log_standby(
+                    "SKIP",
+                    policy,
+                    generation,
+                    reason,
+                    cause="recent_early_standby_local_network_unavailable",
+                    window_s=f"{self.config.early_standby_dedup_window:.2f}",
+                )
+                return True, outcome
             return False, ""
         outcome = "skipped_recent_early_standby_ok"
         self._log_standby(
@@ -514,7 +529,17 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
 
             if is_host_unreachable(exc):
                 if policy.host_unreachable_is_success and policy.mark_early_standby_success:
-                    self._mark_early_standby_success()
+                    if policy.host_unreachable_outcome == "success_best_effort_local_network_unavailable":
+                        self._mark_early_standby_host_unreachable()
+                    else:
+                        self._mark_early_standby_success()
+                if policy.action == "EARLY_STANDBY":
+                    self.log_wifi_diagnostics(
+                        reason=reason,
+                        trigger="early_standby_host_unreachable",
+                        fresh=True,
+                        timeout=0.15,
+                    )
                 outcome = policy.host_unreachable_outcome
                 fields = {
                     "step": policy.success_step,

@@ -450,12 +450,19 @@ class HomeInterface(QWidget):
         self._active_power_actions += 1
         self._set_working(True)
 
-    def _on_power_action_finished(self, action: str, _reason: str, success: bool, _outcome: str) -> None:
+    def _on_power_action_finished(self, action: str, _reason: str, success: bool, outcome: str) -> None:
         self._active_power_actions = max(0, self._active_power_actions - 1)
         if success:
             if action == "WAKE":
                 self._power_on_hint = True
-            elif action in {"STANDBY", "EARLY_STANDBY", "ENDSESSION_STANDBY"}:
+            elif (
+                action in {"STANDBY", "EARLY_STANDBY", "ENDSESSION_STANDBY"}
+                and outcome
+                not in {
+                    "success_best_effort_local_network_unavailable",
+                    "success_best_effort_inherited_local_network_unavailable",
+                }
+            ):
                 self._power_on_hint = False
         self._set_working(self._active_power_actions > 0)
         if success and action == "WAKE":

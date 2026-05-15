@@ -6,14 +6,18 @@ import sys
 import uuid
 from ctypes import wintypes
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 MB_ICONINFORMATION = 0x40
 ERROR_ALREADY_EXISTS = 183
+ERROR_SUCCESS = 0
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 POWER_REQUEST_CONTEXT_VERSION = 0
 POWER_REQUEST_CONTEXT_SIMPLE_STRING = 0x1
 PowerRequestSystemRequired = 1
+AF_UNSPEC = 0
+SCOPE_LEVEL_COUNT = 16
+IF_MAX_STRING_SIZE = 256
 
 WM_POWERBROADCAST = 0x0218
 PBT_APMSUSPEND = 0x0004
@@ -90,6 +94,139 @@ PowerSetRequest.restype = wintypes.BOOL
 PowerClearRequest = kernel32.PowerClearRequest
 PowerClearRequest.argtypes = [wintypes.HANDLE, ctypes.c_int]
 PowerClearRequest.restype = wintypes.BOOL
+
+iphlpapi = ctypes.WinDLL("Iphlpapi", use_last_error=True)
+
+
+class MIB_IPINTERFACE_ROW_PREFIX(ctypes.Structure):
+    _fields_ = [
+        ("Family", wintypes.USHORT),
+        ("InterfaceLuid", ctypes.c_ulonglong),
+        ("InterfaceIndex", wintypes.ULONG),
+        ("MaxReassemblySize", wintypes.ULONG),
+        ("InterfaceIdentifier", ctypes.c_ulonglong),
+        ("MinRouterAdvertisementInterval", wintypes.ULONG),
+        ("MaxRouterAdvertisementInterval", wintypes.ULONG),
+        ("AdvertisingEnabled", ctypes.c_ubyte),
+        ("ForwardingEnabled", ctypes.c_ubyte),
+        ("WeakHostSend", ctypes.c_ubyte),
+        ("WeakHostReceive", ctypes.c_ubyte),
+        ("UseAutomaticMetric", ctypes.c_ubyte),
+        ("UseNeighborUnreachabilityDetection", ctypes.c_ubyte),
+        ("ManagedAddressConfigurationSupported", ctypes.c_ubyte),
+        ("OtherStatefulConfigurationSupported", ctypes.c_ubyte),
+        ("AdvertiseDefaultRoute", ctypes.c_ubyte),
+        ("RouterDiscoveryBehavior", ctypes.c_int),
+        ("DadTransmits", wintypes.ULONG),
+        ("BaseReachableTime", wintypes.ULONG),
+        ("RetransmitTime", wintypes.ULONG),
+        ("PathMtuDiscoveryTimeout", wintypes.ULONG),
+        ("LinkLocalAddressBehavior", ctypes.c_int),
+        ("LinkLocalAddressTimeout", wintypes.ULONG),
+        ("ZoneIndices", wintypes.ULONG * SCOPE_LEVEL_COUNT),
+        ("SitePrefixLength", wintypes.ULONG),
+        ("Metric", wintypes.ULONG),
+        ("NlMtu", wintypes.ULONG),
+        ("Connected", ctypes.c_ubyte),
+    ]
+
+
+_IP_INTERFACE_CHANGE_CALLBACK = ctypes.WINFUNCTYPE(
+    None,
+    wintypes.LPVOID,
+    ctypes.POINTER(MIB_IPINTERFACE_ROW_PREFIX),
+    ctypes.c_int,
+)
+
+NotifyIpInterfaceChange = iphlpapi.NotifyIpInterfaceChange
+NotifyIpInterfaceChange.argtypes = [
+    wintypes.USHORT,
+    _IP_INTERFACE_CHANGE_CALLBACK,
+    wintypes.LPVOID,
+    ctypes.c_ubyte,
+    ctypes.POINTER(wintypes.HANDLE),
+]
+NotifyIpInterfaceChange.restype = wintypes.DWORD
+
+CancelMibChangeNotify2 = iphlpapi.CancelMibChangeNotify2
+CancelMibChangeNotify2.argtypes = [wintypes.HANDLE]
+CancelMibChangeNotify2.restype = wintypes.DWORD
+
+ConvertInterfaceLuidToAlias = iphlpapi.ConvertInterfaceLuidToAlias
+ConvertInterfaceLuidToAlias.argtypes = [ctypes.POINTER(ctypes.c_ulonglong), wintypes.LPWSTR, ctypes.c_size_t]
+ConvertInterfaceLuidToAlias.restype = wintypes.DWORD
+
+_IP_INTERFACE_NOTIFICATION_TYPES = {
+    0: "ParameterNotification",
+    1: "AddInstance",
+    2: "DeleteInstance",
+    3: "InitialNotification",
+}
+
+
+@dataclass(frozen=True)
+class IpInterfaceChangeEvent:
+    notification: str
+    notification_type: int
+    family: int | None
+    interface_index: int | None
+    interface_alias: str
+    connected: bool | None
+    metric: int | None
+    nl_mtu: int | None
+
+
+def _interface_alias_from_luid(interface_luid: int) -> str:
+    buffer = ctypes.create_unicode_buffer(IF_MAX_STRING_SIZE + 1)
+    luid = ctypes.c_ulonglong(interface_luid)
+    status = ConvertInterfaceLuidToAlias(ctypes.byref(luid), buffer, len(buffer))
+    if status != ERROR_SUCCESS:
+        return f"<alias_unavailable:{status}>"
+    return buffer.value or "<empty>"
+
+
+class IpInterfaceChangeMonitor:
+    def __init__(self, callback: Callable[[IpInterfaceChangeEvent], None]):
+        self.callback = callback
+        self.handle = wintypes.HANDLE()
+        self._callback = _IP_INTERFACE_CHANGE_CALLBACK(self._handle_change)
+        self.active = False
+        self.error = ""
+
+    def start(self) -> "IpInterfaceChangeMonitor":
+        status = NotifyIpInterfaceChange(AF_UNSPEC, self._callback, None, False, ctypes.byref(self.handle))
+        if status != ERROR_SUCCESS:
+            self.error = f"NotifyIpInterfaceChange failed: {status}"
+            return self
+        self.active = True
+        return self
+
+    def close(self) -> None:
+        if not self.active or not self.handle:
+            return
+        try:
+            CancelMibChangeNotify2(self.handle)
+        finally:
+            self.active = False
+            self.handle = wintypes.HANDLE()
+
+    def _handle_change(self, _context, row_ptr, notification_type: int) -> None:
+        try:
+            row = row_ptr.contents if row_ptr else None
+            interface_alias = _interface_alias_from_luid(int(row.InterfaceLuid)) if row else "<unknown>"
+            event = IpInterfaceChangeEvent(
+                notification=_IP_INTERFACE_NOTIFICATION_TYPES.get(notification_type, str(notification_type)),
+                notification_type=int(notification_type),
+                family=int(row.Family) if row else None,
+                interface_index=int(row.InterfaceIndex) if row else None,
+                interface_alias=interface_alias,
+                connected=bool(row.Connected) if row else None,
+                metric=int(row.Metric) if row else None,
+                nl_mtu=int(row.NlMtu) if row else None,
+            )
+            self.callback(event)
+        except Exception:
+            return
 
 
 class TemporarySystemRequiredRequest:

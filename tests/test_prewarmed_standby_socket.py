@@ -105,7 +105,7 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         samples_ms: list[float] = []
         runs = 20
         with _LoopbackHttpSpeaker() as speaker:
-            controller = self.make_controller(speaker.port)
+            controller = self.make_controller(speaker.port, prewarmed_persist_socket=False)
             controller._probe_prewarmed_keepalive("127.0.0.1")
             controller._record_prewarmed_keepalive_success("unit_test", "127.0.0.1", 1)
 

@@ -17,6 +17,7 @@ from ..config import AppConfig
 from ..controller import KefPowerController
 from ..platform.windows import (
     DEVICE_NOTIFY_WINDOW_HANDLE,
+    IpInterfaceChangeMonitor,
     LID_CLOSED,
     NOTIFY_FOR_THIS_SESSION,
     PBT_APMSUSPEND,
@@ -140,12 +141,13 @@ class HeadlessRuntime:
         cleaned_up = False
         session_notify_registered = False
         power_notify_handles: list[tuple[str, int]] = []
+        network_interface_monitor: IpInterfaceChangeMonitor | None = None
         class_registered = False
         hwnd = None
         wc = None
 
         def cleanup_resources(allow_destroy_window: bool = False):
-            nonlocal cleaned_up, session_notify_registered, power_notify_handles, class_registered, hwnd, wc
+            nonlocal cleaned_up, session_notify_registered, power_notify_handles, network_interface_monitor, class_registered, hwnd, wc
             with resource_lock:
                 if cleaned_up:
                     return
@@ -173,6 +175,15 @@ class HeadlessRuntime:
                         f"Failed to unregister power setting notification | setting={setting_name} | handle={handle} | {exc}"
                     )
             power_notify_handles = []
+
+            if network_interface_monitor is not None:
+                try:
+                    network_interface_monitor.close()
+                    self.log.info("Unregistered network interface change notifications")
+                except Exception as exc:
+                    self.log.info(f"Failed to unregister network interface change notifications | {exc}")
+                finally:
+                    network_interface_monitor = None
 
             if allow_destroy_window and hwnd:
                 try:
@@ -281,7 +292,27 @@ class HeadlessRuntime:
 
                 if msg == WM_WTSSESSION_CHANGE:
                     if wparam == WTS_SESSION_LOCK:
+                        msg_entry_mono = self.controller.mono()
+                        self.controller._log_structured(
+                            "EVENT",
+                            log_level="info",
+                            kind="SESSION",
+                            name="WTS_SESSION_LOCK_MSG_ENTRY",
+                            wparam=f"0x{wparam:04X}",
+                            session=lparam,
+                            mono=f"{msg_entry_mono:.3f}",
+                        )
                         self.controller.log_session_event("WTS_SESSION_LOCK", wparam, lparam)
+                        after_log_mono = self.controller.mono()
+                        self.controller._log_structured(
+                            "STEP",
+                            log_level="info",
+                            action="WINDOW_MESSAGE",
+                            reason="WTS_SESSION_LOCK",
+                            step="session_event_logged",
+                            duration_ms=int(max(0.0, after_log_mono - msg_entry_mono) * 1000),
+                            mono=f"{after_log_mono:.3f}",
+                        )
                         self.controller.on_lock("WTS_SESSION_LOCK")
                         return 0
                     if wparam == WTS_SESSION_UNLOCK:
@@ -374,6 +405,23 @@ class HeadlessRuntime:
                         f"Failed to register power setting notification | setting={setting_name} | hwnd={hwnd} | err={err} | "
                         f"mono={self.controller.mono():.3f}"
                     )
+
+            try:
+                network_interface_monitor = IpInterfaceChangeMonitor(self.controller.log_network_interface_event).start()
+                if network_interface_monitor.active:
+                    self.log.info(
+                        f"Registered network interface change notifications | mono={self.controller.mono():.3f}"
+                    )
+                else:
+                    self.log.info(
+                        f"Failed to register network interface change notifications | "
+                        f"error={network_interface_monitor.error} | mono={self.controller.mono():.3f}"
+                    )
+            except Exception as exc:
+                self.log.info(
+                    f"Failed to register network interface change notifications | {exc} | "
+                    f"mono={self.controller.mono():.3f}"
+                )
 
             self.log.info(f"Listening for shutdown, sleep, and session events | hwnd={hwnd} | mono={self.controller.mono():.3f}")
             win32gui.PumpMessages()

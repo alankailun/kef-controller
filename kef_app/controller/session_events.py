@@ -79,6 +79,21 @@ class ControllerSessionEventsMixin:
 
     def _on_early_standby_signal(self, reason: str, *, enabled: bool, disabled_cause: str, action: str) -> bool:
         entry_mono = self.mono()
+        with self._state_lock:
+            event_name = self._last_windows_event_name
+            event_mono = float(self._last_windows_event_mono or 0.0)
+        if self._early_standby_event_matches_reason(event_name, reason):
+            fields = {
+                "action": action,
+                "reason": reason,
+                "step": "early_standby_trigger_entry",
+                "event": event_name,
+                "mono": f"{entry_mono:.3f}",
+            }
+            if event_mono > 0:
+                fields["since_event_ms"] = int(max(0.0, entry_mono - event_mono) * 1000)
+            self._log_structured("STEP", log_level="info", **fields)
+
         if not enabled:
             self._log_structured(
                 "SKIP",
@@ -98,9 +113,6 @@ class ControllerSessionEventsMixin:
             )
             return False
 
-        with self._state_lock:
-            event_name = self._last_windows_event_name
-            event_mono = float(self._last_windows_event_mono or 0.0)
         if (
             event_mono > 0
             and self._early_standby_event_matches_reason(event_name, reason)

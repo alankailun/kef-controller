@@ -233,3 +233,26 @@ class ControllerLoggingMixin:
             session=lparam,
             mono=f"{event_mono:.3f}",
         )
+
+    def log_network_interface_event(self, event):
+        self._log_structured(
+            "EVENT",
+            log_level="info",
+            kind="NETWORK",
+            name="INTERFACE_CHANGE",
+            notification=getattr(event, "notification", "<unknown>"),
+            interface=getattr(event, "interface_alias", "<unknown>"),
+            interface_index=getattr(event, "interface_index", "<unknown>"),
+            if_state=(
+                "up"
+                if getattr(event, "connected", None) is True
+                else "down"
+                if getattr(event, "connected", None) is False
+                else "<unknown>"
+            ),
+            family=getattr(event, "family", "<unknown>"),
+            metric=getattr(event, "metric", "<unknown>"),
+            nl_mtu=getattr(event, "nl_mtu", "<unknown>"),
+            target_ip=self.get_current_kef_ip() or "<empty>",
+            mono=f"{self.mono():.3f}",
+        )

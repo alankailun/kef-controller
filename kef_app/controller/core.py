@@ -21,6 +21,12 @@ from .session_events import ControllerSessionEventsMixin
 from ..devices.speaker_models import normalize_mac
 
 
+_UNCONFIRMED_STANDBY_OUTCOMES = {
+    "success_best_effort_local_network_unavailable",
+    "success_best_effort_inherited_local_network_unavailable",
+}
+
+
 class KefPowerController(
     ControllerLoggingMixin,
     ControllerStateMixin,
@@ -128,7 +134,11 @@ class KefPowerController(
             self._controller_active_power_actions = max(0, self._controller_active_power_actions - 1)
         if success and action == "WAKE":
             self._set_speaker_runtime_state(speaker_on=True, source=f"power_action:{action}")
-        elif success and action in {"STANDBY", "EARLY_STANDBY", "ENDSESSION_STANDBY"}:
+        elif (
+            success
+            and action in {"STANDBY", "EARLY_STANDBY", "ENDSESSION_STANDBY"}
+            and outcome not in _UNCONFIRMED_STANDBY_OUTCOMES
+        ):
             self._set_speaker_runtime_state(speaker_on=False, source=f"power_action:{action}")
         self._emit_event(
             "power_action_finished",
