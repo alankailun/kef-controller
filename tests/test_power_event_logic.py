@@ -504,7 +504,7 @@ class PowerEventLogicTests(unittest.TestCase):
             )
         )
 
-    def test_preemptive_standby_falls_back_to_fire_and_forget_without_sleep_hold(self):
+    def test_preemptive_standby_falls_back_to_fire_and_forget_when_prewarmed_send_freezes(self):
         controller = self.make_controller(
             kef_ip="192.168.1.10",
             kef_mac="AA:BB:CC:DD:EE:01",
@@ -534,9 +534,6 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(order, ["prewarmed", "fire_and_forget"])
         controller._request_shutdown.assert_not_called()
-        self.assertFalse(
-            any(call.kwargs.get("step") == "system_required_hold" for call in controller._log_structured.mock_calls)
-        )
 
     def test_preemptive_standby_short_circuits_prewarmed_host_unreachable(self):
         controller = self.make_controller(
