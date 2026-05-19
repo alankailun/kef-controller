@@ -136,6 +136,30 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
             runs,
         )
 
+    def test_persistent_socket_pool_allows_lock_and_suspend_sends(self):
+        with _LoopbackHttpSpeaker() as speaker:
+            controller = self.make_controller(speaker.port, prewarmed_persist_socket=True)
+            controller._prewarmed_standby_tick("unit_test")
+
+            first = controller.try_send_prewarmed_standby("127.0.0.1")
+            second = controller.try_send_prewarmed_standby("127.0.0.1")
+
+            deadline = time.monotonic() + 1.0
+            while len(speaker.requests) < 3 and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+        self.assertTrue(first.success, first)
+        self.assertTrue(second.success, second)
+        self.assertEqual(first.status, "sent")
+        self.assertEqual(second.status, "sent")
+        self.assertEqual(first.mode, "persistent_socket")
+        self.assertEqual(second.mode, "persistent_socket")
+        self.assertTrue(any(request.startswith(b"GET /api/getData") for request in speaker.requests))
+        self.assertGreaterEqual(
+            sum(1 for request in speaker.requests if request.startswith(b"POST /api/setData")),
+            2,
+        )
+
     def test_fast_standby_controller_loopback_benchmark(self):
         samples_ms: list[float] = []
         runs = 20

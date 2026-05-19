@@ -10,6 +10,7 @@ from ..devices.transport import build_standby_request_bytes, is_host_unreachable
 _PREWARM_RETRY_DELAY_S = 2.0
 _PREWARM_POWER_ACTION_DELAY_S = 0.5
 _PREWARM_FAILURE_LOG_THRESHOLD = 3
+_PREWARM_PERSISTENT_SOCKET_POOL_SIZE = 2
 _KEEPALIVE_REQUEST_PATH = "/api/getData?path=settings%3A%2Freleasetext&roles=value"
 
 
@@ -111,7 +112,6 @@ class PrewarmedStandbySocketMonitorMixin:
 
     def stop_prewarmed_standby_socket_monitor(self) -> None:
         self._prewarmed_standby_stop.set()
-        self._close_prewarmed_socket_holder()
 
     def _finish_prewarmed_standby_socket_monitor(self) -> None:
         with self._prewarmed_standby_lock:
@@ -123,26 +123,32 @@ class PrewarmedStandbySocketMonitorMixin:
         if restart_reason and self.config.prewarmed_standby_enabled:
             self.start_prewarmed_standby_socket_monitor(restart_reason)
 
-    def _close_prewarmed_socket_holder(self) -> None:
+    def _close_prewarmed_socket_holders(self) -> None:
         with self._prewarmed_standby_lock:
-            holder = self._prewarmed_standby_holder
-            self._prewarmed_standby_holder = None
-        if holder is not None:
+            holders = self._prewarmed_standby_holders
+            self._prewarmed_standby_holders = []
+        for holder in holders:
             holder.close()
 
     def _take_prewarmed_socket_holder(self, target_ip: str) -> socket.socket | None:
-        holder = None
+        selected = None
+        stale = []
         with self._prewarmed_standby_lock:
-            holder = self._prewarmed_standby_holder
-            if holder is None or holder.ip != target_ip:
-                self._prewarmed_standby_holder = None
-            else:
-                self._prewarmed_standby_holder = None
-                return holder.take()
+            remaining = []
+            for holder in self._prewarmed_standby_holders:
+                if holder.ip != target_ip:
+                    stale.append(holder)
+                elif selected is None:
+                    selected = holder
+                else:
+                    remaining.append(holder)
+            self._prewarmed_standby_holders = remaining
 
-        if holder is not None:
+        for holder in stale:
             holder.close()
-        return None
+        if selected is None:
+            return None
+        return selected.take()
 
     def _run_prewarmed_standby_socket_monitor(self, reason: str) -> None:
         self._log_structured(
@@ -163,7 +169,7 @@ class PrewarmedStandbySocketMonitorMixin:
                 if self._prewarmed_standby_stop.wait(delay):
                     return
         finally:
-            self._close_prewarmed_socket_holder()
+            self._close_prewarmed_socket_holders()
             self._finish_prewarmed_standby_socket_monitor()
             self._log_structured(
                 "STEP",
@@ -177,19 +183,19 @@ class PrewarmedStandbySocketMonitorMixin:
 
     def _prewarmed_standby_tick(self, reason: str) -> float:
         if not self.config.prewarmed_standby_enabled:
-            self._close_prewarmed_socket_holder()
+            self._close_prewarmed_socket_holders()
             return _PREWARM_RETRY_DELAY_S
         if self._is_controller_power_action_active():
             return _PREWARM_POWER_ACTION_DELAY_S
 
         target_ip = self.get_current_kef_ip()
         if not target_ip:
-            self._close_prewarmed_socket_holder()
+            self._close_prewarmed_socket_holders()
             return _PREWARM_RETRY_DELAY_S
 
         last_ip = self._prewarmed_standby_last_ip
         if last_ip and last_ip != target_ip:
-            self._close_prewarmed_socket_holder()
+            self._close_prewarmed_socket_holders()
             with self._prewarmed_standby_lock:
                 self._prewarmed_standby_ready_logged = False
                 self._prewarmed_standby_last_ok_mono = 0.0
@@ -199,6 +205,8 @@ class PrewarmedStandbySocketMonitorMixin:
             if self.config.prewarmed_persist_socket:
                 self._ensure_persistent_prewarmed_socket(target_ip)
             self._probe_prewarmed_keepalive(target_ip)
+            if self.config.prewarmed_persist_socket:
+                self._ensure_persistent_prewarmed_socket(target_ip)
         except OSError as exc:
             self._record_prewarmed_keepalive_failure(reason, target_ip, exc)
             return _PREWARM_RETRY_DELAY_S
@@ -209,31 +217,50 @@ class PrewarmedStandbySocketMonitorMixin:
         return max(1.0, float(self.config.prewarmed_keepalive_interval_s))
 
     def _ensure_persistent_prewarmed_socket(self, target_ip: str) -> None:
-        holder = None
+        stale = []
         with self._prewarmed_standby_lock:
-            holder = self._prewarmed_standby_holder
-            if holder is not None and holder.ip == target_ip:
-                return
-            self._prewarmed_standby_holder = None
+            holders = []
+            for holder in self._prewarmed_standby_holders:
+                if holder.ip == target_ip:
+                    holders.append(holder)
+                else:
+                    stale.append(holder)
+            stale.extend(holders[_PREWARM_PERSISTENT_SOCKET_POOL_SIZE:])
+            holders = holders[:_PREWARM_PERSISTENT_SOCKET_POOL_SIZE]
+            self._prewarmed_standby_holders = holders
+            missing = max(0, _PREWARM_PERSISTENT_SOCKET_POOL_SIZE - len(holders))
 
-        if holder is not None:
+        for holder in stale:
             holder.close()
+        if missing <= 0:
+            return
 
-        sock = _open_tcp_socket(
-            target_ip,
-            port=int(self.config.mac_discovery_tcp_port),
-            timeout=float(self.config.prewarmed_socket_timeout_s),
-        )
+        new_holders = []
+        try:
+            for _ in range(missing):
+                sock = _open_tcp_socket(
+                    target_ip,
+                    port=int(self.config.mac_discovery_tcp_port),
+                    timeout=float(self.config.prewarmed_socket_timeout_s),
+                )
+                new_holders.append(PrewarmedSocketHolder(sock, target_ip, self.mono()))
+        except OSError:
+            for holder in new_holders:
+                holder.close()
+            raise
+
         with self._prewarmed_standby_lock:
-            self._prewarmed_standby_holder = PrewarmedSocketHolder(sock, target_ip, self.mono())
+            self._prewarmed_standby_holders.extend(new_holders)
 
     def _probe_prewarmed_keepalive(self, target_ip: str) -> None:
         request = _build_keepalive_request_bytes(target_ip)
-        sock = _open_tcp_socket(
-            target_ip,
-            port=int(self.config.mac_discovery_tcp_port),
-            timeout=float(self.config.prewarmed_socket_timeout_s),
-        )
+        sock = self._take_prewarmed_socket_holder(target_ip) if self.config.prewarmed_persist_socket else None
+        if sock is None:
+            sock = _open_tcp_socket(
+                target_ip,
+                port=int(self.config.mac_discovery_tcp_port),
+                timeout=float(self.config.prewarmed_socket_timeout_s),
+            )
         try:
             sock.settimeout(float(self.config.prewarmed_socket_timeout_s))
             sock.sendall(request)
@@ -273,7 +300,7 @@ class PrewarmedStandbySocketMonitorMixin:
         )
 
     def _record_prewarmed_keepalive_failure(self, reason: str, target_ip: str, exc: OSError) -> None:
-        self._close_prewarmed_socket_holder()
+        self._close_prewarmed_socket_holders()
         with self._prewarmed_standby_lock:
             self._prewarmed_standby_failures += 1
             failures = self._prewarmed_standby_failures

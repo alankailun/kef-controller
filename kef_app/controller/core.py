@@ -67,7 +67,7 @@ class KefPowerController(
         self._prewarmed_standby_lock = threading.Lock()
         self._prewarmed_standby_stop = threading.Event()
         self._prewarmed_standby_thread: threading.Thread | None = None
-        self._prewarmed_standby_holder = None
+        self._prewarmed_standby_holders = []
         self._prewarmed_standby_restart_reason: str | None = None
         self._event_listeners: list[Callable[[str, dict[str, Any]], None]] = []
 
