@@ -23,17 +23,6 @@ class ControllerStateMixin:
         with self._state_lock:
             self._early_standby_dedup.mark_success(self.mono())
 
-    def _mark_early_standby_host_unreachable(self):
-        with self._state_lock:
-            self._early_standby_dedup.mark_host_unreachable(self.mono())
-
-    def _recently_early_standby_host_unreachable(self) -> bool:
-        with self._state_lock:
-            return self._early_standby_dedup.is_recent_host_unreachable(
-                self.mono(),
-                self.config.early_standby_dedup_window,
-            )
-
     def _set_session_ending(self, ending: bool):
         with self._state_lock:
             self._session_ending = ending

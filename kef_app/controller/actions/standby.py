@@ -155,21 +155,6 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         reason: str,
     ) -> tuple[bool, str]:
         if not policy.skip_if_recent_early_standby or not self._recently_early_standby_ok():
-            if (
-                policy.skip_if_recent_early_standby
-                and policy.action == "STANDBY"
-                and self._recently_early_standby_host_unreachable()
-            ):
-                outcome = "success_best_effort_inherited_local_network_unavailable"
-                self._log_standby(
-                    "SKIP",
-                    policy,
-                    generation,
-                    reason,
-                    cause="recent_early_standby_local_network_unavailable",
-                    window_s=f"{self.config.early_standby_dedup_window:.2f}",
-                )
-                return True, outcome
             return False, ""
         outcome = "skipped_recent_early_standby_ok"
         self._log_standby(
@@ -525,11 +510,6 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
                 return False, outcome
 
             if is_host_unreachable(exc):
-                if policy.host_unreachable_is_success and policy.mark_early_standby_success:
-                    if policy.host_unreachable_outcome == "success_best_effort_local_network_unavailable":
-                        self._mark_early_standby_host_unreachable()
-                    else:
-                        self._mark_early_standby_success()
                 if policy.action == "EARLY_STANDBY":
                     self.log_wifi_diagnostics(
                         reason=reason,

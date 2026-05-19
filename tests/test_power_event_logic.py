@@ -567,7 +567,6 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown.assert_not_called()
         controller._request_shutdown.assert_not_called()
         self.assertFalse(controller._recently_early_standby_ok())
-        self.assertTrue(controller._recently_early_standby_host_unreachable())
         controller.log_wifi_diagnostics.assert_called_once_with(
             reason="WTS_SESSION_LOCK",
             trigger="early_standby_host_unreachable",
@@ -632,7 +631,6 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
         controller._request_shutdown.assert_called_once_with(fresh=False, timeout=0.25)
         self.assertFalse(controller._recently_early_standby_ok())
-        self.assertTrue(controller._recently_early_standby_host_unreachable())
         controller.log_wifi_diagnostics.assert_called_once_with(
             reason="WTS_SESSION_LOCK",
             trigger="early_standby_host_unreachable",
@@ -678,7 +676,6 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
         controller._request_shutdown.assert_not_called()
         self.assertFalse(controller._recently_early_standby_ok())
-        self.assertTrue(controller._recently_early_standby_host_unreachable())
         controller.log_wifi_diagnostics.assert_called_once_with(
             reason="WTS_SESSION_LOCK",
             trigger="early_standby_host_unreachable",
@@ -791,34 +788,44 @@ class PowerEventLogicTests(unittest.TestCase):
             )
         )
 
-    def test_fast_suspend_standby_inherits_recent_early_local_network_unavailable(self):
+    def test_fast_suspend_standby_does_not_inherit_early_local_network_unavailable(self):
         controller = self.make_controller(
             kef_ip="192.168.1.10",
             kef_mac="AA:BB:CC:DD:EE:01",
             suspend_fast_standby_socket_timeout=0.25,
         )
-        events = self.capture_events(controller)
         controller._log_structured = Mock()
-        controller._mark_early_standby_host_unreachable()
-        generation = controller._new_generation("sleep", "PBT_APMSUSPEND")
+        controller.log_wifi_diagnostics = Mock()
+        early_generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
+        controller.try_send_prewarmed_standby = Mock(
+            return_value=PrewarmedStandbySendResult(
+                attempted=True,
+                success=False,
+                status="send_failed:OSError",
+                duration_ms=18,
+                target_ip="192.168.1.10",
+                mode="short_connection",
+                error="OSError(10065, 'A socket operation was attempted to an unreachable host')",
+                host_unreachable=True,
+            )
+        )
         controller._send_fire_and_forget_shutdown = Mock()
         controller._request_shutdown = Mock()
 
-        result = controller.standby_kef_fast_suspend(generation, "PBT_APMSUSPEND")
+        self.assertTrue(controller.standby_kef_preemptive(early_generation, "WTS_SESSION_LOCK"))
+
+        suspend_generation = controller._new_generation("sleep", "PBT_APMSUSPEND")
+        controller.try_send_prewarmed_standby = Mock(
+            return_value=PrewarmedStandbySendResult(False, False, "no_recent_keepalive", target_ip="192.168.1.10")
+        )
+        controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
+        controller._request_shutdown = Mock()
+
+        result = controller.standby_kef_fast_suspend(suspend_generation, "PBT_APMSUSPEND")
 
         self.assertTrue(result)
-        controller._send_fire_and_forget_shutdown.assert_not_called()
+        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
         controller._request_shutdown.assert_not_called()
-        self.assertTrue(self.emitted_outcome(events, "success_best_effort_inherited_local_network_unavailable"))
-        self.assertIsNone(controller._speaker_runtime_power_on)
-        self.assertTrue(
-            any(
-                call.args[:1] == ("SKIP",)
-                and call.kwargs.get("action") == "STANDBY"
-                and call.kwargs.get("cause") == "recent_early_standby_local_network_unavailable"
-                for call in controller._log_structured.mock_calls
-            )
-        )
 
     def test_fast_suspend_standby_assumes_fire_and_forget_host_unreachable_without_standard_fallback(self):
         controller = self.make_controller(

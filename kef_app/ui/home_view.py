@@ -460,7 +460,6 @@ class HomeInterface(QWidget):
                 and outcome
                 not in {
                     "success_best_effort_local_network_unavailable",
-                    "success_best_effort_inherited_local_network_unavailable",
                 }
             ):
                 self._power_on_hint = False
