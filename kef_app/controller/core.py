@@ -132,10 +132,16 @@ class KefPowerController(
     def _emit_identity_changed(self) -> None:
         self._emit_event("identity_changed", identity=self.get_current_identity())
 
-    def _emit_power_action_started(self, action: str, reason: str) -> None:
+    def _mark_power_action_started(self) -> None:
         with self._state_lock:
             self._controller_active_power_actions += 1
+
+    def _emit_power_action_started_event(self, action: str, reason: str) -> None:
         self._emit_event("power_action_started", action=action, reason=reason)
+
+    def _emit_power_action_started(self, action: str, reason: str) -> None:
+        self._mark_power_action_started()
+        self._emit_power_action_started_event(action, reason)
 
     def _emit_power_action_finished(self, action: str, reason: str, outcome: str) -> None:
         success = _power_action_outcome_is_success(outcome)

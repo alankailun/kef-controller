@@ -136,6 +136,7 @@ class ControllerSessionEventsMixin:
         return get_trigger("lid_closed").fire(self, reason)
 
     def on_resume(self, reason: str):
+        self._clear_early_standby_state()
         if self._should_dedupe_resume_and_mark(reason):
             return
 
@@ -147,6 +148,7 @@ class ControllerSessionEventsMixin:
         self._schedule_delayed_wake(generation, reason, self.config.resume_wake_delay, "resume_delay", "WakeWorker")
 
     def on_unlock(self, reason: str):
+        self._clear_early_standby_state()
         if self._is_session_ending():
             self._log_structured("SKIP", action="WAKE", reason=reason, cause="session_ending", mono=f"{self.mono():.3f}")
             return

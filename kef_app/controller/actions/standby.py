@@ -182,7 +182,11 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
     ) -> bool:
         outcome = "unknown"
         start_mono = self._log_action_begin(policy.action, generation, reason)
-        self._emit_power_action_started(policy.action, reason)
+        defer_started_event = policy.mode == "fast_request"
+        if defer_started_event:
+            self._mark_power_action_started()
+        else:
+            self._emit_power_action_started(policy.action, reason)
 
         try:
             skipped, outcome = self._standby_skip_disabled(
@@ -204,7 +208,11 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             success, outcome = self._execute_fast_request_policy(policy, generation, reason)
             return success
         finally:
+            if defer_started_event:
+                self._emit_power_action_started_event(policy.action, reason)
             self._emit_power_action_finished(policy.action, reason, outcome)
+            if policy.action == "STANDBY":
+                self._clear_early_standby_state()
             self._log_action_end(policy.action, generation, reason, outcome, start_mono)
 
     def _execute_fast_request_policy(

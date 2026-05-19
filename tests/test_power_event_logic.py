@@ -523,8 +523,40 @@ class PowerEventLogicTests(unittest.TestCase):
         controller.try_send_prewarmed_standby.assert_called_once_with("192.168.1.10")
         controller._send_fire_and_forget_shutdown.assert_not_called()
         controller._request_shutdown.assert_not_called()
-        self.assertEqual(controller._early_standby_state.status, "UNCONFIRMED")
+        self.assertEqual(controller._early_standby_state.status, "NONE")
         self.assertTrue(self.emitted_outcome(events, "sent_unconfirmed_prewarmed"))
+
+    def test_fast_suspend_defers_power_started_event_until_after_fast_send(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+        )
+        order: list[str] = []
+        controller.add_event_listener(
+            lambda name, _payload: order.append(name)
+            if name in {"power_action_started", "power_action_finished"}
+            else None
+        )
+        generation = controller._new_generation("sleep", "PBT_APMSUSPEND")
+        controller.try_send_prewarmed_standby = Mock(
+            side_effect=lambda _ip: order.append("prewarmed_send")
+            or PrewarmedStandbySendResult(
+                attempted=True,
+                success=True,
+                status="sent",
+                duration_ms=1,
+                target_ip="192.168.1.10",
+                mode="persistent_socket",
+                so_error=0,
+            )
+        )
+        controller._send_fire_and_forget_shutdown = Mock()
+        controller._request_shutdown = Mock()
+
+        result = controller.standby_kef_fast_suspend(generation, "PBT_APMSUSPEND")
+
+        self.assertTrue(result)
+        self.assertEqual(order, ["prewarmed_send", "power_action_started", "power_action_finished"])
 
     def test_preemptive_standby_falls_back_when_prewarmed_send_was_frozen(self):
         controller = self.make_controller(
