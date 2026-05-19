@@ -27,14 +27,12 @@ class StandbyPolicy:
     success_outcome: str = "success"
     failed_outcome: str = "failed"
     failed_status: str | None = None
-    host_unreachable_outcome: str = "success_assumed_host_unreachable"
+    host_unreachable_outcome: str = "sent_skipped_host_unreachable"
     host_unreachable_status: str = "host_unreachable_assumed_standby"
     host_unreachable_cause: str = "host_unreachable_assume_standby"
     host_unreachable_is_success: bool = True
     fire_and_forget: bool = False
     fire_and_forget_outcome: str | None = None
-    mark_early_standby_success: bool = False
-    skip_if_recent_early_standby: bool = False
     skip_if_session_ending: bool = False
     ensure_identity: bool = False
     identity_step: str = ""
@@ -49,16 +47,14 @@ PREEMPTIVE_STANDBY_POLICY = StandbyPolicy(
     lock_purpose="early_standby",
     lock_timeout_field="early_standby_action_lock_timeout",
     socket_timeout_field="suspend_fast_standby_socket_timeout",
-    success_outcome="success",
+    success_outcome="sent_unconfirmed_standard",
     failed_outcome="failed",
-    host_unreachable_outcome="success_best_effort_local_network_unavailable",
+    host_unreachable_outcome="sent_skipped_host_unreachable",
     host_unreachable_status="local_network_unavailable_before_suspend",
     host_unreachable_cause="local_route_unavailable_before_suspend",
     host_unreachable_is_success=True,
     fire_and_forget=True,
-    fire_and_forget_outcome="success_fire_and_forget",
-    mark_early_standby_success=True,
-    skip_if_recent_early_standby=True,
+    fire_and_forget_outcome="sent_unconfirmed_fire_and_forget",
     skip_if_session_ending=True,
 )
 
@@ -72,15 +68,14 @@ FAST_SUSPEND_STANDBY_POLICY = StandbyPolicy(
     socket_timeout_field="suspend_fast_standby_socket_timeout",
     disabled_field="suspend_fast_standby_enabled",
     disabled_cause="suspend_fast_standby_disabled",
-    success_outcome="success_fast_suspend",
+    success_outcome="sent_unconfirmed_standard",
     failed_outcome="failed_fast_suspend",
     failed_status="fast_suspend_failed",
-    host_unreachable_outcome="success_best_effort_host_unreachable",
+    host_unreachable_outcome="sent_skipped_host_unreachable",
     host_unreachable_status="host_unreachable_best_effort",
     host_unreachable_cause="suspend_network_or_speaker_unreachable",
     fire_and_forget=True,
-    fire_and_forget_outcome="success_fast_suspend_fire_and_forget",
-    skip_if_recent_early_standby=True,
+    fire_and_forget_outcome="sent_unconfirmed_fire_and_forget",
     skip_if_session_ending=True,
     attempt=1,
 )
@@ -95,7 +90,6 @@ STANDARD_STANDBY_POLICY = StandbyPolicy(
     success_outcome="success_attempt_1",
     failed_outcome="failed_no_retry_before_suspend",
     failed_status="no_retry_before_suspend",
-    skip_if_recent_early_standby=True,
     skip_if_session_ending=True,
     ensure_identity=True,
     identity_step="standby_before_request",
@@ -111,20 +105,16 @@ ENDSESSION_STANDBY_POLICY = StandbyPolicy(
     lock_timeout_field="endsession_standby_action_lock_timeout",
     socket_timeout_field="endsession_standby_socket_timeout",
     disabled_field="endsession_standby_on_shutdown",
-    success_outcome="success",
+    success_outcome="sent_unconfirmed_standard",
     failed_outcome="failed",
     fire_and_forget=True,
-    fire_and_forget_outcome="success_fire_and_forget",
+    fire_and_forget_outcome="sent_unconfirmed_fire_and_forget",
     ensure_identity=True,
     identity_step="endsession_before_request",
 )
 
 
 class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
-    def _recently_early_standby_ok(self) -> bool:
-        with self._state_lock:
-            return self._early_standby_dedup.is_recent(self.mono(), self.config.early_standby_dedup_window)
-
     def _config_value(self, field_name: str):
         return getattr(self.config, field_name)
 
@@ -147,25 +137,6 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             **self._standby_log_fields(policy, generation, reason),
             **fields,
         )
-
-    def _standby_skip_recent_early_standby(
-        self,
-        policy: StandbyPolicy,
-        generation: int | None,
-        reason: str,
-    ) -> tuple[bool, str]:
-        if not policy.skip_if_recent_early_standby or not self._recently_early_standby_ok():
-            return False, ""
-        outcome = "skipped_recent_early_standby_ok"
-        self._log_standby(
-            "SKIP",
-            policy,
-            generation,
-            reason,
-            cause="recent_early_standby_ok",
-            window_s=f"{self.config.early_standby_dedup_window:.2f}",
-        )
-        return True, outcome
 
     def _standby_skip_session_ending(self, policy: StandbyPolicy, generation: int | None, reason: str) -> tuple[bool, str]:
         if not policy.skip_if_session_ending or not self._is_session_ending():
@@ -245,9 +216,6 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         skipped, outcome = self._standby_skip_session_ending(policy, generation, reason)
         if skipped:
             return False, outcome
-        skipped, outcome = self._standby_skip_recent_early_standby(policy, generation, reason)
-        if skipped:
-            return True, outcome
 
         return self._perform_fast_shutdown(
             policy,
@@ -269,9 +237,6 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             step=policy.begin_step,
         )
 
-        skipped, outcome = self._standby_skip_recent_early_standby(policy, generation, reason)
-        if skipped:
-            return True, outcome
         skipped, outcome = self._standby_skip_session_ending(policy, generation, reason)
         if skipped:
             return False, outcome
@@ -340,7 +305,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
                 generation=None,
                 reason=reason,
                 current_ip=current_ip,
-                mark_early_standby_success=False,
+                mark_early_standby_sent_unconfirmed=False,
                 extra_fields={"flags": flags},
                 success_outcome=policy.fire_and_forget_outcome or policy.success_outcome,
             )
@@ -368,7 +333,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
                 None,
                 reason,
                 step=policy.success_step,
-                status="success",
+                status="sent",
                 flags=flags,
                 target_ip=current_ip,
             )
@@ -429,7 +394,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
                 generation=generation,
                 reason=reason,
                 current_ip=current_ip,
-                mark_early_standby_success=policy.mark_early_standby_success,
+                mark_early_standby_sent_unconfirmed=policy.action == "EARLY_STANDBY",
                 success_outcome=policy.fire_and_forget_outcome or policy.success_outcome,
                 host_unreachable_outcome=policy.host_unreachable_outcome,
                 host_unreachable_status=policy.host_unreachable_status,
@@ -472,8 +437,8 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
                     mono=f"{request_finished_mono:.3f}",
                 )
                 return False, outcome
-            if policy.mark_early_standby_success:
-                self._mark_early_standby_success()
+            if policy.action == "EARLY_STANDBY":
+                self._mark_early_standby_sent_unconfirmed()
             outcome = policy.success_outcome
             self._log_standby(
                 "STEP",

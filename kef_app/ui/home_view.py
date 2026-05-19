@@ -459,7 +459,10 @@ class HomeInterface(QWidget):
                 action in {"STANDBY", "EARLY_STANDBY", "ENDSESSION_STANDBY"}
                 and outcome
                 not in {
-                    "success_best_effort_local_network_unavailable",
+                    "sent_unconfirmed_prewarmed",
+                    "sent_unconfirmed_fire_and_forget",
+                    "sent_unconfirmed_standard",
+                    "sent_skipped_host_unreachable",
                 }
             ):
                 self._power_on_hint = False

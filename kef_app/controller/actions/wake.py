@@ -156,7 +156,7 @@ class ControllerDeviceWakeMixin:
                     with temporary_socket_timeout(c.socket_timeout):
                         self.get_speaker(fresh=True)
 
-                self._clear_recent_early_standby_marker()
+                self._clear_early_standby_state()
                 self.capture_identity_from_current_ip(reason=reason, trigger=f"wake_success_attempt_{attempt}")
                 self.log_wifi_diagnostics(reason=reason, trigger=f"wake_success_attempt_{attempt}")
                 self._log_structured(

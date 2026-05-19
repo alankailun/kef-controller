@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
+
+
+EarlyStandbyStatus = Literal["NONE", "UNCONFIRMED"]
 
 
 @dataclass(slots=True)
-class EarlyStandbyDedupState:
-    last_success_mono: float = 0.0
+class EarlyStandbyState:
+    status: EarlyStandbyStatus = "NONE"
+    last_sent_unconfirmed_mono: float = 0.0
 
     def clear(self) -> None:
-        self.last_success_mono = 0.0
+        self.status = "NONE"
+        self.last_sent_unconfirmed_mono = 0.0
 
-    def mark_success(self, mono: float) -> None:
-        self.last_success_mono = mono
+    def mark_sent_unconfirmed(self, mono: float) -> None:
+        self.status = "UNCONFIRMED"
+        self.last_sent_unconfirmed_mono = mono
 
-    def is_recent(self, mono: float, window: float) -> bool:
-        return self.last_success_mono > 0.0 and (mono - self.last_success_mono) < window
+    def is_confirmed_recent(self) -> bool:
+        return False

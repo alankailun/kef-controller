@@ -11,7 +11,7 @@ from ..storage import PersistedSpeakerState, SpeakerStateStore
 from ..devices.speaker_backend import W2Backend
 from .actions import ControllerDeviceActionsMixin
 from .discovery import ControllerDiscoveryMixin
-from .feature_state import EarlyStandbyDedupState
+from .feature_state import EarlyStandbyState
 from .logging_mixin import ControllerLoggingMixin
 from .network_timeout import temporary_socket_timeout
 from .power_state import ControllerStateMixin
@@ -22,8 +22,15 @@ from ..devices.speaker_models import normalize_mac
 
 
 _UNCONFIRMED_STANDBY_OUTCOMES = {
-    "success_best_effort_local_network_unavailable",
+    "sent_unconfirmed_prewarmed",
+    "sent_unconfirmed_fire_and_forget",
+    "sent_unconfirmed_standard",
+    "sent_skipped_host_unreachable",
 }
+
+
+def _power_action_outcome_is_success(outcome: str) -> bool:
+    return outcome.startswith("success") or outcome.startswith("sent_")
 
 
 class KefPowerController(
@@ -94,7 +101,7 @@ class KefPowerController(
         self._last_windows_event_name = ""
         self._last_windows_event_mono = 0.0
 
-        self._early_standby_dedup = EarlyStandbyDedupState()
+        self._early_standby_state = EarlyStandbyState()
         self._system_sleep_pending = False
         self._last_system_suspend_mono = 0.0
         self._last_system_resume_mono = 0.0
@@ -130,7 +137,7 @@ class KefPowerController(
         self._emit_event("power_action_started", action=action, reason=reason)
 
     def _emit_power_action_finished(self, action: str, reason: str, outcome: str) -> None:
-        success = outcome.startswith("success") or outcome == "skipped_recent_early_standby_ok"
+        success = _power_action_outcome_is_success(outcome)
         with self._state_lock:
             self._controller_active_power_actions = max(0, self._controller_active_power_actions - 1)
         if success and action == "WAKE":

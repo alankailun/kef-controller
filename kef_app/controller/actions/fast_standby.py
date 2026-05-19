@@ -10,7 +10,7 @@ _FAST_STANDBY_FIRE_AND_FORGET_JOIN_TIMEOUT = 0.25
 
 
 def _outcome_is_success(outcome: str) -> bool:
-    return outcome.startswith("success") or outcome == "skipped_recent_early_standby_ok"
+    return outcome.startswith("success") or outcome.startswith("sent_")
 
 
 class ControllerFastStandbyMixin:
@@ -140,10 +140,10 @@ class ControllerFastStandbyMixin:
         generation: int | None,
         reason: str,
         current_ip: str,
-        mark_early_standby_success: bool,
+        mark_early_standby_sent_unconfirmed: bool,
         extra_fields: dict[str, object] | None = None,
-        success_outcome: str = "success_fire_and_forget",
-        host_unreachable_outcome: str = "success_assumed_host_unreachable",
+        success_outcome: str = "sent_unconfirmed_fire_and_forget",
+        host_unreachable_outcome: str = "sent_skipped_host_unreachable",
         host_unreachable_status: str = "host_unreachable_assumed_standby",
         host_unreachable_cause: str = "fire_and_forget_host_unreachable",
     ) -> str | None:
@@ -169,10 +169,10 @@ class ControllerFastStandbyMixin:
             extra_fields=extra_fields,
         )
 
-        if fast_result.success and mark_early_standby_success:
-            self._mark_early_standby_success()
+        if fast_result.success and mark_early_standby_sent_unconfirmed:
+            self._mark_early_standby_sent_unconfirmed()
         if fast_result.success:
-            return "success_prewarmed_send" if fast_result.source == "prewarmed" else success_outcome
+            return "sent_unconfirmed_prewarmed" if fast_result.source == "prewarmed" else success_outcome
         if fast_result.host_unreachable:
             if action == "EARLY_STANDBY":
                 self.log_wifi_diagnostics(
