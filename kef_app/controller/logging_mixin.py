@@ -119,6 +119,8 @@ class ControllerLoggingMixin:
     def _log_structured(self, tag: str, *, log_level: object = None, mono: object = None, **fields):
         stack = self._structured_log_defer_stack()
         if stack:
+            if mono is None and "mono" not in fields:
+                mono = f"{self.mono():.3f}"
             stack[-1].append(_DeferredStructuredLogEntry(tag, log_level, mono, dict(fields)))
             return
         self._write_structured_log(tag, log_level=log_level, mono=mono, **fields)
