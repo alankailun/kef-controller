@@ -59,6 +59,7 @@ class KefPowerController(
         self._state_lock = threading.Lock()
         self._ip_lock = threading.Lock()
         self._event_listener_lock = threading.Lock()
+        self._structured_log_defer_local = threading.local()
         self._discovery_lock = threading.Lock()
         self._blind_discovery_lock = threading.Lock()
         self._speaker_event_monitor_lock = threading.Lock()

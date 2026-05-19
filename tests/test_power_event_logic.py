@@ -118,6 +118,19 @@ class PowerEventLogicTests(unittest.TestCase):
             )
         )
 
+    def test_structured_logs_can_be_deferred_until_after_critical_work(self):
+        controller = self.make_controller()
+        controller.log = Mock()
+        controller.log.isEnabledFor.return_value = True
+
+        with controller.defer_structured_logs() as deferred_logs:
+            controller._log_structured("STEP", log_level="info", action="UNIT", step="before_send")
+            controller.log.log.assert_not_called()
+            deferred_logs.flush()
+
+        controller.log.log.assert_called_once()
+        self.assertIn("step=before_send", controller.log.log.call_args.args[1])
+
     def test_event_monitor_records_restart_request_while_stopping(self):
         controller = self.make_controller(home_event_poll_enabled=True)
         with controller._speaker_event_monitor_lock:

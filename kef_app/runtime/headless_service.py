@@ -273,10 +273,14 @@ class HeadlessRuntime:
                         return True
 
                     if wparam == PBT_APMSUSPEND:
-                        self.controller.stop_speaker_event_monitor()
-                        self.controller.stop_prewarmed_standby_socket_monitor()
-                        self.controller.log_power_event("PBT_APMSUSPEND", wparam, lparam)
-                        self.controller.on_suspend("PBT_APMSUSPEND")
+                        try:
+                            with self.controller.defer_structured_logs() as deferred_logs:
+                                self.controller.log_power_event("PBT_APMSUSPEND", wparam, lparam)
+                                self.controller.on_suspend("PBT_APMSUSPEND")
+                                deferred_logs.flush()
+                        finally:
+                            self.controller.stop_speaker_event_monitor()
+                            self.controller.stop_prewarmed_standby_socket_monitor()
                         return True
                     if wparam == PBT_APMRESUMEAUTOMATIC:
                         self.controller.log_power_event("PBT_APMRESUMEAUTOMATIC", wparam, lparam)
@@ -298,8 +302,10 @@ class HeadlessRuntime:
                         msg_entry_mono = self.controller.mono()
                         self.controller._record_session_event_state("WTS_SESSION_LOCK", msg_entry_mono)
                         state_recorded_mono = self.controller.mono()
-                        self.controller.on_lock("WTS_SESSION_LOCK")
-                        after_on_lock_mono = self.controller.mono()
+                        with self.controller.defer_structured_logs() as deferred_logs:
+                            self.controller.on_lock("WTS_SESSION_LOCK")
+                            after_on_lock_mono = self.controller.mono()
+                            deferred_logs.flush()
                         self.controller._log_structured(
                             "EVENT",
                             log_level="info",
