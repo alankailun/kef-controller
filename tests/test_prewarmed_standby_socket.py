@@ -208,6 +208,8 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
             controller = self.make_controller(speaker.port, prewarmed_persist_socket=True)
             controller._prewarmed_standby_tick("unit_test")
             controller._log_structured = Mock()
+            events: list[str] = []
+            controller.add_event_listener(lambda name, _payload: events.append(name))
 
             handled = controller.try_handle_cached_lock_fast_path("WTS_SESSION_LOCK", controller.mono())
             controller._close_prewarmed_socket_holders()
@@ -215,6 +217,8 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         self.assertTrue(handled)
         self.assertEqual(controller._early_standby_state.status, "UNCONFIRMED")
         self.assertEqual(controller._current_generation(), 1)
+        self.assertEqual(events, [])
+        self.assertFalse(controller._is_controller_power_action_active())
         self.assertTrue(
             any(
                 call.kwargs.get("step") == "prewarmed_standby_send"

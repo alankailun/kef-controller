@@ -82,12 +82,12 @@ class ControllerSessionEventsMixin:
             self._log_cached_lock_fast_path_result(reason, event_mono, result)
             return False
 
+        # Cached send logs reconstruct event timing from the WM timestamp, so this
+        # state update intentionally happens after the packet is already handed to
+        # the kernel. Slow-path fallback records it before on_lock().
         self._record_session_event_state(reason, event_mono)
         generation = self._new_generation("sleep", reason, mono=f"{event_mono:.3f}")
         self._mark_early_standby_sent_unconfirmed()
-        self._mark_power_action_started()
-        self._emit_power_action_started_event("EARLY_STANDBY", reason)
-        self._emit_power_action_finished("EARLY_STANDBY", reason, "sent_unconfirmed_prewarmed")
         self._log_cached_lock_fast_path_success(reason, event_mono, generation, result)
         return True
 
