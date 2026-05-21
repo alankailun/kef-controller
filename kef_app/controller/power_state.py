@@ -4,11 +4,11 @@ import time
 
 
 class ControllerStateMixin:
-    def _new_generation(self, desired_state: str, reason: str) -> int:
+    def _new_generation(self, desired_state: str, reason: str, *, mono: str | None = None) -> int:
         with self._state_lock:
             self._generation += 1
             generation = self._generation
-            self._log_structured("STATE", desired=desired_state, gen=generation, reason=reason, mono=f"{self.mono():.3f}")
+            self._log_structured("STATE", desired=desired_state, gen=generation, reason=reason, mono=mono or f"{self.mono():.3f}")
             return generation
 
     def _current_generation(self) -> int:

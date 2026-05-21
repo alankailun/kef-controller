@@ -5,6 +5,7 @@ import socket
 import threading
 import time
 import unittest
+from unittest.mock import Mock
 
 from kef_app.config import AppConfig
 from kef_app.controller import KefPowerController
@@ -158,6 +159,87 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         self.assertGreaterEqual(
             sum(1 for request in speaker.requests if request.startswith(b"POST /api/setData")),
             2,
+        )
+
+    def test_cached_prewarmed_send_uses_snapshot_bytes_and_matching_socket(self):
+        with _LoopbackHttpSpeaker() as speaker:
+            controller = self.make_controller(speaker.port, prewarmed_persist_socket=True)
+            controller._prewarmed_standby_tick("unit_test")
+
+            result = controller.try_send_cached_prewarmed_standby()
+            controller._close_prewarmed_socket_holders()
+
+            deadline = time.monotonic() + 1.0
+            while len(speaker.requests) < 2 and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+        self.assertTrue(result.success, result)
+        self.assertTrue(result.fast_path_used)
+        self.assertEqual(result.status, "sent")
+        self.assertEqual(result.target_ip, "127.0.0.1")
+        self.assertEqual(result.mode, "persistent_socket")
+        self.assertIsNotNone(result.cache_version)
+        self.assertTrue(any(request.startswith(b"GET /api/getData") for request in speaker.requests))
+        self.assertTrue(any(b"Host: 127.0.0.1\r\n" in request for request in speaker.requests))
+        self.assertGreaterEqual(
+            sum(1 for request in speaker.requests if request.startswith(b"POST /api/setData")),
+            1,
+        )
+
+    def test_cached_prewarmed_send_skips_when_socket_ip_does_not_match_cache(self):
+        with _LoopbackHttpSpeaker() as speaker:
+            controller = self.make_controller(speaker.port, prewarmed_persist_socket=True)
+            controller._prewarmed_standby_tick("unit_test")
+            controller._fast_standby_send_cache.update(
+                target_ip="127.0.0.2",
+                target_mac="",
+                updated_mono=controller.mono(),
+            )
+
+            result = controller.try_send_cached_prewarmed_standby()
+
+        self.assertFalse(result.success)
+        self.assertFalse(result.fast_path_used)
+        self.assertEqual(result.fast_path_skip_reason, "no_socket_for_cached_ip")
+        self.assertEqual(result.target_ip, "127.0.0.2")
+
+    def test_cached_lock_fast_path_marks_unconfirmed_and_logs_diagnostics(self):
+        with _LoopbackHttpSpeaker() as speaker:
+            controller = self.make_controller(speaker.port, prewarmed_persist_socket=True)
+            controller._prewarmed_standby_tick("unit_test")
+            controller._log_structured = Mock()
+
+            handled = controller.try_handle_cached_lock_fast_path("WTS_SESSION_LOCK", controller.mono())
+            controller._close_prewarmed_socket_holders()
+
+        self.assertTrue(handled)
+        self.assertEqual(controller._early_standby_state.status, "UNCONFIRMED")
+        self.assertEqual(controller._current_generation(), 1)
+        self.assertTrue(
+            any(
+                call.kwargs.get("step") == "prewarmed_standby_send"
+                and call.kwargs.get("fast_path_used") is True
+                and call.kwargs.get("cache_version") is not None
+                and call.kwargs.get("fast_path_duration_ms") is not None
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
+    def test_cached_lock_fast_path_falls_back_when_no_socket(self):
+        controller = self.make_controller(80, prewarmed_persist_socket=True)
+        controller._log_structured = Mock()
+
+        handled = controller.try_handle_cached_lock_fast_path("WTS_SESSION_LOCK", controller.mono())
+
+        self.assertFalse(handled)
+        self.assertEqual(controller._early_standby_state.status, "NONE")
+        self.assertTrue(
+            any(
+                call.kwargs.get("step") == "cached_lock_fast_path"
+                and call.kwargs.get("fast_path_used") is False
+                and call.kwargs.get("fast_path_skip_reason") == "no_socket_for_cached_ip"
+                for call in controller._log_structured.mock_calls
+            )
         )
 
     def test_fast_standby_controller_loopback_benchmark(self):

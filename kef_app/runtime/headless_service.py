@@ -300,11 +300,19 @@ class HeadlessRuntime:
                 if msg == WM_WTSSESSION_CHANGE:
                     if wparam == WTS_SESSION_LOCK:
                         msg_entry_mono = self.controller.mono()
-                        self.controller._record_session_event_state("WTS_SESSION_LOCK", msg_entry_mono)
-                        state_recorded_mono = self.controller.mono()
+                        state_recorded_mono = msg_entry_mono
                         with self.controller.defer_structured_logs() as deferred_logs:
-                            self.controller.on_lock("WTS_SESSION_LOCK")
+                            fast_path_used = self.controller.try_handle_cached_lock_fast_path(
+                                "WTS_SESSION_LOCK",
+                                msg_entry_mono,
+                            )
+                            if not fast_path_used:
+                                self.controller._record_session_event_state("WTS_SESSION_LOCK", msg_entry_mono)
+                                state_recorded_mono = self.controller.mono()
+                                self.controller.on_lock("WTS_SESSION_LOCK")
                             after_on_lock_mono = self.controller.mono()
+                            if fast_path_used:
+                                state_recorded_mono = after_on_lock_mono
                             deferred_logs.flush()
                         self.controller._log_structured(
                             "EVENT",
@@ -324,6 +332,7 @@ class HeadlessRuntime:
                             action="WINDOW_MESSAGE",
                             reason="WTS_SESSION_LOCK",
                             step="lock_fast_path",
+                            fast_path_used=fast_path_used,
                             state_recorded_ms=int(max(0.0, state_recorded_mono - msg_entry_mono) * 1000),
                             before_on_lock_ms=int(max(0.0, state_recorded_mono - msg_entry_mono) * 1000),
                             after_on_lock_ms=int(max(0.0, after_on_lock_mono - msg_entry_mono) * 1000),

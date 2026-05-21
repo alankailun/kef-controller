@@ -11,6 +11,7 @@ from ..storage import PersistedSpeakerState, SpeakerStateStore
 from ..devices.speaker_backend import W2Backend
 from .actions import ControllerDeviceActionsMixin
 from .discovery import ControllerDiscoveryMixin
+from .fast_standby_cache import FastStandbySendCache
 from .feature_state import EarlyStandbyState
 from .logging_mixin import ControllerLoggingMixin
 from .network_timeout import temporary_socket_timeout
@@ -69,6 +70,7 @@ class KefPowerController(
         self._prewarmed_standby_thread: threading.Thread | None = None
         self._prewarmed_standby_holders = []
         self._prewarmed_standby_restart_reason: str | None = None
+        self._fast_standby_send_cache = FastStandbySendCache()
         self._event_listeners: list[Callable[[str, dict[str, Any]], None]] = []
 
         self._current_kef_ip = self._loaded_state.last_ip or config.kef_ip
@@ -107,6 +109,17 @@ class KefPowerController(
         self._last_system_suspend_mono = 0.0
         self._last_system_resume_mono = 0.0
         self._network_interface_dedup: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        self._refresh_fast_standby_send_cache()
+
+    def _refresh_fast_standby_send_cache(self) -> None:
+        with self._ip_lock:
+            target_ip = self._current_kef_ip
+            target_mac = normalize_mac(self.config.kef_mac) or self._target_kef_mac
+        self._fast_standby_send_cache.update(
+            target_ip=target_ip,
+            target_mac=target_mac,
+            updated_mono=self.mono(),
+        )
 
     def add_event_listener(self, listener: Callable[[str, dict[str, Any]], None]) -> None:
         with self._event_listener_lock:

@@ -5,6 +5,7 @@ import threading
 from dataclasses import dataclass
 
 from ..devices.transport import build_standby_request_bytes, is_host_unreachable
+from .fast_standby_cache import FastStandbyCacheSnapshot
 
 
 _PREWARM_RETRY_DELAY_S = 2.0
@@ -26,6 +27,26 @@ class PrewarmedStandbySendResult:
     frozen_s: str = ""
     host_unreachable: bool = False
     so_error: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CachedPrewarmedStandbySendResult:
+    success: bool
+    fast_path_used: bool
+    fast_path_skip_reason: str = ""
+    status: str = ""
+    duration_ms: int = 0
+    target_ip: str = ""
+    target_mac: str = ""
+    mode: str = "persistent_socket"
+    error: str = ""
+    host_unreachable: bool = False
+    so_error: int | None = None
+    cache_version: int | None = None
+    cache_age_ms: int | None = None
+    started_mono: float = 0.0
+    finished_mono: float = 0.0
+    snapshot: FastStandbyCacheSnapshot | None = None
 
 
 class PrewarmedSocketHolder:
@@ -425,4 +446,132 @@ class PrewarmedStandbySocketMonitorMixin:
             target_ip=current_ip,
             mode=mode,
             so_error=0,
+        )
+
+    def try_send_cached_prewarmed_standby(self) -> CachedPrewarmedStandbySendResult:
+        started = self.mono()
+        mode = "persistent_socket"
+        if not self.config.prewarmed_standby_enabled:
+            return CachedPrewarmedStandbySendResult(
+                False,
+                False,
+                fast_path_skip_reason="prewarmed_disabled",
+                status="disabled",
+                started_mono=started,
+                finished_mono=started,
+            )
+        if not self.config.prewarmed_persist_socket:
+            return CachedPrewarmedStandbySendResult(
+                False,
+                False,
+                fast_path_skip_reason="persistent_socket_disabled",
+                status="disabled",
+                started_mono=started,
+                finished_mono=started,
+            )
+
+        snapshot = self._fast_standby_send_cache.read()
+        if snapshot is None:
+            return CachedPrewarmedStandbySendResult(
+                False,
+                False,
+                fast_path_skip_reason="no_cache",
+                status="no_cache",
+                started_mono=started,
+                finished_mono=started,
+            )
+
+        cache_age_ms = int(max(0.0, started - snapshot.updated_mono) * 1000)
+        sock = self._take_prewarmed_socket_holder(snapshot.target_ip)
+        if sock is None:
+            return CachedPrewarmedStandbySendResult(
+                False,
+                False,
+                fast_path_skip_reason="no_socket_for_cached_ip",
+                status="no_socket",
+                target_ip=snapshot.target_ip,
+                target_mac=snapshot.target_mac,
+                mode=mode,
+                cache_version=snapshot.version,
+                cache_age_ms=cache_age_ms,
+                started_mono=started,
+                finished_mono=self.mono(),
+                snapshot=snapshot,
+            )
+
+        deadline_s = float(self.config.prewarmed_send_deadline_s)
+        frozen_limit_s = deadline_s * float(self.config.prewarmed_frozen_send_multiplier)
+        so_error: int | None = None
+        try:
+            sock.settimeout(deadline_s)
+            sock.sendall(snapshot.standby_request_bytes)
+            so_error = int(sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR))
+            if so_error != 0:
+                raise OSError(so_error, "socket SO_ERROR was non-zero after cached standby send")
+            try:
+                sock.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+        except OSError as exc:
+            finished = self.mono()
+            status = (
+                f"so_error_after_send:{so_error}"
+                if so_error not in {None, 0}
+                else f"send_failed:{type(exc).__name__}"
+            )
+            return CachedPrewarmedStandbySendResult(
+                False,
+                False,
+                fast_path_skip_reason="send_oserror",
+                status=status,
+                duration_ms=int(max(0.0, finished - started) * 1000),
+                target_ip=snapshot.target_ip,
+                target_mac=snapshot.target_mac,
+                mode=mode,
+                error=repr(exc),
+                host_unreachable=is_host_unreachable(exc),
+                so_error=so_error,
+                cache_version=snapshot.version,
+                cache_age_ms=cache_age_ms,
+                started_mono=started,
+                finished_mono=finished,
+                snapshot=snapshot,
+            )
+        finally:
+            _close_socket(sock)
+
+        finished = self.mono()
+        elapsed_s = finished - started
+        duration_ms = int(max(0.0, elapsed_s) * 1000)
+        if elapsed_s > frozen_limit_s:
+            return CachedPrewarmedStandbySendResult(
+                False,
+                False,
+                fast_path_skip_reason="frozen_during_send",
+                status="frozen_during_send",
+                duration_ms=duration_ms,
+                target_ip=snapshot.target_ip,
+                target_mac=snapshot.target_mac,
+                mode=mode,
+                cache_version=snapshot.version,
+                cache_age_ms=cache_age_ms,
+                started_mono=started,
+                finished_mono=finished,
+                snapshot=snapshot,
+            )
+
+        return CachedPrewarmedStandbySendResult(
+            True,
+            True,
+            status="sent",
+            duration_ms=duration_ms,
+            target_ip=snapshot.target_ip,
+            target_mac=snapshot.target_mac,
+            mode=mode,
+            so_error=0,
+            cache_version=snapshot.version,
+            cache_age_ms=cache_age_ms,
+            started_mono=started,
+            finished_mono=finished,
+            snapshot=snapshot,
         )

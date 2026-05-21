@@ -69,6 +69,146 @@ class ControllerSessionEventsMixin:
     def on_lock(self, reason: str):
         return get_trigger("lock").fire(self, reason)
 
+    def try_handle_cached_lock_fast_path(self, reason: str, event_mono: float) -> bool:
+        if not self.config.standby_on_lock:
+            self._log_cached_lock_fast_path_skip(reason, event_mono, "lock_standby_disabled")
+            return False
+        if self._session_ending:
+            self._log_cached_lock_fast_path_skip(reason, event_mono, "session_ending")
+            return False
+
+        result = self.try_send_cached_prewarmed_standby()
+        if not result.success:
+            self._log_cached_lock_fast_path_result(reason, event_mono, result)
+            return False
+
+        self._record_session_event_state(reason, event_mono)
+        generation = self._new_generation("sleep", reason, mono=f"{event_mono:.3f}")
+        self._mark_early_standby_sent_unconfirmed()
+        self._mark_power_action_started()
+        self._emit_power_action_started_event("EARLY_STANDBY", reason)
+        self._emit_power_action_finished("EARLY_STANDBY", reason, "sent_unconfirmed_prewarmed")
+        self._log_cached_lock_fast_path_success(reason, event_mono, generation, result)
+        return True
+
+    def _log_cached_lock_fast_path_skip(self, reason: str, event_mono: float, skip_reason: str) -> None:
+        now = self.mono()
+        self._log_structured(
+            "STEP",
+            log_level="info",
+            action="EARLY_STANDBY",
+            reason=reason,
+            step="cached_lock_fast_path",
+            fast_path_used=False,
+            fast_path_skip_reason=skip_reason,
+            since_event_ms=int(max(0.0, now - event_mono) * 1000),
+            mono=f"{now:.3f}",
+        )
+
+    def _log_cached_lock_fast_path_result(self, reason: str, event_mono: float, result) -> None:
+        finished = result.finished_mono or self.mono()
+        fields = {
+            "action": "EARLY_STANDBY",
+            "reason": reason,
+            "step": "cached_lock_fast_path",
+            "status": result.status or "skipped",
+            "fast_path_used": False,
+            "fast_path_skip_reason": result.fast_path_skip_reason or "unknown",
+            "target_ip": result.target_ip or "<empty>",
+            "target_mac": result.target_mac or "<empty>",
+            "duration_ms": result.duration_ms,
+            "since_event_ms": int(max(0.0, (result.started_mono or finished) - event_mono) * 1000),
+            "cache_version": result.cache_version,
+            "cache_age_ms": result.cache_age_ms,
+            "mono": f"{finished:.3f}",
+        }
+        if result.error:
+            fields["error"] = result.error
+        if result.so_error is not None:
+            fields["so_error"] = result.so_error
+        if result.host_unreachable:
+            fields["host_unreachable"] = True
+        self._log_structured("WARN" if result.error else "STEP", log_level="info", **fields)
+
+    def _log_cached_lock_fast_path_success(self, reason: str, event_mono: float, generation: int, result) -> None:
+        started = result.started_mono
+        finished = result.finished_mono
+        since_event_ms = int(max(0.0, started - event_mono) * 1000)
+        common = {
+            "fast_path_used": True,
+            "cache_version": result.cache_version,
+            "cache_age_ms": result.cache_age_ms,
+            "fast_path_duration_ms": result.duration_ms,
+        }
+        self._log_structured(
+            "STEP",
+            log_level="info",
+            action="EARLY_STANDBY",
+            reason=reason,
+            step="early_standby_trigger_entry",
+            event=reason,
+            since_event_ms=since_event_ms,
+            **common,
+            mono=f"{started:.3f}",
+        )
+        self._log_structured("BEGIN", action="EARLY_STANDBY", gen=generation, reason=reason, mono=f"{started:.3f}")
+        self._log_structured(
+            "STEP",
+            log_level="info",
+            action="EARLY_STANDBY",
+            gen=generation,
+            reason=reason,
+            step="lock_fast_path",
+            status="begin",
+            target_ip=result.target_ip,
+            target_mac=result.target_mac or "<empty>",
+            identity_check="cached_snapshot_only",
+            verify_standby=False,
+            **common,
+            mono=f"{started:.3f}",
+        )
+        self._log_structured(
+            "STEP",
+            log_level="info",
+            action="PREWARMED_STANDBY_SOCKET",
+            reason=reason,
+            step="send_enter",
+            target_ip=result.target_ip,
+            mode=result.mode,
+            deadline_s=f"{self.config.prewarmed_send_deadline_s:.2f}",
+            since_windows_event_ms=since_event_ms,
+            **common,
+            mono=f"{started:.3f}",
+        )
+        self._log_structured(
+            "STEP",
+            log_level="info",
+            action="EARLY_STANDBY",
+            gen=generation,
+            reason=reason,
+            step="prewarmed_standby_send",
+            status=result.status,
+            target_ip=result.target_ip,
+            duration_ms=result.duration_ms,
+            mode=result.mode,
+            deadline_s=f"{self.config.prewarmed_send_deadline_s:.2f}",
+            bypass_action_lock=True,
+            read_response=False,
+            so_error=result.so_error,
+            **common,
+            mono=f"{finished:.3f}",
+        )
+        self._log_structured(
+            "END",
+            action="EARLY_STANDBY",
+            gen=generation,
+            reason=reason,
+            outcome="sent_unconfirmed_prewarmed",
+            duration_ms=int(max(0.0, finished - started) * 1000),
+            **common,
+            mono=f"{finished:.3f}",
+        )
+
     def _run_early_standby_trigger(self, trigger, reason: str) -> bool:
         return self._on_early_standby_signal(
             reason,

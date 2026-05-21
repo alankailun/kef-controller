@@ -92,6 +92,7 @@ class ControllerIdentityStateMixin:
             )
             return False
 
+        self._refresh_fast_standby_send_cache()
         self.reset_speaker()
         self._persist_runtime_state(source=f"select:{source}")
         self._log_structured(
@@ -231,6 +232,8 @@ class ControllerIdentityStateMixin:
                 )
         availability_changed = self._mark_identity_probe_success(source=f"identity:{source}")
         if changed:
+            self._refresh_fast_standby_send_cache()
+        if changed:
             self._persist_runtime_state(source=f"identity:{source}")
         if changed or availability_changed:
             self._emit_identity_changed()
@@ -258,6 +261,7 @@ class ControllerIdentityStateMixin:
                 self._emit_identity_changed()
             return False
 
+        self._refresh_fast_standby_send_cache()
         self.reset_speaker()
         self._persist_runtime_state(source=f"ip:{source}")
         self._log_structured(
@@ -320,6 +324,7 @@ class ControllerIdentityStateMixin:
         if not (ip_changed or mac_changed):
             return False
 
+        self._refresh_fast_standby_send_cache()
         if ip_changed:
             self.reset_speaker()
 
