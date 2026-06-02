@@ -15,7 +15,7 @@ from kef_app.controller.actions.standby import (
     STANDARD_STANDBY_POLICY,
     VerifiedStandbyPolicy,
 )
-from kef_app.controller.prewarmed_standby_socket import PrewarmedStandbySendResult
+from kef_app.controller.standby import PrewarmedStandbySendResult
 from kef_app.controller.triggers import TRIGGERS
 from kef_app.devices.transport import FireAndForgetShutdownResult
 from kef_app.devices.transport import is_host_unreachable

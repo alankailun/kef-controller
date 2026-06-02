@@ -4,7 +4,7 @@ from .raw_http import (
     build_http_post_request_bytes,
     fire_and_forget_http_post,
 )
-from .standby import (
+from .standby_request import (
     FireAndForgetShutdownResult,
     build_standby_request_bytes,
     fire_and_forget_standby,

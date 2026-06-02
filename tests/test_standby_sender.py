@@ -3,8 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import Mock
 
-from kef_app.controller.fast_standby_sender import send_fast_standby
-from kef_app.controller.prewarmed_standby_socket import PrewarmedStandbySendResult
+from kef_app.controller.standby import PrewarmedStandbySendResult, send_fast_standby
 from kef_app.devices.transport import FireAndForgetShutdownResult
 
 

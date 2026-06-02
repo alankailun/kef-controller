@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from ..fast_standby_sender import FastStandbySendResult, send_fast_standby
+from ..standby import FastStandbySendResult, send_fast_standby
 from ...devices.transport import FireAndForgetShutdownResult, fire_and_forget_standby
 
 

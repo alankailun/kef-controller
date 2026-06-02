@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Literal
 
-from .prewarmed_standby_socket import PrewarmedStandbySendResult
-from ..devices.transport import FireAndForgetShutdownResult
+from ...devices.transport import FireAndForgetShutdownResult
+from .prewarmed_socket import PrewarmedStandbySendResult
 
 
 FastStandbyStatus = Literal["sent", "host_unreachable", "failed"]

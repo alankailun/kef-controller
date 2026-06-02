@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import unittest
 
-from kef_app.controller.fast_standby_cache import FastStandbySendCache
+from kef_app.controller.standby import FastStandbySendCache
 
 
 class FastStandbySendCacheTests(unittest.TestCase):

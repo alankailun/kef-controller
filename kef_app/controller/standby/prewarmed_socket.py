@@ -4,8 +4,8 @@ import socket
 import threading
 from dataclasses import dataclass
 
-from ..devices.transport import build_standby_request_bytes, is_host_unreachable
-from .fast_standby_cache import FastStandbyCacheSnapshot
+from ...devices.transport import build_standby_request_bytes, is_host_unreachable
+from .cache import FastStandbyCacheSnapshot
 
 
 _PREWARM_RETRY_DELAY_S = 2.0
