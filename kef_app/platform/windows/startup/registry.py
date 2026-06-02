@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import winreg
 
-from .startup_common import STARTUP_KEY
+from .common import STARTUP_KEY
 
 
 @dataclass(frozen=True, slots=True)

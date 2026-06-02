@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from .startup_common import NullLogger, is_frozen_runtime
-from .startup_launch import ensure_preferred_executable, runtime_launch_spec
-from .startup_reconcile import StartupRegistrationState, read_startup_registration_state
+from .common import NullLogger, is_frozen_runtime
+from .launch import ensure_preferred_executable, runtime_launch_spec
+from .reconcile import StartupRegistrationState, read_startup_registration_state
 
 
 def _desired_spec(task_name: str, log=None):

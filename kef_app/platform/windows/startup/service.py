@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .startup_common import (
+from .common import (
     NullLogger,
     clear_last_startup_error,
     get_last_startup_error,
@@ -9,10 +9,10 @@ from .startup_common import (
     normalize_startup_mode,
     set_last_startup_error,
 )
-from .startup_launch import ensure_preferred_executable, runtime_launch_spec
-from .startup_reconcile import StartupRegistrationState, read_startup_registration_state
-from .startup_registry import RegistryStartupEntry, delete_registry_commands, write_registry_command
-from .startup_status import get_effective_startup_registration_mode
+from .launch import ensure_preferred_executable, runtime_launch_spec
+from .reconcile import StartupRegistrationState, read_startup_registration_state
+from .registry import RegistryStartupEntry, delete_registry_commands, write_registry_command
+from .status import get_effective_startup_registration_mode
 from .task_scheduler import ScheduledTaskEntry, create_task, delete_task
 
 

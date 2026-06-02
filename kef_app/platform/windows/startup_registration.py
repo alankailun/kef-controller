@@ -6,7 +6,7 @@ implementation to smaller helpers under ``startup``.
 
 from __future__ import annotations
 
-from .startup.startup_common import (
+from .startup.common import (
     REMOVE_TASK_FLAG,
     REPAIR_TASK_FLAG,
     STARTUP_KEY,
@@ -17,14 +17,14 @@ from .startup.startup_common import (
     normalize_startup_mode,
     startup_error_suggests_repair,
 )
-from .startup.startup_elevation import (
+from .startup.elevation import (
     maybe_handle_startup_task_repair,
     remove_startup_task_with_uac,
     repair_task_startup_with_uac,
 )
-from .startup.startup_launch import ensure_preferred_executable, preferred_executable_path, runtime_launch_spec
-from .startup.startup_service import ensure_startup_registration, set_startup_registered
-from .startup.startup_status import (
+from .startup.launch import ensure_preferred_executable, preferred_executable_path, runtime_launch_spec
+from .startup.service import ensure_startup_registration, set_startup_registered
+from .startup.status import (
     describe_startup_registration,
     describe_startup_registration_status,
     get_effective_startup_registration_mode,

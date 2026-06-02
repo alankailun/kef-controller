@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import xml.etree.ElementTree as ET
 from typing import Optional
 
-from .startup_common import (
+from .common import (
     TASK_XML_NS,
     StartupLaunchSpec,
     format_process_error,

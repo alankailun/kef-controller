@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from typing import Optional
 
-from .startup_common import (
+from .common import (
     NullLogger,
     REPAIR_TASK_FLAG,
     REMOVE_TASK_FLAG,
@@ -17,8 +17,8 @@ from .startup_common import (
     quote_ps,
     set_last_startup_error,
 )
-from .startup_launch import ensure_preferred_executable, launch_helper_spec, runtime_launch_spec
-from .startup_service import set_startup_registered
+from .launch import ensure_preferred_executable, launch_helper_spec, runtime_launch_spec
+from .service import set_startup_registered
 from .task_scheduler import read_task_launch_spec, task_exists
 
 

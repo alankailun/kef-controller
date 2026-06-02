@@ -7,7 +7,7 @@ import sys
 import tempfile
 from typing import Optional
 
-from .startup_common import StartupLaunchSpec, is_frozen_runtime
+from .common import StartupLaunchSpec, is_frozen_runtime
 
 
 def launch_helper_spec(extra_args: list[str]) -> StartupLaunchSpec:

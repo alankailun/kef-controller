@@ -4,13 +4,13 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
-from .startup_common import (
+from .common import (
     StartupLaunchSpec,
     launch_spec_matches_app,
     split_run_value,
     startup_specs_match,
 )
-from .startup_registry import RegistryStartupEntry, read_registry_command, read_registry_commands
+from .registry import RegistryStartupEntry, read_registry_command, read_registry_commands
 from .task_scheduler import ScheduledTaskEntry, list_task_launch_specs, read_task_launch_spec, task_exists
 
 

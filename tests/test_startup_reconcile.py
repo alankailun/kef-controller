@@ -5,14 +5,14 @@ from unittest.mock import Mock, patch
 
 from kef_app.config import AppConfig
 from kef_app.ui.settings.settings_service import save_settings_and_sync_startup, startup_mode_for_ui
-from kef_app.platform.windows.startup.startup_common import StartupLaunchSpec
-from kef_app.platform.windows.startup.startup_reconcile import (
+from kef_app.platform.windows.startup.common import StartupLaunchSpec
+from kef_app.platform.windows.startup.reconcile import (
     StartupRegistrationState,
     read_startup_registration_state,
 )
-from kef_app.platform.windows.startup.startup_registry import RegistryStartupEntry
+from kef_app.platform.windows.startup.registry import RegistryStartupEntry
 from kef_app.platform.windows.startup.task_scheduler import ScheduledTaskEntry
-from kef_app.platform.windows.startup import startup_service
+from kef_app.platform.windows.startup import service as startup_service
 
 
 TASK_NAME = "KEF Controller"
@@ -42,17 +42,17 @@ class StartupReconcileTests(unittest.TestCase):
     def test_state_finds_old_registry_entry_next_to_healthy_task(self):
         with (
             patch(
-                "kef_app.platform.windows.startup.startup_reconcile.read_registry_command",
+                "kef_app.platform.windows.startup.reconcile.read_registry_command",
                 return_value="",
             ),
             patch(
-                "kef_app.platform.windows.startup.startup_reconcile.read_registry_commands",
+                "kef_app.platform.windows.startup.reconcile.read_registry_commands",
                 return_value=(RegistryStartupEntry("Old KEF Controller", OLD.run_value),),
             ),
-            patch("kef_app.platform.windows.startup.startup_reconcile.task_exists", return_value=True),
-            patch("kef_app.platform.windows.startup.startup_reconcile.read_task_launch_spec", return_value=DESIRED),
+            patch("kef_app.platform.windows.startup.reconcile.task_exists", return_value=True),
+            patch("kef_app.platform.windows.startup.reconcile.read_task_launch_spec", return_value=DESIRED),
             patch(
-                "kef_app.platform.windows.startup.startup_reconcile.list_task_launch_specs",
+                "kef_app.platform.windows.startup.reconcile.list_task_launch_specs",
                 return_value=(ScheduledTaskEntry(TASK_NAME, DESIRED),),
             ),
             patch("os.path.exists", return_value=True),
@@ -65,11 +65,11 @@ class StartupReconcileTests(unittest.TestCase):
     def test_explicit_task_mode_does_not_fallback_to_registry(self):
         with (
             patch(
-                "kef_app.platform.windows.startup.startup_service.read_startup_registration_state",
+                "kef_app.platform.windows.startup.service.read_startup_registration_state",
                 return_value=make_state(),
             ),
-            patch("kef_app.platform.windows.startup.startup_service.create_task", return_value=(False, "denied")),
-            patch("kef_app.platform.windows.startup.startup_service.write_registry_command") as write_registry,
+            patch("kef_app.platform.windows.startup.service.create_task", return_value=(False, "denied")),
+            patch("kef_app.platform.windows.startup.service.write_registry_command") as write_registry,
         ):
             ok = startup_service.set_startup_registered(
                 True,
@@ -84,11 +84,11 @@ class StartupReconcileTests(unittest.TestCase):
     def test_legacy_auto_mode_is_treated_as_task_without_registry_fallback(self):
         with (
             patch(
-                "kef_app.platform.windows.startup.startup_service.read_startup_registration_state",
+                "kef_app.platform.windows.startup.service.read_startup_registration_state",
                 return_value=make_state(task_present=True, task_entries=(ScheduledTaskEntry(TASK_NAME, OLD),)),
             ),
-            patch("kef_app.platform.windows.startup.startup_service.create_task", return_value=(False, "denied")),
-            patch("kef_app.platform.windows.startup.startup_service.write_registry_command") as write_registry,
+            patch("kef_app.platform.windows.startup.service.create_task", return_value=(False, "denied")),
+            patch("kef_app.platform.windows.startup.service.write_registry_command") as write_registry,
         ):
             ok = startup_service.set_startup_registered(
                 True,
@@ -117,11 +117,11 @@ class StartupReconcileTests(unittest.TestCase):
         )
         with (
             patch(
-                "kef_app.platform.windows.startup.startup_service.read_startup_registration_state",
+                "kef_app.platform.windows.startup.service.read_startup_registration_state",
                 return_value=state,
             ),
-            patch("kef_app.platform.windows.startup.startup_service.create_task") as create_task,
-            patch("kef_app.platform.windows.startup.startup_service.delete_registry_commands") as delete_registry,
+            patch("kef_app.platform.windows.startup.service.create_task") as create_task,
+            patch("kef_app.platform.windows.startup.service.delete_registry_commands") as delete_registry,
         ):
             ok = startup_service.set_startup_registered(
                 True,
