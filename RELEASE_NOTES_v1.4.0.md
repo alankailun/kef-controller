@@ -51,6 +51,10 @@ standby request that was already several minutes old.
 - **More precise timing evidence.** Deferred structured logging preserves the
   original event timestamps, and lock callback logs now report worker
   scheduling separately from standby execution.
+- **Cleaner internal module names.** Fast standby helpers now live under
+  `controller.standby`, low-level network scan helpers under `devices.scan`,
+  and Windows startup helper modules no longer repeat the `startup_` prefix.
+  These are import-only maintenance moves with no intended behavior change.
 
 ## Compatibility
 
@@ -63,19 +67,21 @@ standby request that was already several minutes old.
 
 ## Tests
 
-- Unit test suite passes: `142 tests`.
+- Unit test suite passes: `144 tests`.
 - Added regression coverage for lock, lid-close, and system-suspend background
   scheduling, event-anchored deadlines, stale-generation cancellation,
   route-preflight behavior, bounded fallback rules, and retry suppression after
   the send gate closes.
+- Confirmed the maintenance renames with the same full unit suite after each
+  rename group.
 
 ## Diff Size From GitHub v1.3.0
 
 Compared with GitHub `v1.3.0` (`d636f4b`), the 1.4.0 tree changes roughly:
 
-- `26` files
-- `1946` insertions
-- `269` deletions
+- `50` files
+- `2449` insertions
+- `566` deletions
 
-Most of the change is standby-path hardening, diagnostics, and regression test
-coverage.
+Most of the change is standby-path hardening, diagnostics, regression test
+coverage, and import-only module organization cleanup.
