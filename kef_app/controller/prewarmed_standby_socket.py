@@ -49,6 +49,19 @@ class CachedPrewarmedStandbySendResult:
     snapshot: FastStandbyCacheSnapshot | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _PrewarmedSocketSendOutcome:
+    success: bool
+    status: str
+    duration_ms: int
+    finished_mono: float
+    error: str = ""
+    frozen_s: str = ""
+    host_unreachable: bool = False
+    so_error: int | None = None
+    abort_reason: str = ""
+
+
 class PrewarmedSocketHolder:
     def __init__(self, sock: socket.socket, ip: str, created_mono: float):
         self.sock = sock
@@ -353,6 +366,84 @@ class PrewarmedStandbySocketMonitorMixin:
         max_age_s = max(5.0, float(self.config.prewarmed_keepalive_interval_s) * 2.5)
         return (self.mono() - last_ok_mono) <= max_age_s
 
+    def _send_standby_over_socket(
+        self,
+        sock: socket.socket,
+        request: bytes,
+        *,
+        target_ip: str,
+        started_mono: float,
+        mode: str,
+        deadline_s: float,
+        frozen_limit_s: float,
+        deadline_mono: float | None = None,
+        generation: int | None = None,
+    ) -> _PrewarmedSocketSendOutcome:
+        so_error: int | None = None
+        try:
+            sock.settimeout(deadline_s)
+            abort_reason = self._bounded_standby_abort_reason(
+                deadline_mono=deadline_mono,
+                generation=generation,
+                target_ip=target_ip,
+            )
+            if abort_reason:
+                finished = self.mono()
+                return _PrewarmedSocketSendOutcome(
+                    False,
+                    f"skipped_{abort_reason}",
+                    int(max(0.0, finished - started_mono) * 1000),
+                    finished,
+                    abort_reason=abort_reason,
+                )
+
+            sock.sendall(request)
+            so_error = int(sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR))
+            if so_error != 0:
+                raise OSError(so_error, "socket SO_ERROR was non-zero after standby send")
+            try:
+                sock.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+        except OSError as exc:
+            finished = self.mono()
+            status = (
+                f"so_error_after_send:{so_error}"
+                if so_error not in {None, 0}
+                else f"send_failed:{type(exc).__name__}"
+            )
+            return _PrewarmedSocketSendOutcome(
+                False,
+                status,
+                int(max(0.0, finished - started_mono) * 1000),
+                finished,
+                error=repr(exc),
+                host_unreachable=is_host_unreachable(exc),
+                so_error=so_error,
+            )
+        finally:
+            _close_socket(sock)
+
+        finished = self.mono()
+        elapsed_s = finished - started_mono
+        duration_ms = int(max(0.0, elapsed_s) * 1000)
+        if elapsed_s > frozen_limit_s:
+            return _PrewarmedSocketSendOutcome(
+                False,
+                "frozen_during_send",
+                duration_ms,
+                finished,
+                frozen_s=f"{elapsed_s:.3f}",
+            )
+
+        return _PrewarmedSocketSendOutcome(
+            True,
+            "sent",
+            duration_ms,
+            finished,
+            so_error=0,
+        )
+
     def try_send_prewarmed_standby(
         self,
         current_ip: str,
@@ -377,8 +468,6 @@ class PrewarmedStandbySocketMonitorMixin:
         frozen_limit_s = deadline_s * float(self.config.prewarmed_frozen_send_multiplier)
         request = build_standby_request_bytes(current_ip)
         started = self.mono()
-        sock = None
-        so_error: int | None = None
         mode = "persistent_socket" if self.config.prewarmed_persist_socket else "short_connection"
         with self._state_lock:
             event_name = self._last_windows_event_name
@@ -396,33 +485,11 @@ class PrewarmedStandbySocketMonitorMixin:
             fields["since_windows_event_ms"] = int(max(0.0, started - event_mono) * 1000)
         self._log_structured("STEP", log_level="info", **fields)
 
-        try:
-            if self.config.prewarmed_persist_socket:
-                sock = self._take_prewarmed_socket_holder(current_ip)
-                if sock is None:
-                    return PrewarmedStandbySendResult(True, False, "no_socket", target_ip=current_ip, mode=mode)
-                sock.settimeout(deadline_s)
-            else:
-                abort_reason = self._bounded_standby_abort_reason(
-                    deadline_mono=deadline_mono,
-                    generation=generation,
-                    target_ip=current_ip,
-                )
-                if abort_reason:
-                    return PrewarmedStandbySendResult(
-                        False,
-                        False,
-                        f"skipped_{abort_reason}",
-                        target_ip=current_ip,
-                        mode=mode,
-                    )
-                sock = _open_tcp_socket(
-                    current_ip,
-                    port=int(self.config.mac_discovery_tcp_port),
-                    timeout=deadline_s,
-                )
-
-            sock.settimeout(deadline_s)
+        if self.config.prewarmed_persist_socket:
+            sock = self._take_prewarmed_socket_holder(current_ip)
+            if sock is None:
+                return PrewarmedStandbySendResult(True, False, "no_socket", target_ip=current_ip, mode=mode)
+        else:
             abort_reason = self._bounded_standby_abort_reason(
                 deadline_mono=deadline_mono,
                 generation=generation,
@@ -430,63 +497,53 @@ class PrewarmedStandbySocketMonitorMixin:
             )
             if abort_reason:
                 return PrewarmedStandbySendResult(
-                    True,
+                    False,
                     False,
                     f"skipped_{abort_reason}",
-                    duration_ms=int(max(0.0, self.mono() - started) * 1000),
                     target_ip=current_ip,
                     mode=mode,
                 )
-            sock.sendall(request)
-            so_error = int(sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR))
-            if so_error != 0:
-                raise OSError(so_error, "socket SO_ERROR was non-zero after standby send")
             try:
-                sock.shutdown(socket.SHUT_WR)
-            except OSError:
-                pass
-        except OSError as exc:
-            duration_ms = int(max(0.0, self.mono() - started) * 1000)
-            status = (
-                f"so_error_after_send:{so_error}"
-                if so_error not in {None, 0}
-                else f"send_failed:{type(exc).__name__}"
-            )
-            return PrewarmedStandbySendResult(
-                True,
-                False,
-                status,
-                duration_ms=duration_ms,
-                target_ip=current_ip,
-                mode=mode,
-                error=repr(exc),
-                host_unreachable=is_host_unreachable(exc),
-                so_error=so_error,
-            )
-        finally:
-            _close_socket(sock)
+                sock = _open_tcp_socket(
+                    current_ip,
+                    port=int(self.config.mac_discovery_tcp_port),
+                    timeout=deadline_s,
+                )
+            except OSError as exc:
+                finished = self.mono()
+                return PrewarmedStandbySendResult(
+                    True,
+                    False,
+                    f"send_failed:{type(exc).__name__}",
+                    duration_ms=int(max(0.0, finished - started) * 1000),
+                    target_ip=current_ip,
+                    mode=mode,
+                    error=repr(exc),
+                    host_unreachable=is_host_unreachable(exc),
+                )
 
-        elapsed_s = self.mono() - started
-        duration_ms = int(max(0.0, elapsed_s) * 1000)
-        if elapsed_s > frozen_limit_s:
-            return PrewarmedStandbySendResult(
-                True,
-                False,
-                "frozen_during_send",
-                duration_ms=duration_ms,
-                target_ip=current_ip,
-                mode=mode,
-                frozen_s=f"{elapsed_s:.3f}",
-            )
-
+        outcome = self._send_standby_over_socket(
+            sock,
+            request,
+            target_ip=current_ip,
+            started_mono=started,
+            mode=mode,
+            deadline_s=deadline_s,
+            frozen_limit_s=frozen_limit_s,
+            deadline_mono=deadline_mono,
+            generation=generation,
+        )
         return PrewarmedStandbySendResult(
             True,
-            True,
-            "sent",
-            duration_ms=duration_ms,
+            outcome.success,
+            outcome.status,
+            duration_ms=outcome.duration_ms,
             target_ip=current_ip,
             mode=mode,
-            so_error=0,
+            error=outcome.error,
+            frozen_s=outcome.frozen_s,
+            host_unreachable=outcome.host_unreachable,
+            so_error=outcome.so_error,
         )
 
     def try_send_cached_prewarmed_standby(
@@ -567,98 +624,56 @@ class PrewarmedStandbySocketMonitorMixin:
 
         deadline_s = float(self.config.prewarmed_send_deadline_s)
         frozen_limit_s = deadline_s * float(self.config.prewarmed_frozen_send_multiplier)
-        so_error: int | None = None
-        try:
-            sock.settimeout(deadline_s)
-            abort_reason = self._bounded_standby_abort_reason(
-                deadline_mono=deadline_mono,
-                generation=generation,
-                target_ip=snapshot.target_ip,
-            )
-            if abort_reason:
-                return CachedPrewarmedStandbySendResult(
-                    False,
-                    False,
-                    fast_path_skip_reason=abort_reason,
-                    status=f"skipped_{abort_reason}",
-                    duration_ms=int(max(0.0, self.mono() - started) * 1000),
-                    target_ip=snapshot.target_ip,
-                    target_mac=snapshot.target_mac,
-                    mode=mode,
-                    cache_version=snapshot.version,
-                    cache_age_ms=cache_age_ms,
-                    started_mono=started,
-                    finished_mono=self.mono(),
-                    snapshot=snapshot,
-                )
-            sock.sendall(snapshot.standby_request_bytes)
-            so_error = int(sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR))
-            if so_error != 0:
-                raise OSError(so_error, "socket SO_ERROR was non-zero after cached standby send")
-            try:
-                sock.shutdown(socket.SHUT_WR)
-            except OSError:
-                pass
-        except OSError as exc:
-            finished = self.mono()
-            status = (
-                f"so_error_after_send:{so_error}"
-                if so_error not in {None, 0}
-                else f"send_failed:{type(exc).__name__}"
-            )
-            return CachedPrewarmedStandbySendResult(
-                False,
-                False,
-                fast_path_skip_reason="send_oserror",
-                status=status,
-                duration_ms=int(max(0.0, finished - started) * 1000),
-                target_ip=snapshot.target_ip,
-                target_mac=snapshot.target_mac,
-                mode=mode,
-                error=repr(exc),
-                host_unreachable=is_host_unreachable(exc),
-                so_error=so_error,
-                cache_version=snapshot.version,
-                cache_age_ms=cache_age_ms,
-                started_mono=started,
-                finished_mono=finished,
-                snapshot=snapshot,
-            )
-        finally:
-            _close_socket(sock)
+        outcome = self._send_standby_over_socket(
+            sock,
+            snapshot.standby_request_bytes,
+            target_ip=snapshot.target_ip,
+            started_mono=started,
+            mode=mode,
+            deadline_s=deadline_s,
+            frozen_limit_s=frozen_limit_s,
+            deadline_mono=deadline_mono,
+            generation=generation,
+        )
+        if not outcome.success:
+            if outcome.abort_reason:
+                fast_path_skip_reason = outcome.abort_reason
+            elif outcome.frozen_s:
+                fast_path_skip_reason = "frozen_during_send"
+            else:
+                fast_path_skip_reason = "send_oserror"
 
-        finished = self.mono()
-        elapsed_s = finished - started
-        duration_ms = int(max(0.0, elapsed_s) * 1000)
-        if elapsed_s > frozen_limit_s:
             return CachedPrewarmedStandbySendResult(
                 False,
                 False,
-                fast_path_skip_reason="frozen_during_send",
-                status="frozen_during_send",
-                duration_ms=duration_ms,
+                fast_path_skip_reason=fast_path_skip_reason,
+                status=outcome.status,
+                duration_ms=outcome.duration_ms,
                 target_ip=snapshot.target_ip,
                 target_mac=snapshot.target_mac,
                 mode=mode,
+                error=outcome.error,
+                host_unreachable=outcome.host_unreachable,
+                so_error=outcome.so_error,
                 cache_version=snapshot.version,
                 cache_age_ms=cache_age_ms,
                 started_mono=started,
-                finished_mono=finished,
+                finished_mono=outcome.finished_mono,
                 snapshot=snapshot,
             )
 
         return CachedPrewarmedStandbySendResult(
             True,
             True,
-            status="sent",
-            duration_ms=duration_ms,
+            status=outcome.status,
+            duration_ms=outcome.duration_ms,
             target_ip=snapshot.target_ip,
             target_mac=snapshot.target_mac,
             mode=mode,
-            so_error=0,
+            so_error=outcome.so_error,
             cache_version=snapshot.version,
             cache_age_ms=cache_age_ms,
             started_mono=started,
-            finished_mono=finished,
+            finished_mono=outcome.finished_mono,
             snapshot=snapshot,
         )

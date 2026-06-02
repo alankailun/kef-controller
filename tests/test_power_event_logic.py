@@ -8,9 +8,12 @@ from kef_app.config import AppConfig
 from kef_app.controller import KefPowerController
 from kef_app.controller.actions.standby import (
     ENDSESSION_STANDBY_POLICY,
+    EndSessionStandbyPolicy,
     FAST_SUSPEND_STANDBY_POLICY,
+    FastStandbyPolicy,
     PREEMPTIVE_STANDBY_POLICY,
     STANDARD_STANDBY_POLICY,
+    VerifiedStandbyPolicy,
 )
 from kef_app.controller.prewarmed_standby_socket import PrewarmedStandbySendResult
 from kef_app.controller.triggers import TRIGGERS
@@ -72,11 +75,21 @@ class PowerEventLogicTests(unittest.TestCase):
             },
         )
 
-    def test_standby_policies_capture_distinct_action_modes(self):
-        self.assertEqual(PREEMPTIVE_STANDBY_POLICY.mode, "fast_request")
+    def test_standby_policies_capture_distinct_path_shapes(self):
+        self.assertIsInstance(PREEMPTIVE_STANDBY_POLICY, FastStandbyPolicy)
         self.assertEqual(PREEMPTIVE_STANDBY_POLICY.action, "EARLY_STANDBY")
         self.assertTrue(PREEMPTIVE_STANDBY_POLICY.host_unreachable_is_success)
+        self.assertEqual(PREEMPTIVE_STANDBY_POLICY.fire_and_forget_outcome, "sent_unconfirmed_fire_and_forget")
+
+        self.assertIsInstance(FAST_SUSPEND_STANDBY_POLICY, FastStandbyPolicy)
         self.assertEqual(FAST_SUSPEND_STANDBY_POLICY.host_unreachable_outcome, "sent_skipped_host_unreachable")
+        self.assertEqual(FAST_SUSPEND_STANDBY_POLICY.disabled_field, "suspend_fast_standby_enabled")
+
+        self.assertIsInstance(STANDARD_STANDBY_POLICY, VerifiedStandbyPolicy)
+        self.assertEqual(STANDARD_STANDBY_POLICY.identity_step, "standby_before_request")
+
+        self.assertIsInstance(ENDSESSION_STANDBY_POLICY, EndSessionStandbyPolicy)
+        self.assertEqual(ENDSESSION_STANDBY_POLICY.identity_step, "endsession_before_request")
 
     def test_network_parameter_notifications_are_deduped_with_summary(self):
         controller = self.make_controller(kef_ip="192.168.1.10")
@@ -139,8 +152,6 @@ class PowerEventLogicTests(unittest.TestCase):
 
         self.assertFalse(controller.start_speaker_event_monitor("PBT_APMRESUMEAUTOMATIC"))
         self.assertEqual(controller._finish_speaker_event_monitor(), "PBT_APMRESUMEAUTOMATIC")
-        self.assertEqual(STANDARD_STANDBY_POLICY.mode, "verified_request")
-        self.assertEqual(ENDSESSION_STANDBY_POLICY.mode, "end_session")
 
     def test_host_unreachable_classifier_does_not_match_connection_refused(self):
         self.assertTrue(is_host_unreachable(self.host_unreachable_error()))
@@ -658,6 +669,45 @@ class PowerEventLogicTests(unittest.TestCase):
         controller.try_send_prewarmed_standby.assert_not_called()
         controller._send_fire_and_forget_shutdown.assert_not_called()
         controller._request_shutdown.assert_not_called()
+
+    def test_fast_send_gate_leaves_deadline_to_raw_transport(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+        )
+        generation = controller._new_generation("sleep", "PBT_APMSUSPEND")
+        deadline_mono = controller.mono() + 1.0
+        check_deadline_values: list[bool] = []
+        controller.try_send_prewarmed_standby = Mock(
+            return_value=PrewarmedStandbySendResult(
+                attempted=True,
+                success=False,
+                status="no_socket",
+                target_ip="192.168.1.10",
+            )
+        )
+
+        def fake_abort_reason(**kwargs) -> str:
+            check_deadline_values.append(kwargs.get("check_deadline", True))
+            return ""
+
+        def fake_fire_and_forget(_ip: str, **kwargs) -> FireAndForgetShutdownResult:
+            self.assertEqual(kwargs["deadline_mono"], deadline_mono)
+            self.assertTrue(kwargs["should_send"]())
+            return self.fire_and_forget_result(True)
+
+        controller._bounded_standby_abort_reason = fake_abort_reason
+        controller._send_fire_and_forget_shutdown = fake_fire_and_forget
+
+        result = controller._send_fast_standby(
+            "192.168.1.10",
+            deadline_mono=deadline_mono,
+            generation=generation,
+        )
+
+        self.assertTrue(result.success)
+        self.assertTrue(check_deadline_values)
+        self.assertTrue(all(value is False for value in check_deadline_values))
 
     def test_bounded_preemptive_standby_skips_when_route_preflight_is_unavailable(self):
         controller = self.make_controller(

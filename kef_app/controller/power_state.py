@@ -52,8 +52,9 @@ class ControllerStateMixin:
         deadline_mono: float | None,
         generation: int | None,
         target_ip: str = "",
+        check_deadline: bool = True,
     ) -> str:
-        if deadline_mono is not None and self.mono() >= deadline_mono:
+        if check_deadline and deadline_mono is not None and self.mono() >= deadline_mono:
             return "deadline_exceeded"
         if generation is not None and self._should_abort_generation(generation):
             return "stale_generation"

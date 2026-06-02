@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import Mock
 
-from kef_app.controller.fast_standby_sender import FastStandbySender
+from kef_app.controller.fast_standby_sender import send_fast_standby
 from kef_app.controller.prewarmed_standby_socket import PrewarmedStandbySendResult
 from kef_app.devices.transport import FireAndForgetShutdownResult
 
@@ -37,15 +37,15 @@ def fire_and_forget_result(
     )
 
 
-class FastStandbySenderTests(unittest.TestCase):
+class FastStandbySendTests(unittest.TestCase):
     def test_uses_prewarmed_success_without_fire_and_forget(self):
         send_fire_and_forget = Mock()
-        sender = FastStandbySender(
+
+        result = send_fast_standby(
+            "192.168.1.10",
             Mock(return_value=prewarmed_result(attempted=True, success=True)),
             send_fire_and_forget,
         )
-
-        result = sender.send("192.168.1.10")
 
         self.assertEqual(result.status, "sent")
         self.assertEqual(result.source, "prewarmed")
@@ -53,24 +53,23 @@ class FastStandbySenderTests(unittest.TestCase):
 
     def test_short_circuits_prewarmed_host_unreachable(self):
         send_fire_and_forget = Mock()
-        sender = FastStandbySender(
+
+        result = send_fast_standby(
+            "192.168.1.10",
             Mock(return_value=prewarmed_result(attempted=True, host_unreachable=True)),
             send_fire_and_forget,
         )
-
-        result = sender.send("192.168.1.10")
 
         self.assertEqual(result.status, "host_unreachable")
         self.assertEqual(result.source, "prewarmed")
         send_fire_and_forget.assert_not_called()
 
     def test_falls_through_to_fire_and_forget_for_other_prewarmed_failure(self):
-        sender = FastStandbySender(
+        result = send_fast_standby(
+            "192.168.1.10",
             Mock(return_value=prewarmed_result(attempted=True)),
             Mock(return_value=fire_and_forget_result(success=True)),
         )
-
-        result = sender.send("192.168.1.10")
 
         self.assertEqual(result.status, "sent")
         self.assertEqual(result.source, "fire_and_forget")
@@ -78,25 +77,23 @@ class FastStandbySenderTests(unittest.TestCase):
         self.assertIsNotNone(result.fire_and_forget)
 
     def test_reports_fire_and_forget_host_unreachable(self):
-        sender = FastStandbySender(
+        result = send_fast_standby(
+            "192.168.1.10",
             Mock(return_value=prewarmed_result(attempted=False)),
             Mock(return_value=fire_and_forget_result(success=False, all_host_unreachable=True)),
         )
-
-        result = sender.send("192.168.1.10")
 
         self.assertEqual(result.status, "host_unreachable")
         self.assertEqual(result.source, "fire_and_forget")
 
     def test_does_not_fall_through_after_send_gate_closes(self):
         send_fire_and_forget = Mock()
-        sender = FastStandbySender(
+        result = send_fast_standby(
+            "192.168.1.10",
             Mock(return_value=prewarmed_result(attempted=True)),
             send_fire_and_forget,
             should_continue=Mock(return_value=False),
         )
-
-        result = sender.send("192.168.1.10")
 
         self.assertEqual(result.status, "failed")
         self.assertEqual(result.source, "prewarmed")

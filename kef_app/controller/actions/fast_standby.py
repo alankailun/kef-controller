@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from ..fast_standby_sender import FastStandbySender, FastStandbySendResult
+from ..fast_standby_sender import FastStandbySendResult, send_fast_standby
 from ...devices.transport import FireAndForgetShutdownResult, fire_and_forget_standby
 
 
@@ -41,19 +41,22 @@ class ControllerFastStandbyMixin:
         generation: int | None = None,
     ) -> FastStandbySendResult:
         if deadline_mono is None and generation is None:
-            return FastStandbySender(
+            return send_fast_standby(
+                current_ip,
                 self.try_send_prewarmed_standby,
                 self._send_fire_and_forget_shutdown,
-            ).send(current_ip)
+            )
 
         def should_send() -> bool:
             return not self._bounded_standby_abort_reason(
                 deadline_mono=deadline_mono,
                 generation=generation,
                 target_ip=current_ip,
+                check_deadline=False,
             )
 
-        return FastStandbySender(
+        return send_fast_standby(
+            current_ip,
             lambda ip: self.try_send_prewarmed_standby(
                 ip,
                 deadline_mono=deadline_mono,
@@ -65,7 +68,7 @@ class ControllerFastStandbyMixin:
                 should_send=should_send,
             ),
             should_continue=should_send,
-        ).send(current_ip)
+        )
 
     def _log_prewarmed_fast_send(
         self,

@@ -180,12 +180,13 @@ class TransportStandbyTests(unittest.TestCase):
         sock = MagicMock()
         sock.__enter__.return_value = sock
         sock.__exit__.return_value = False
+        sock.connect_ex.return_value = 0
 
-        def fake_connect(_address):
+        def fake_settimeout(_timeout):
             nonlocal send_allowed
             send_allowed = False
 
-        sock.connect.side_effect = fake_connect
+        sock.settimeout.side_effect = fake_settimeout
         with patch("kef_app.devices.transport.raw_http.socket.socket", return_value=sock):
             with self.assertRaises(SendAbortedError):
                 _send_one_http_request(
@@ -196,8 +197,38 @@ class TransportStandbyTests(unittest.TestCase):
                     should_send=lambda: send_allowed,
                 )
 
-        sock.connect.assert_called_once_with(("10.0.0.222", 80))
+        sock.connect_ex.assert_called_once_with(("10.0.0.222", 80))
         sock.sendall.assert_not_called()
+
+    def test_single_request_connect_wait_uses_remaining_deadline(self):
+        sock = MagicMock()
+        sock.__enter__.return_value = sock
+        sock.__exit__.return_value = False
+        sock.connect_ex.return_value = 10035
+        sock.getsockopt.return_value = 0
+        select_timeouts: list[float] = []
+
+        def fake_select(_readable, writable, _exceptional, timeout):
+            select_timeouts.append(timeout)
+            return ([], list(writable), [])
+
+        deadline_mono = time.monotonic() + 0.05
+        with (
+            patch("kef_app.devices.transport.raw_http.socket.socket", return_value=sock),
+            patch("kef_app.devices.transport.raw_http.select.select", side_effect=fake_select),
+        ):
+            _send_one_http_request(
+                "10.0.0.222",
+                b"request",
+                port=80,
+                timeout=1.0,
+                deadline_mono=deadline_mono,
+            )
+
+        self.assertEqual(len(select_timeouts), 1)
+        self.assertGreater(select_timeouts[0], 0)
+        self.assertLessEqual(select_timeouts[0], 0.05)
+        sock.sendall.assert_called_once_with(b"request")
 
 
 if __name__ == "__main__":

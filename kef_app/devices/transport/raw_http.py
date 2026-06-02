@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import errno
 import json
+import select
 import socket
 import threading
 import time
@@ -26,6 +28,17 @@ class SendAbortedError(OSError):
     def __init__(self, reason: str):
         super().__init__(reason)
         self.reason = reason
+
+
+_CONNECT_IN_PROGRESS_ERRORS = {
+    errno.EINPROGRESS,
+    errno.EWOULDBLOCK,
+    errno.EALREADY,
+    getattr(errno, "WSAEWOULDBLOCK", 10035),
+    getattr(errno, "WSAEINPROGRESS", 10036),
+    getattr(errno, "WSAEALREADY", 10037),
+}
+_CONNECT_SUCCESS_ERRORS = {0, errno.EISCONN, getattr(errno, "WSAEISCONN", 10056)}
 
 
 def _json_body(payload: Any) -> bytes:
@@ -66,6 +79,52 @@ def _ensure_send_allowed(deadline_mono: float | None, should_send: Callable[[], 
         raise SendAbortedError(reason)
 
 
+def _bounded_socket_timeout(
+    timeout: float,
+    deadline_mono: float | None,
+    should_send: Callable[[], bool] | None,
+) -> float:
+    _ensure_send_allowed(deadline_mono, should_send)
+    bounded_timeout = max(0.0, float(timeout))
+    if deadline_mono is None:
+        return bounded_timeout
+
+    remaining = deadline_mono - time.monotonic()
+    if remaining <= 0:
+        raise SendAbortedError("deadline_exceeded")
+    return min(bounded_timeout, remaining)
+
+
+def _raise_connect_error(error_code: int) -> None:
+    raise OSError(error_code, "connect_ex failed")
+
+
+def _connect_with_deadline(
+    sock: socket.socket,
+    address: tuple[str, int],
+    *,
+    timeout: float,
+    deadline_mono: float | None,
+    should_send: Callable[[], bool] | None,
+) -> None:
+    sock.setblocking(False)
+    error_code = int(sock.connect_ex(address))
+    if error_code in _CONNECT_SUCCESS_ERRORS:
+        return
+    if error_code not in _CONNECT_IN_PROGRESS_ERRORS:
+        _raise_connect_error(error_code)
+
+    wait_timeout = _bounded_socket_timeout(timeout, deadline_mono, should_send)
+    _readable, writable, exceptional = select.select((), (sock,), (sock,), wait_timeout)
+    _ensure_send_allowed(deadline_mono, should_send)
+    if not writable and not exceptional:
+        raise TimeoutError("timed out")
+
+    so_error = int(sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR))
+    if so_error != 0:
+        _raise_connect_error(so_error)
+
+
 def _send_one_http_request(
     ip: str,
     request: bytes,
@@ -77,10 +136,14 @@ def _send_one_http_request(
 ) -> None:
     _ensure_send_allowed(deadline_mono, should_send)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(timeout)
-        _ensure_send_allowed(deadline_mono, should_send)
-        sock.connect((ip, port))
-        sock.settimeout(timeout)
+        _connect_with_deadline(
+            sock,
+            (ip, port),
+            timeout=timeout,
+            deadline_mono=deadline_mono,
+            should_send=should_send,
+        )
+        sock.settimeout(_bounded_socket_timeout(timeout, deadline_mono, should_send))
         _ensure_send_allowed(deadline_mono, should_send)
         sock.sendall(request)
         try:
