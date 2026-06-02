@@ -90,6 +90,7 @@ class ControllerSessionEventsMixin:
         fast_path_enabled = bool(self.config.suspend_fast_standby_enabled)
         self._log_structured(
             "STEP",
+            log_level="info",
             action="STANDBY",
             gen=generation,
             reason=reason,

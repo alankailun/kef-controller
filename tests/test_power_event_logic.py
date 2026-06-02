@@ -235,6 +235,7 @@ class PowerEventLogicTests(unittest.TestCase):
             target=target,
             thread_name=thread_name,
         )
+        controller._log_structured = Mock()
         controller.standby_kef_fast_suspend = Mock(return_value=True)
         controller.standby_kef = Mock(return_value=True)
         event_mono = controller.mono()
@@ -242,6 +243,14 @@ class PowerEventLogicTests(unittest.TestCase):
         scheduled = controller.schedule_suspend_standby("PBT_APMSUSPEND", event_mono)
 
         self.assertTrue(scheduled)
+        self.assertTrue(
+            any(
+                call.args[:1] == ("STEP",)
+                and call.kwargs.get("log_level") == "info"
+                and call.kwargs.get("step") == "schedule_suspend_worker"
+                for call in controller._log_structured.mock_calls
+            )
+        )
         self.assertEqual(captured["thread_name"], "SuspendStandby-1")
         captured["target"]()
         controller.standby_kef_fast_suspend.assert_called_once_with(
