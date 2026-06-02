@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ...devices.discovery import identify_kef_device, is_routable_ipv4
+from ...devices.scan import identify_kef_device, is_routable_ipv4
 from ...devices.speaker_models import SpeakerIdentity
 from ..network_timeout import temporary_socket_timeout
 from .identity_helpers import (

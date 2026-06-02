@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ...devices.discovery import discover_ip_by_mac, discover_kef_device_blind, discover_kef_devices
+from ...devices.scan import discover_ip_by_mac, discover_kef_device_blind, discover_kef_devices
 from ...devices.speaker_models import SpeakerIdentity
 
 

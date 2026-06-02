@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ...devices.discovery import is_routable_ipv4
+from ...devices.scan import is_routable_ipv4
 from ...devices.speaker_models import SpeakerIdentity, normalize_mac
 
 

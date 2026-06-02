@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ...devices.discovery import discover_ip_by_mac, discover_kef_device_blind, is_routable_ipv4, probe_ip_port
+from ...devices.scan import discover_ip_by_mac, discover_kef_device_blind, is_routable_ipv4, probe_ip_port
 from ...devices.speaker_models import SpeakerIdentity, normalize_mac
 from .identity_helpers import TargetValidationResult
 

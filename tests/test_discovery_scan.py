@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from kef_app.config import AppConfig
-from kef_app.devices.discovery.scan import discover_kef_device_blind, discover_kef_devices
+from kef_app.devices.scan.scan import discover_kef_device_blind, discover_kef_devices
 from kef_app.devices.speaker_models import SpeakerIdentity
 
 
@@ -35,11 +35,11 @@ class DiscoveryScanTests(unittest.TestCase):
 
         with (
             patch(
-                "kef_app.devices.discovery.scan.build_candidate_networks",
+                "kef_app.devices.scan.scan.build_candidate_networks",
                 return_value=[ipaddress.IPv4Network("10.0.0.220/30")],
             ),
-            patch("kef_app.devices.discovery.scan.probe_ip_port", return_value=False),
-            patch("kef_app.devices.discovery.scan.identify_kef_device", return_value=identity) as identify,
+            patch("kef_app.devices.scan.scan.probe_ip_port", return_value=False),
+            patch("kef_app.devices.scan.scan.identify_kef_device", return_value=identity) as identify,
         ):
             devices = discover_kef_devices(seed, config, self.make_logger())
 
@@ -53,12 +53,12 @@ class DiscoveryScanTests(unittest.TestCase):
 
         with (
             patch(
-                "kef_app.devices.discovery.scan.build_candidate_networks",
+                "kef_app.devices.scan.scan.build_candidate_networks",
                 return_value=[ipaddress.IPv4Network("10.0.0.220/30")],
             ),
-            patch("kef_app.devices.discovery.scan.probe_ip_port", return_value=False),
-            patch("kef_app.devices.discovery.scan.identify_kef_device", side_effect=[None, identity]) as identify,
-            patch("kef_app.devices.discovery.scan.time.sleep") as sleep,
+            patch("kef_app.devices.scan.scan.probe_ip_port", return_value=False),
+            patch("kef_app.devices.scan.scan.identify_kef_device", side_effect=[None, identity]) as identify,
+            patch("kef_app.devices.scan.scan.time.sleep") as sleep,
         ):
             devices = discover_kef_devices(seed, config, self.make_logger())
 
@@ -73,11 +73,11 @@ class DiscoveryScanTests(unittest.TestCase):
 
         with (
             patch(
-                "kef_app.devices.discovery.scan.build_candidate_networks",
+                "kef_app.devices.scan.scan.build_candidate_networks",
                 return_value=[ipaddress.IPv4Network("10.0.0.220/30")],
             ),
-            patch("kef_app.devices.discovery.scan.probe_ip_port") as probe,
-            patch("kef_app.devices.discovery.scan.identify_kef_device", return_value=identity),
+            patch("kef_app.devices.scan.scan.probe_ip_port") as probe,
+            patch("kef_app.devices.scan.scan.identify_kef_device", return_value=identity),
         ):
             found = discover_kef_device_blind(identity.mac, seed, config, self.make_logger())
 

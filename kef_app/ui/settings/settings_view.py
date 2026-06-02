@@ -20,7 +20,7 @@ from qfluentwidgets import (
 from ...config import AppConfig
 from ...storage import UserConfigStore
 from ...controller import KefPowerController
-from ...devices.discovery import is_routable_ipv4
+from ...devices.scan import is_routable_ipv4
 from ...devices.speaker_models import INPUT_SOURCE_OPTIONS, SpeakerIdentity, normalize_input_source, normalize_mac
 from ...platform.windows import (
     is_startup_registered,
