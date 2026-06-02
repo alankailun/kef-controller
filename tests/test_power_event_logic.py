@@ -273,6 +273,103 @@ class PowerEventLogicTests(unittest.TestCase):
         controller.standby_kef_preemptive.assert_called_once_with(1, "POWER_LID_CLOSED")
         self.assertEqual(controller._current_generation(), 1)
 
+    def test_scheduled_lock_standby_uses_event_anchored_deadline_in_worker(self):
+        controller = self.make_controller(standby_on_lock=True)
+        captured: dict[str, object] = {}
+        controller._start_controller_thread = lambda target, thread_name: captured.update(
+            target=target,
+            thread_name=thread_name,
+        )
+        controller.try_handle_cached_lock_fast_path = Mock(return_value=False)
+        controller._run_early_standby_trigger = Mock(return_value=True)
+        event_mono = controller.mono()
+
+        scheduled = controller.schedule_early_standby("lock", "WTS_SESSION_LOCK", event_mono)
+
+        self.assertTrue(scheduled)
+        self.assertEqual(captured["thread_name"], "EarlyStandby-lock-1")
+        captured["target"]()
+        controller.try_handle_cached_lock_fast_path.assert_called_once_with(
+            "WTS_SESSION_LOCK",
+            event_mono,
+            generation=1,
+            deadline_mono=event_mono + 0.30,
+        )
+        controller._run_early_standby_trigger.assert_called_once()
+        self.assertEqual(controller._run_early_standby_trigger.call_args.kwargs["generation"], 1)
+        self.assertEqual(controller._run_early_standby_trigger.call_args.kwargs["event_mono"], event_mono)
+        self.assertEqual(controller._run_early_standby_trigger.call_args.kwargs["deadline_mono"], event_mono + 0.30)
+
+    def test_scheduled_lid_standby_reuses_bounded_worker_without_lock_fast_path(self):
+        controller = self.make_controller(standby_on_lid_close=True)
+        captured: dict[str, object] = {}
+        controller._start_controller_thread = lambda target, thread_name: captured.update(
+            target=target,
+            thread_name=thread_name,
+        )
+        controller.try_handle_cached_lock_fast_path = Mock()
+        controller._run_early_standby_trigger = Mock(return_value=True)
+        event_mono = controller.mono()
+
+        scheduled = controller.schedule_early_standby("lid_closed", "POWER_LID_CLOSED", event_mono)
+
+        self.assertTrue(scheduled)
+        self.assertEqual(captured["thread_name"], "EarlyStandby-lid_closed-1")
+        captured["target"]()
+        controller.try_handle_cached_lock_fast_path.assert_not_called()
+        controller._run_early_standby_trigger.assert_called_once()
+        self.assertEqual(controller._run_early_standby_trigger.call_args.kwargs["generation"], 1)
+        self.assertEqual(controller._run_early_standby_trigger.call_args.kwargs["event_mono"], event_mono)
+        self.assertEqual(controller._run_early_standby_trigger.call_args.kwargs["deadline_mono"], event_mono + 0.30)
+
+    def test_scheduled_lid_standby_does_not_send_after_event_deadline(self):
+        controller = self.make_controller(standby_on_lid_close=True)
+        captured: dict[str, object] = {}
+        controller._start_controller_thread = lambda target, _thread_name: captured.update(target=target)
+        controller.standby_kef_preemptive = Mock(return_value=True)
+        controller._log_structured = Mock()
+
+        self.assertTrue(
+            controller.schedule_early_standby(
+                "lid_closed",
+                "POWER_LID_CLOSED",
+                controller.mono() - 1.0,
+            )
+        )
+        captured["target"]()
+
+        controller.standby_kef_preemptive.assert_not_called()
+        self.assertTrue(
+            any(
+                call.args[:1] == ("ABORT",)
+                and call.kwargs.get("step") == "before_early_standby_worker_send"
+                and call.kwargs.get("cause") == "deadline_exceeded"
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
+    def test_scheduled_lid_standby_does_not_send_after_generation_changes(self):
+        controller = self.make_controller(standby_on_lid_close=True)
+        captured: dict[str, object] = {}
+        controller._start_controller_thread = lambda target, _thread_name: captured.update(target=target)
+        controller.standby_kef_preemptive = Mock(return_value=True)
+        controller._log_structured = Mock()
+        event_mono = controller.mono()
+
+        self.assertTrue(controller.schedule_early_standby("lid_closed", "POWER_LID_CLOSED", event_mono))
+        controller._new_generation("wake", "WTS_SESSION_UNLOCK")
+        captured["target"]()
+
+        controller.standby_kef_preemptive.assert_not_called()
+        self.assertTrue(
+            any(
+                call.args[:1] == ("ABORT",)
+                and call.kwargs.get("step") == "before_early_standby_worker_send"
+                and call.kwargs.get("cause") == "stale_generation"
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
     def test_on_resume_waits_for_unlock_when_unlock_wake_enabled(self):
         controller = self.make_controller(wake_on_unlock_only=True)
         controller._schedule_delayed_wake = Mock()
@@ -448,6 +545,83 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._request_shutdown.assert_not_called()
         self.assertEqual(controller._early_standby_state.status, "UNCONFIRMED")
         self.assertFalse(controller._recently_early_standby_confirmed())
+
+    def test_bounded_preemptive_standby_does_not_send_after_generation_changes(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+        )
+        sleep_generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
+        controller._new_generation("wake", "WTS_SESSION_UNLOCK")
+        controller.try_send_prewarmed_standby = Mock()
+        controller._send_fire_and_forget_shutdown = Mock()
+        controller._request_shutdown = Mock()
+
+        result = controller.standby_kef_preemptive(
+            sleep_generation,
+            "WTS_SESSION_LOCK",
+            deadline_mono=controller.mono() + 1.0,
+        )
+
+        self.assertFalse(result)
+        controller.try_send_prewarmed_standby.assert_not_called()
+        controller._send_fire_and_forget_shutdown.assert_not_called()
+        controller._request_shutdown.assert_not_called()
+
+    def test_bounded_preemptive_standby_skips_when_route_preflight_is_unavailable(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+        )
+        generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
+        controller.try_send_prewarmed_standby = Mock()
+        controller._send_fire_and_forget_shutdown = Mock()
+        controller._request_shutdown = Mock()
+        controller._log_structured = Mock()
+
+        with patch("kef_app.controller.power_state.has_best_route_to_ipv4", return_value=False):
+            result = controller.standby_kef_preemptive(
+                generation,
+                "WTS_SESSION_LOCK",
+                deadline_mono=controller.mono() + 1.0,
+            )
+
+        self.assertTrue(result)
+        controller.try_send_prewarmed_standby.assert_not_called()
+        controller._send_fire_and_forget_shutdown.assert_not_called()
+        controller._request_shutdown.assert_not_called()
+        self.assertTrue(
+            any(
+                call.args[:1] == ("STEP",)
+                and call.kwargs.get("cause") == "local_route_preflight_unavailable"
+                and call.kwargs.get("status") == "local_network_unavailable_before_suspend"
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
+    def test_bounded_preemptive_standby_does_not_use_standard_fallback(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
+        )
+        generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
+        controller.try_send_prewarmed_standby = Mock(
+            return_value=PrewarmedStandbySendResult(False, False, "no_recent_keepalive")
+        )
+        controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(False))
+        controller._request_shutdown = Mock()
+
+        with patch("kef_app.controller.power_state.has_best_route_to_ipv4", return_value=True):
+            result = controller.standby_kef_preemptive(
+                generation,
+                "WTS_SESSION_LOCK",
+                deadline_mono=controller.mono() + 1.0,
+            )
+
+        self.assertFalse(result)
+        controller.try_send_prewarmed_standby.assert_called_once()
+        controller._send_fire_and_forget_shutdown.assert_called_once()
+        controller._request_shutdown.assert_not_called()
 
     def test_preemptive_standby_uses_prewarmed_send_before_fire_and_forget(self):
         controller = self.make_controller(

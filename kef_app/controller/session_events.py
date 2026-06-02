@@ -6,6 +6,9 @@ import traceback
 from .triggers import get_trigger
 
 
+_EARLY_STANDBY_EVENT_BUDGET_S = 0.30
+
+
 class ControllerSessionEventsMixin:
     @staticmethod
     def _early_standby_event_matches_reason(event_name: str, reason: str) -> bool:
@@ -69,7 +72,70 @@ class ControllerSessionEventsMixin:
     def on_lock(self, reason: str):
         return get_trigger("lock").fire(self, reason)
 
-    def try_handle_cached_lock_fast_path(self, reason: str, event_mono: float) -> bool:
+    def schedule_early_standby(self, trigger_name: str, reason: str, event_mono: float) -> bool:
+        trigger = get_trigger(trigger_name)
+        if not bool(getattr(self.config, trigger.enabled_field)):
+            self._log_structured(
+                "SKIP",
+                action=trigger.action_name,
+                reason=reason,
+                cause=trigger.disabled_cause,
+                mono=f"{self.mono():.3f}",
+            )
+            return False
+        if self._is_session_ending():
+            self._log_structured(
+                "SKIP",
+                action=trigger.action_name,
+                reason=reason,
+                cause="session_ending",
+                mono=f"{self.mono():.3f}",
+            )
+            return False
+
+        generation = self._new_generation("sleep", reason, mono=f"{event_mono:.3f}")
+        deadline_mono = event_mono + _EARLY_STANDBY_EVENT_BUDGET_S
+        self._log_structured(
+            "STEP",
+            log_level="info",
+            action=trigger.action_name,
+            gen=generation,
+            reason=reason,
+            step="schedule_bounded_worker",
+            trigger=trigger_name,
+            event_mono=f"{event_mono:.3f}",
+            deadline_mono=f"{deadline_mono:.3f}",
+            budget_ms=int(_EARLY_STANDBY_EVENT_BUDGET_S * 1000),
+            mono=f"{self.mono():.3f}",
+        )
+
+        def worker():
+            if trigger_name == "lock" and self.try_handle_cached_lock_fast_path(
+                reason,
+                event_mono,
+                generation=generation,
+                deadline_mono=deadline_mono,
+            ):
+                return
+            self._run_early_standby_trigger(
+                trigger,
+                reason,
+                generation=generation,
+                event_mono=event_mono,
+                deadline_mono=deadline_mono,
+            )
+
+        self._start_controller_thread(worker, f"EarlyStandby-{trigger_name}-{generation}")
+        return True
+
+    def try_handle_cached_lock_fast_path(
+        self,
+        reason: str,
+        event_mono: float,
+        *,
+        generation: int | None = None,
+        deadline_mono: float | None = None,
+    ) -> bool:
         if not self.config.standby_on_lock:
             self._log_cached_lock_fast_path_skip(reason, event_mono, "lock_standby_disabled")
             return False
@@ -77,16 +143,21 @@ class ControllerSessionEventsMixin:
             self._log_cached_lock_fast_path_skip(reason, event_mono, "session_ending")
             return False
 
-        result = self.try_send_cached_prewarmed_standby()
+        if deadline_mono is None and generation is None:
+            result = self.try_send_cached_prewarmed_standby()
+        else:
+            result = self.try_send_cached_prewarmed_standby(
+                deadline_mono=deadline_mono,
+                generation=generation,
+            )
         if not result.success:
             self._log_cached_lock_fast_path_result(reason, event_mono, result)
             return False
 
-        # Cached send logs reconstruct event timing from the WM timestamp, so this
-        # state update intentionally happens after the packet is already handed to
-        # the kernel. Slow-path fallback records it before on_lock().
-        self._record_session_event_state(reason, event_mono)
-        generation = self._new_generation("sleep", reason, mono=f"{event_mono:.3f}")
+        if generation is None:
+            # Direct callers do not pre-record the Windows event or generation.
+            self._record_session_event_state(reason, event_mono)
+            generation = self._new_generation("sleep", reason, mono=f"{event_mono:.3f}")
         self._mark_early_standby_sent_unconfirmed()
         self._log_cached_lock_fast_path_success(reason, event_mono, generation, result)
         return True
@@ -209,19 +280,41 @@ class ControllerSessionEventsMixin:
             mono=f"{finished:.3f}",
         )
 
-    def _run_early_standby_trigger(self, trigger, reason: str) -> bool:
+    def _run_early_standby_trigger(
+        self,
+        trigger,
+        reason: str,
+        *,
+        generation: int | None = None,
+        event_mono: float | None = None,
+        deadline_mono: float | None = None,
+    ) -> bool:
         return self._on_early_standby_signal(
             reason,
             enabled=bool(getattr(self.config, trigger.enabled_field)),
             disabled_cause=trigger.disabled_cause,
             action=trigger.action_name,
+            generation=generation,
+            event_mono=event_mono,
+            deadline_mono=deadline_mono,
         )
 
-    def _on_early_standby_signal(self, reason: str, *, enabled: bool, disabled_cause: str, action: str) -> bool:
+    def _on_early_standby_signal(
+        self,
+        reason: str,
+        *,
+        enabled: bool,
+        disabled_cause: str,
+        action: str,
+        generation: int | None = None,
+        event_mono: float | None = None,
+        deadline_mono: float | None = None,
+    ) -> bool:
         entry_mono = self.mono()
         with self._state_lock:
             event_name = self._last_windows_event_name
-            event_mono = float(self._last_windows_event_mono or 0.0)
+            recorded_event_mono = float(self._last_windows_event_mono or 0.0)
+        event_mono = recorded_event_mono if event_mono is None else event_mono
         if self._early_standby_event_matches_reason(event_name, reason):
             fields = {
                 "action": action,
@@ -269,8 +362,29 @@ class ControllerSessionEventsMixin:
                 mono=f"{entry_mono:.3f}",
             )
 
-        generation = self._new_generation("sleep", reason)
-        return self.standby_kef_preemptive(generation, reason)
+        if generation is None:
+            generation = self._new_generation("sleep", reason)
+
+        abort_reason = self._bounded_standby_abort_reason(
+            deadline_mono=deadline_mono,
+            generation=generation if deadline_mono is not None else None,
+        )
+        if abort_reason:
+            self._log_structured(
+                "ABORT",
+                action=action,
+                gen=generation,
+                reason=reason,
+                step="before_early_standby_worker_send",
+                cause=abort_reason,
+                deadline_mono=f"{deadline_mono:.3f}" if deadline_mono is not None else None,
+                mono=f"{self.mono():.3f}",
+            )
+            return False
+
+        if deadline_mono is None:
+            return self.standby_kef_preemptive(generation, reason)
+        return self.standby_kef_preemptive(generation, reason, deadline_mono=deadline_mono)
 
     def on_lid_closed(self, reason: str = "POWER_LID_CLOSED") -> bool:
         return get_trigger("lid_closed").fire(self, reason)

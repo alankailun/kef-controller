@@ -32,9 +32,11 @@ class FastStandbySender:
         self,
         send_prewarmed: Callable[[str], PrewarmedStandbySendResult],
         send_fire_and_forget: Callable[[str], FireAndForgetShutdownResult],
+        should_continue: Callable[[], bool] | None = None,
     ):
         self._send_prewarmed = send_prewarmed
         self._send_fire_and_forget = send_fire_and_forget
+        self._should_continue = should_continue
 
     def send(self, current_ip: str) -> FastStandbySendResult:
         prewarmed = self._send_prewarmed(current_ip)
@@ -43,6 +45,9 @@ class FastStandbySender:
                 return FastStandbySendResult("sent", "prewarmed", prewarmed=prewarmed)
             if prewarmed.host_unreachable:
                 return FastStandbySendResult("host_unreachable", "prewarmed", prewarmed=prewarmed)
+
+        if self._should_continue is not None and not self._should_continue():
+            return FastStandbySendResult("failed", "prewarmed", prewarmed=prewarmed)
 
         fire_and_forget = self._send_fire_and_forget(current_ip)
         if fire_and_forget.success:

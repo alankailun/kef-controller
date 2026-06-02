@@ -289,6 +289,7 @@ class ControllerLoggingMixin:
             lparam=f"0x{lparam:016X}",
             mono=f"{event_mono:.3f}",
         )
+        return event_mono
 
     def log_session_event(self, name: str, wparam: int, lparam: int):
         event_mono = self.mono()

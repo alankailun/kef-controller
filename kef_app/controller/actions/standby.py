@@ -179,6 +179,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         generation: int | None,
         reason: str,
         flags: str = "",
+        deadline_mono: float | None = None,
     ) -> bool:
         outcome = "unknown"
         start_mono = self._log_action_begin(policy.action, generation, reason)
@@ -205,7 +206,12 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
                 success, outcome = self._execute_verified_standby_policy(policy, generation, reason)
                 return success
 
-            success, outcome = self._execute_fast_request_policy(policy, generation, reason)
+            success, outcome = self._execute_fast_request_policy(
+                policy,
+                generation,
+                reason,
+                deadline_mono=deadline_mono,
+            )
             return success
         finally:
             if defer_started_event:
@@ -220,6 +226,8 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         policy: StandbyPolicy,
         generation: int | None,
         reason: str,
+        *,
+        deadline_mono: float | None = None,
     ) -> tuple[bool, str]:
         skipped, outcome = self._standby_skip_session_ending(policy, generation, reason)
         if skipped:
@@ -229,7 +237,56 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             policy,
             generation=generation,
             reason=reason,
+            deadline_mono=deadline_mono,
         )
+
+    def _abort_bounded_standby_if_needed(
+        self,
+        policy: StandbyPolicy,
+        generation: int | None,
+        reason: str,
+        *,
+        deadline_mono: float | None,
+        step: str,
+        target_ip: str = "",
+    ) -> str | None:
+        if deadline_mono is None:
+            return None
+
+        abort_reason = self._bounded_standby_abort_reason(
+            deadline_mono=deadline_mono,
+            generation=generation,
+            target_ip=target_ip,
+        )
+        if not abort_reason:
+            return None
+
+        if abort_reason == "local_route_unavailable":
+            outcome = policy.host_unreachable_outcome
+            self._log_standby(
+                "STEP",
+                policy,
+                generation,
+                reason,
+                step=step,
+                status=policy.host_unreachable_status,
+                cause="local_route_preflight_unavailable",
+                target_ip=target_ip,
+                deadline_mono=f"{deadline_mono:.3f}",
+            )
+            return outcome
+
+        outcome = f"aborted_bounded_{abort_reason}"
+        self._log_standby(
+            "ABORT",
+            policy,
+            generation,
+            reason,
+            step=step,
+            cause=abort_reason,
+            deadline_mono=f"{deadline_mono:.3f}",
+        )
+        return outcome
 
     def _execute_verified_standby_policy(
         self,
@@ -262,7 +319,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             purpose=policy.lock_purpose,
         )
         if outcome is not None:
-            return False, outcome
+            return _outcome_is_success(outcome), outcome
 
         try:
             try:
@@ -369,6 +426,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         *,
         generation: int | None,
         reason: str,
+        deadline_mono: float | None = None,
     ) -> tuple[bool, str]:
         current_ip = self.get_current_kef_ip()
         socket_timeout = float(self._config_value(policy.socket_timeout_field))
@@ -396,6 +454,17 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             )
             return False, outcome
 
+        outcome = self._abort_bounded_standby_if_needed(
+            policy,
+            generation,
+            reason,
+            deadline_mono=deadline_mono,
+            step="before_fast_send",
+            target_ip=current_ip,
+        )
+        if outcome is not None:
+            return _outcome_is_success(outcome), outcome
+
         if policy.fire_and_forget:
             fast_send_result = self._try_fast_standby_send(
                 action=policy.action,
@@ -407,9 +476,33 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
                 host_unreachable_outcome=policy.host_unreachable_outcome,
                 host_unreachable_status=policy.host_unreachable_status,
                 host_unreachable_cause=policy.host_unreachable_cause,
+                deadline_mono=deadline_mono,
             )
             if fast_send_result is not None:
                 return _outcome_is_success(fast_send_result), fast_send_result
+
+        if deadline_mono is not None:
+            outcome = "failed_bounded_fast_send"
+            self._log_standby(
+                "SKIP",
+                policy,
+                generation,
+                reason,
+                cause="bounded_early_standby_does_not_use_standard_fallback",
+                deadline_mono=f"{deadline_mono:.3f}",
+            )
+            return False, outcome
+
+        outcome = self._abort_bounded_standby_if_needed(
+            policy,
+            generation,
+            reason,
+            deadline_mono=deadline_mono,
+            step="before_standard_fallback",
+            target_ip=current_ip,
+        )
+        if outcome is not None:
+            return False, outcome
 
         if generation is None:
             return False, "skipped_missing_generation"
@@ -425,6 +518,17 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             return False, outcome
 
         try:
+            outcome = self._abort_bounded_standby_if_needed(
+                policy,
+                generation,
+                reason,
+                deadline_mono=deadline_mono,
+                step="before_standard_request",
+                target_ip=current_ip,
+            )
+            if outcome is not None:
+                return _outcome_is_success(outcome), outcome
+
             request_start_mono = self.mono()
             self._request_shutdown(fresh=False, timeout=socket_timeout)
             request_finished_mono = self.mono()
@@ -524,8 +628,19 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         finally:
             self._action_lock.release()
 
-    def standby_kef_preemptive(self, generation: int, reason: str) -> bool:
-        return self._execute_standby_policy(PREEMPTIVE_STANDBY_POLICY, generation=generation, reason=reason)
+    def standby_kef_preemptive(
+        self,
+        generation: int,
+        reason: str,
+        *,
+        deadline_mono: float | None = None,
+    ) -> bool:
+        return self._execute_standby_policy(
+            PREEMPTIVE_STANDBY_POLICY,
+            generation=generation,
+            reason=reason,
+            deadline_mono=deadline_mono,
+        )
 
     def standby_kef_end_session(self, reason: str, flags: str) -> bool:
         return self._execute_standby_policy(ENDSESSION_STANDBY_POLICY, generation=None, reason=reason, flags=flags)

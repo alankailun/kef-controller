@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Callable
+
 from .raw_http import FireAndForgetHttpPostResult, build_http_post_request_bytes, fire_and_forget_http_post
 
 
@@ -29,6 +31,8 @@ def fire_and_forget_standby(
     socket_timeout: float = 0.18,
     join_timeout: float = 0.25,
     inline_first_attempt: bool = True,
+    deadline_mono: float | None = None,
+    should_send: Callable[[], bool] | None = None,
 ) -> FireAndForgetShutdownResult:
     return fire_and_forget_http_post(
         ip,
@@ -38,4 +42,6 @@ def fire_and_forget_standby(
         socket_timeout=socket_timeout,
         join_timeout=join_timeout,
         inline_first_attempt=inline_first_attempt,
+        deadline_mono=deadline_mono,
+        should_send=should_send,
     )

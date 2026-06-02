@@ -29,6 +29,7 @@ from .api import (
     get_process_image_path,
     get_raw_command_line,
     guess_launch_source,
+    has_best_route_to_ipv4,
 )
 from .startup_registration import (
     REMOVE_TASK_FLAG,
@@ -100,6 +101,7 @@ __all__ = [
     "get_raw_command_line",
     "get_startup_registration_mode",
     "guess_launch_source",
+    "has_best_route_to_ipv4",
     "is_startup_registered",
     "is_task_startup_current",
     "maybe_handle_startup_task_repair",

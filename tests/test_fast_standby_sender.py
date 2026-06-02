@@ -88,6 +88,20 @@ class FastStandbySenderTests(unittest.TestCase):
         self.assertEqual(result.status, "host_unreachable")
         self.assertEqual(result.source, "fire_and_forget")
 
+    def test_does_not_fall_through_after_send_gate_closes(self):
+        send_fire_and_forget = Mock()
+        sender = FastStandbySender(
+            Mock(return_value=prewarmed_result(attempted=True)),
+            send_fire_and_forget,
+            should_continue=Mock(return_value=False),
+        )
+
+        result = sender.send("192.168.1.10")
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.source, "prewarmed")
+        send_fire_and_forget.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Callable
+
 from ..fast_standby_sender import FastStandbySender, FastStandbySendResult
 from ...devices.transport import FireAndForgetShutdownResult, fire_and_forget_standby
 
@@ -14,22 +16,55 @@ def _outcome_is_success(outcome: str) -> bool:
 
 
 class ControllerFastStandbyMixin:
-    def _send_fire_and_forget_shutdown(self, current_ip: str) -> FireAndForgetShutdownResult:
+    def _send_fire_and_forget_shutdown(
+        self,
+        current_ip: str,
+        *,
+        deadline_mono: float | None = None,
+        should_send: Callable[[], bool] | None = None,
+    ) -> FireAndForgetShutdownResult:
         return fire_and_forget_standby(
             current_ip,
             port=self.config.mac_discovery_tcp_port,
             attempts=_FAST_STANDBY_FIRE_AND_FORGET_ATTEMPTS,
             socket_timeout=_FAST_STANDBY_FIRE_AND_FORGET_SOCKET_TIMEOUT,
             join_timeout=_FAST_STANDBY_FIRE_AND_FORGET_JOIN_TIMEOUT,
+            deadline_mono=deadline_mono,
+            should_send=should_send,
         )
 
     def _send_fast_standby(
         self,
         current_ip: str,
+        *,
+        deadline_mono: float | None = None,
+        generation: int | None = None,
     ) -> FastStandbySendResult:
+        if deadline_mono is None and generation is None:
+            return FastStandbySender(
+                self.try_send_prewarmed_standby,
+                self._send_fire_and_forget_shutdown,
+            ).send(current_ip)
+
+        def should_send() -> bool:
+            return not self._bounded_standby_abort_reason(
+                deadline_mono=deadline_mono,
+                generation=generation,
+                target_ip=current_ip,
+            )
+
         return FastStandbySender(
-            self.try_send_prewarmed_standby,
-            self._send_fire_and_forget_shutdown,
+            lambda ip: self.try_send_prewarmed_standby(
+                ip,
+                deadline_mono=deadline_mono,
+                generation=generation,
+            ),
+            lambda ip: self._send_fire_and_forget_shutdown(
+                ip,
+                deadline_mono=deadline_mono,
+                should_send=should_send,
+            ),
+            should_continue=should_send,
         ).send(current_ip)
 
     def _log_prewarmed_fast_send(
@@ -129,6 +164,8 @@ class ControllerFastStandbyMixin:
             fields.update(extra_fields)
         if result.errors:
             fields["errors"] = "; ".join(result.errors)
+        if result.abort_reason:
+            fields["cause"] = f"bounded_send_{result.abort_reason}"
 
         log_tag = "WARN" if outcome and not _outcome_is_success(outcome) else "STEP"
         self._log_structured(log_tag, log_level="info", **fields)
@@ -146,8 +183,13 @@ class ControllerFastStandbyMixin:
         host_unreachable_outcome: str = "sent_skipped_host_unreachable",
         host_unreachable_status: str = "host_unreachable_assumed_standby",
         host_unreachable_cause: str = "fire_and_forget_host_unreachable",
+        deadline_mono: float | None = None,
     ) -> str | None:
-        fast_result = self._send_fast_standby(current_ip)
+        fast_result = self._send_fast_standby(
+            current_ip,
+            deadline_mono=deadline_mono,
+            generation=generation if deadline_mono is not None else None,
+        )
         self._log_prewarmed_fast_send(
             fast_result,
             action=action,

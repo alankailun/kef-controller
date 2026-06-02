@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import socket
 import sys
 import uuid
 from ctypes import wintypes
@@ -11,6 +12,8 @@ from typing import Callable, Optional
 MB_ICONINFORMATION = 0x40
 ERROR_ALREADY_EXISTS = 183
 ERROR_SUCCESS = 0
+ERROR_NETWORK_UNREACHABLE = 1231
+ERROR_HOST_UNREACHABLE = 1232
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 AF_UNSPEC = 0
 SCOPE_LEVEL_COUNT = 16
@@ -129,6 +132,10 @@ ConvertInterfaceLuidToAlias = iphlpapi.ConvertInterfaceLuidToAlias
 ConvertInterfaceLuidToAlias.argtypes = [ctypes.POINTER(ctypes.c_ulonglong), wintypes.LPWSTR, ctypes.c_size_t]
 ConvertInterfaceLuidToAlias.restype = wintypes.DWORD
 
+GetBestInterfaceEx = iphlpapi.GetBestInterfaceEx
+GetBestInterfaceEx.argtypes = [wintypes.LPVOID, ctypes.POINTER(wintypes.DWORD)]
+GetBestInterfaceEx.restype = wintypes.DWORD
+
 _IP_INTERFACE_NOTIFICATION_TYPES = {
     0: "ParameterNotification",
     1: "AddInstance",
@@ -200,6 +207,38 @@ class IpInterfaceChangeMonitor:
             self.callback(event)
         except Exception:
             return
+
+
+class SOCKADDR_IN(ctypes.Structure):
+    _fields_ = [
+        ("sin_family", wintypes.USHORT),
+        ("sin_port", wintypes.USHORT),
+        ("sin_addr", ctypes.c_ubyte * 4),
+        ("sin_zero", ctypes.c_ubyte * 8),
+    ]
+
+
+def has_best_route_to_ipv4(ip: str) -> bool | None:
+    try:
+        packed_ip = socket.inet_aton(ip)
+    except OSError:
+        return None
+
+    address = SOCKADDR_IN()
+    address.sin_family = socket.AF_INET
+    address.sin_port = 0
+    address.sin_addr[:] = packed_ip
+    interface_index = wintypes.DWORD()
+    try:
+        status = int(GetBestInterfaceEx(ctypes.byref(address), ctypes.byref(interface_index)))
+    except OSError:
+        return None
+
+    if status == ERROR_SUCCESS:
+        return bool(interface_index.value)
+    if status in {ERROR_NETWORK_UNREACHABLE, ERROR_HOST_UNREACHABLE}:
+        return False
+    return None
 
 
 class GUID(ctypes.Structure):

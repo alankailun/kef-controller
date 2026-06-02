@@ -5,8 +5,9 @@ import socket
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+from kef_app.devices.transport.raw_http import SendAbortedError, _send_one_http_request
 from kef_app.devices.transport.standby import build_standby_request_bytes, fire_and_forget_standby
 
 
@@ -148,6 +149,55 @@ class TransportStandbyTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.completed, 1)
         self.assertEqual(calls, [threading.current_thread().name])
+
+    def test_fire_and_forget_does_not_spawn_followups_after_send_gate_closes(self):
+        calls: list[str] = []
+        send_allowed = True
+
+        def fake_send(*_args, **_kwargs):
+            nonlocal send_allowed
+            calls.append(threading.current_thread().name)
+            send_allowed = False
+            raise OSError(10065, "A socket operation was attempted to an unreachable host")
+
+        with patch("kef_app.devices.transport.raw_http._send_one_http_request", side_effect=fake_send):
+            result = fire_and_forget_standby(
+                "10.0.0.222",
+                attempts=3,
+                socket_timeout=0.01,
+                join_timeout=0.25,
+                should_send=lambda: send_allowed,
+            )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.abort_reason, "send_gate_closed")
+        self.assertEqual(result.completed, 1)
+        self.assertEqual(result.pending, 2)
+        self.assertEqual(calls, [threading.current_thread().name])
+
+    def test_single_request_checks_send_gate_again_after_connect(self):
+        send_allowed = True
+        sock = MagicMock()
+        sock.__enter__.return_value = sock
+        sock.__exit__.return_value = False
+
+        def fake_connect(_address):
+            nonlocal send_allowed
+            send_allowed = False
+
+        sock.connect.side_effect = fake_connect
+        with patch("kef_app.devices.transport.raw_http.socket.socket", return_value=sock):
+            with self.assertRaises(SendAbortedError):
+                _send_one_http_request(
+                    "10.0.0.222",
+                    b"request",
+                    port=80,
+                    timeout=0.01,
+                    should_send=lambda: send_allowed,
+                )
+
+        sock.connect.assert_called_once_with(("10.0.0.222", 80))
+        sock.sendall.assert_not_called()
 
 
 if __name__ == "__main__":

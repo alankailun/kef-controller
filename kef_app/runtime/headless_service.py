@@ -267,9 +267,13 @@ class HeadlessRuntime:
                             self.controller.log_power_event("PBT_POWERSETTINGCHANGE_UNPARSED", wparam, lparam)
                             return True
 
-                        self.controller.log_power_setting_event(change, wparam, lparam)
+                        event_mono = self.controller.log_power_setting_event(change, wparam, lparam)
                         if change.name == "GUID_LIDSWITCH_STATE_CHANGE" and change.value == LID_CLOSED:
-                            self.controller.on_lid_closed("POWER_LID_CLOSED")
+                            self.controller.schedule_early_standby(
+                                "lid_closed",
+                                "POWER_LID_CLOSED",
+                                event_mono,
+                            )
                         return True
 
                     if wparam == PBT_APMSUSPEND:
@@ -300,20 +304,8 @@ class HeadlessRuntime:
                 if msg == WM_WTSSESSION_CHANGE:
                     if wparam == WTS_SESSION_LOCK:
                         msg_entry_mono = self.controller.mono()
-                        state_recorded_mono = msg_entry_mono
-                        with self.controller.defer_structured_logs() as deferred_logs:
-                            fast_path_used = self.controller.try_handle_cached_lock_fast_path(
-                                "WTS_SESSION_LOCK",
-                                msg_entry_mono,
-                            )
-                            if not fast_path_used:
-                                self.controller._record_session_event_state("WTS_SESSION_LOCK", msg_entry_mono)
-                                state_recorded_mono = self.controller.mono()
-                                self.controller.on_lock("WTS_SESSION_LOCK")
-                            after_on_lock_mono = self.controller.mono()
-                            if fast_path_used:
-                                state_recorded_mono = after_on_lock_mono
-                            deferred_logs.flush()
+                        self.controller._record_session_event_state("WTS_SESSION_LOCK", msg_entry_mono)
+                        state_recorded_mono = self.controller.mono()
                         self.controller._log_structured(
                             "EVENT",
                             log_level="info",
@@ -321,24 +313,27 @@ class HeadlessRuntime:
                             name="WTS_SESSION_LOCK_MSG_ENTRY",
                             wparam=f"0x{wparam:04X}",
                             session=lparam,
-                            deferred=True,
+                            async_worker=True,
                             mono=f"{msg_entry_mono:.3f}",
                         )
                         self.controller._log_session_event_line("WTS_SESSION_LOCK", wparam, lparam, msg_entry_mono)
-                        after_deferred_log_mono = self.controller.mono()
+                        scheduled = self.controller.schedule_early_standby(
+                            "lock",
+                            "WTS_SESSION_LOCK",
+                            msg_entry_mono,
+                        )
+                        after_schedule_mono = self.controller.mono()
                         self.controller._log_structured(
                             "STEP",
                             log_level="info",
                             action="WINDOW_MESSAGE",
                             reason="WTS_SESSION_LOCK",
-                            step="lock_fast_path",
-                            fast_path_used=fast_path_used,
+                            step="schedule_bounded_early_standby",
+                            scheduled=scheduled,
                             state_recorded_ms=int(max(0.0, state_recorded_mono - msg_entry_mono) * 1000),
-                            before_on_lock_ms=int(max(0.0, state_recorded_mono - msg_entry_mono) * 1000),
-                            after_on_lock_ms=int(max(0.0, after_on_lock_mono - msg_entry_mono) * 1000),
-                            on_lock_duration_ms=int(max(0.0, after_on_lock_mono - state_recorded_mono) * 1000),
-                            deferred_logging_ms=int(max(0.0, after_deferred_log_mono - after_on_lock_mono) * 1000),
-                            mono=f"{after_deferred_log_mono:.3f}",
+                            schedule_duration_ms=int(max(0.0, after_schedule_mono - state_recorded_mono) * 1000),
+                            callback_duration_ms=int(max(0.0, after_schedule_mono - msg_entry_mono) * 1000),
+                            mono=f"{after_schedule_mono:.3f}",
                         )
                         return 0
                     if wparam == WTS_SESSION_UNLOCK:
