@@ -228,6 +228,88 @@ class PowerEventLogicTests(unittest.TestCase):
         controller.standby_kef.assert_not_called()
         self.assertEqual(controller._current_generation(), 1)
 
+    def test_scheduled_suspend_standby_uses_event_anchored_deadline_in_worker(self):
+        controller = self.make_controller(standby_on_sleep=True)
+        captured: dict[str, object] = {}
+        controller._start_controller_thread = lambda target, thread_name: captured.update(
+            target=target,
+            thread_name=thread_name,
+        )
+        controller.standby_kef_fast_suspend = Mock(return_value=True)
+        controller.standby_kef = Mock(return_value=True)
+        event_mono = controller.mono()
+
+        scheduled = controller.schedule_suspend_standby("PBT_APMSUSPEND", event_mono)
+
+        self.assertTrue(scheduled)
+        self.assertEqual(captured["thread_name"], "SuspendStandby-1")
+        captured["target"]()
+        controller.standby_kef_fast_suspend.assert_called_once_with(
+            1,
+            "PBT_APMSUSPEND",
+            deadline_mono=event_mono + 0.30,
+        )
+        controller.standby_kef.assert_not_called()
+
+    def test_scheduled_suspend_standby_does_not_send_after_event_deadline(self):
+        controller = self.make_controller(standby_on_sleep=True)
+        captured: dict[str, object] = {}
+        controller._start_controller_thread = lambda target, _thread_name: captured.update(target=target)
+        controller.standby_kef_fast_suspend = Mock(return_value=True)
+        controller._log_structured = Mock()
+
+        self.assertTrue(controller.schedule_suspend_standby("PBT_APMSUSPEND", controller.mono() - 1.0))
+        captured["target"]()
+
+        controller.standby_kef_fast_suspend.assert_not_called()
+        self.assertTrue(
+            any(
+                call.args[:1] == ("ABORT",)
+                and call.kwargs.get("step") == "before_suspend_worker_send"
+                and call.kwargs.get("cause") == "deadline_exceeded"
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
+    def test_scheduled_suspend_standby_does_not_send_after_generation_changes(self):
+        controller = self.make_controller(standby_on_sleep=True)
+        captured: dict[str, object] = {}
+        controller._start_controller_thread = lambda target, _thread_name: captured.update(target=target)
+        controller.standby_kef_fast_suspend = Mock(return_value=True)
+        controller._log_structured = Mock()
+        event_mono = controller.mono()
+
+        self.assertTrue(controller.schedule_suspend_standby("PBT_APMSUSPEND", event_mono))
+        controller._new_generation("wake", "PBT_APMRESUMEAUTOMATIC")
+        captured["target"]()
+
+        controller.standby_kef_fast_suspend.assert_not_called()
+        self.assertTrue(
+            any(
+                call.args[:1] == ("ABORT",)
+                and call.kwargs.get("step") == "before_suspend_worker_send"
+                and call.kwargs.get("cause") == "stale_generation"
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
+    def test_scheduled_suspend_can_use_full_standby_when_fast_path_disabled(self):
+        controller = self.make_controller(standby_on_sleep=True, suspend_fast_standby_enabled=False)
+        captured: dict[str, object] = {}
+        controller._start_controller_thread = lambda target, thread_name: captured.update(
+            target=target,
+            thread_name=thread_name,
+        )
+        controller.standby_kef_fast_suspend = Mock(return_value=True)
+        controller.standby_kef = Mock(return_value=True)
+
+        self.assertTrue(controller.schedule_suspend_standby("PBT_APMSUSPEND", controller.mono()))
+        self.assertEqual(captured["thread_name"], "SuspendStandby-1")
+        captured["target"]()
+
+        controller.standby_kef_fast_suspend.assert_not_called()
+        controller.standby_kef.assert_called_once_with(1, "PBT_APMSUSPEND")
+
     def test_on_lock_creates_sleep_generation_before_preemptive_standby(self):
         controller = self.make_controller(standby_on_lock=True)
         seen: dict[str, object] = {}

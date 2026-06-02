@@ -488,7 +488,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
                 policy,
                 generation,
                 reason,
-                cause="bounded_early_standby_does_not_use_standard_fallback",
+                cause="bounded_standby_does_not_use_standard_fallback",
                 deadline_mono=f"{deadline_mono:.3f}",
             )
             return False, outcome
@@ -645,8 +645,19 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
     def standby_kef_end_session(self, reason: str, flags: str) -> bool:
         return self._execute_standby_policy(ENDSESSION_STANDBY_POLICY, generation=None, reason=reason, flags=flags)
 
-    def standby_kef_fast_suspend(self, generation: int, reason: str) -> bool:
-        return self._execute_standby_policy(FAST_SUSPEND_STANDBY_POLICY, generation=generation, reason=reason)
+    def standby_kef_fast_suspend(
+        self,
+        generation: int,
+        reason: str,
+        *,
+        deadline_mono: float | None = None,
+    ) -> bool:
+        return self._execute_standby_policy(
+            FAST_SUSPEND_STANDBY_POLICY,
+            generation=generation,
+            reason=reason,
+            deadline_mono=deadline_mono,
+        )
 
     def standby_kef(self, generation: int, reason: str) -> bool:
         return self._execute_standby_policy(STANDARD_STANDBY_POLICY, generation=generation, reason=reason)

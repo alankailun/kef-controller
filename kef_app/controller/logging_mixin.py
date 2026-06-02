@@ -259,6 +259,7 @@ class ControllerLoggingMixin:
             lparam=f"0x{lparam:016X}",
             mono=f"{event_mono:.3f}",
         )
+        return event_mono
 
     def _record_power_event_state(self, name: str, event_mono: float) -> None:
         with self._state_lock:

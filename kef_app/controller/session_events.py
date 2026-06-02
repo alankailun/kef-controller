@@ -7,6 +7,7 @@ from .triggers import get_trigger
 
 
 _EARLY_STANDBY_EVENT_BUDGET_S = 0.30
+_SUSPEND_STANDBY_EVENT_BUDGET_S = 0.30
 
 
 class ControllerSessionEventsMixin:
@@ -71,6 +72,58 @@ class ControllerSessionEventsMixin:
 
     def on_lock(self, reason: str):
         return get_trigger("lock").fire(self, reason)
+
+    def schedule_suspend_standby(self, reason: str, event_mono: float) -> bool:
+        generation = self._new_generation("sleep", reason, mono=f"{event_mono:.3f}")
+        if not self.config.standby_on_sleep:
+            self._log_structured(
+                "SKIP",
+                action="STANDBY",
+                gen=generation,
+                reason=reason,
+                cause="sleep_standby_disabled",
+                mono=f"{self.mono():.3f}",
+            )
+            return False
+
+        deadline_mono = event_mono + _SUSPEND_STANDBY_EVENT_BUDGET_S
+        fast_path_enabled = bool(self.config.suspend_fast_standby_enabled)
+        self._log_structured(
+            "STEP",
+            action="STANDBY",
+            gen=generation,
+            reason=reason,
+            step="schedule_suspend_worker",
+            event_mono=f"{event_mono:.3f}",
+            deadline_mono=f"{deadline_mono:.3f}",
+            budget_ms=int(_SUSPEND_STANDBY_EVENT_BUDGET_S * 1000),
+            mode="fast_request" if fast_path_enabled else "verified_request",
+            mono=f"{self.mono():.3f}",
+        )
+
+        def worker() -> None:
+            abort_reason = self._bounded_standby_abort_reason(
+                deadline_mono=deadline_mono,
+                generation=generation,
+            )
+            if abort_reason:
+                self._log_structured(
+                    "ABORT",
+                    action="STANDBY",
+                    gen=generation,
+                    reason=reason,
+                    step="before_suspend_worker_send",
+                    cause=abort_reason,
+                    mono=f"{self.mono():.3f}",
+                )
+                return
+            if fast_path_enabled:
+                self.standby_kef_fast_suspend(generation, reason, deadline_mono=deadline_mono)
+                return
+            self.standby_kef(generation, reason)
+
+        self._start_controller_thread(worker, f"SuspendStandby-{generation}")
+        return True
 
     def schedule_early_standby(self, trigger_name: str, reason: str, event_mono: float) -> bool:
         trigger = get_trigger(trigger_name)

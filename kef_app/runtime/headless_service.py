@@ -278,10 +278,8 @@ class HeadlessRuntime:
 
                     if wparam == PBT_APMSUSPEND:
                         try:
-                            with self.controller.defer_structured_logs() as deferred_logs:
-                                self.controller.log_power_event("PBT_APMSUSPEND", wparam, lparam)
-                                self.controller.on_suspend("PBT_APMSUSPEND")
-                                deferred_logs.flush()
+                            event_mono = self.controller.log_power_event("PBT_APMSUSPEND", wparam, lparam)
+                            self.controller.schedule_suspend_standby("PBT_APMSUSPEND", event_mono)
                         finally:
                             self.controller.stop_speaker_event_monitor()
                             self.controller.stop_prewarmed_standby_socket_monitor()
