@@ -95,32 +95,34 @@ class PowerEventLogicTests(unittest.TestCase):
         controller = self.make_controller(kef_ip="192.168.1.10")
         controller._log_structured = Mock()
 
-        first = controller._should_suppress_network_interface_event(
-            notification="ParameterNotification",
-            interface="Ethernet",
-            interface_index=11,
-            if_state="down",
-            family=2,
-            metric=0,
-            nl_mtu=0,
-            target_ip="192.168.1.10",
-            event_mono=100.0,
-        )
-        second = controller._should_suppress_network_interface_event(
-            notification="ParameterNotification",
-            interface="Ethernet",
-            interface_index=11,
-            if_state="down",
-            family=23,
-            metric=0,
-            nl_mtu=0,
-            target_ip="192.168.1.10",
-            event_mono=100.1,
-        )
+        with patch("kef_app.controller.logging_mixin.threading.Timer") as timer_factory:
+            first = controller._should_suppress_network_interface_event(
+                notification="ParameterNotification",
+                interface="Ethernet",
+                interface_index=11,
+                if_state="down",
+                family=2,
+                metric=0,
+                nl_mtu=0,
+                target_ip="192.168.1.10",
+                event_mono=100.0,
+            )
+            second = controller._should_suppress_network_interface_event(
+                notification="ParameterNotification",
+                interface="Ethernet",
+                interface_index=11,
+                if_state="down",
+                family=23,
+                metric=0,
+                nl_mtu=0,
+                target_ip="192.168.1.10",
+                event_mono=100.1,
+            )
 
         self.assertFalse(first)
         self.assertTrue(second)
-        controller._flush_network_interface_dedup(("ParameterNotification", "11", "Ethernet", "down"), 100.0)
+        timer_factory.assert_called_once()
+        controller._flush_network_interface_dedup_due(now_mono=100.3)
         self.assertTrue(
             any(
                 call.args[:1] == ("EVENT",)

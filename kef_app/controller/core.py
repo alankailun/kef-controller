@@ -110,6 +110,7 @@ class KefPowerController(
         self._last_system_suspend_mono = 0.0
         self._last_system_resume_mono = 0.0
         self._network_interface_dedup: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        self._network_interface_dedup_timer: threading.Timer | None = None
         self._refresh_fast_standby_send_cache()
 
     def _refresh_fast_standby_send_cache(self) -> None:

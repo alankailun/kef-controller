@@ -7,6 +7,7 @@ from typing import Optional
 
 _SLEEP_CROSSING_MIN_DURATION_S = 5.0
 _NETWORK_INTERFACE_DEDUP_WINDOW_S = 0.2
+_NETWORK_INTERFACE_DEDUP_FLUSH_GRACE_S = 0.05
 
 
 def _get_pykefcontrol_version() -> str:
@@ -329,34 +330,53 @@ class ControllerLoggingMixin:
                 families = existing.get("families")
                 if isinstance(families, set):
                     families.add(str(family))
+                self._ensure_network_interface_dedup_timer_locked(event_mono)
                 return True
 
             expired_summary = existing
             self._network_interface_dedup[key] = summary
+            self._ensure_network_interface_dedup_timer_locked(event_mono)
 
         if expired_summary is not None:
             self._log_network_interface_dedup_summary(expired_summary)
 
-        timer = threading.Timer(
-            _NETWORK_INTERFACE_DEDUP_WINDOW_S + 0.05,
-            self._flush_network_interface_dedup,
-            args=(key, event_mono),
-        )
-        timer.daemon = True
-        timer.start()
         return False
 
-    def _flush_network_interface_dedup(self, key, first_mono: float) -> None:
-        with self._state_lock:
-            summary = self._network_interface_dedup.get(key)
-            if summary is not None and float(summary.get("first_mono") or 0.0) == first_mono:
-                self._network_interface_dedup.pop(key, None)
-            else:
-                summary = None
-
-        if not summary:
+    def _ensure_network_interface_dedup_timer_locked(self, event_mono: float) -> None:
+        if self._network_interface_dedup_timer is not None:
             return
-        self._log_network_interface_dedup_summary(summary)
+        due_mono = event_mono + _NETWORK_INTERFACE_DEDUP_WINDOW_S + _NETWORK_INTERFACE_DEDUP_FLUSH_GRACE_S
+        delay_s = max(0.01, due_mono - self.mono())
+        timer = threading.Timer(delay_s, self._flush_network_interface_dedup_due)
+        timer.daemon = True
+        self._network_interface_dedup_timer = timer
+        timer.start()
+
+    def _flush_network_interface_dedup_due(self, now_mono: float | None = None) -> None:
+        now_mono = self.mono() if now_mono is None else now_mono
+        due_summaries: list[dict[str, object]] = []
+        with self._state_lock:
+            self._network_interface_dedup_timer = None
+            next_due_mono: float | None = None
+            for key, summary in list(self._network_interface_dedup.items()):
+                first_mono = float(summary.get("first_mono") or 0.0)
+                due_mono = first_mono + _NETWORK_INTERFACE_DEDUP_WINDOW_S + _NETWORK_INTERFACE_DEDUP_FLUSH_GRACE_S
+                if now_mono >= due_mono:
+                    self._network_interface_dedup.pop(key, None)
+                    due_summaries.append(summary)
+                    continue
+                if next_due_mono is None or due_mono < next_due_mono:
+                    next_due_mono = due_mono
+
+            if next_due_mono is not None:
+                delay_s = max(0.01, next_due_mono - now_mono)
+                timer = threading.Timer(delay_s, self._flush_network_interface_dedup_due)
+                timer.daemon = True
+                self._network_interface_dedup_timer = timer
+                timer.start()
+
+        for summary in due_summaries:
+            self._log_network_interface_dedup_summary(summary)
 
     def _log_network_interface_dedup_summary(self, summary: dict[str, object]) -> None:
         repeats = int(summary.get("repeats") or 0)

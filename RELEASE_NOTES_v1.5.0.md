@@ -25,6 +25,9 @@ lock waits.
 - **Old defer-log workaround removed.** The structured-log defer buffer is gone
   because async logging addresses the root cause rather than wrapping individual
   call sites.
+- **Less wake/sleep diagnostic thread noise.** Network interface burst dedup now
+  uses one shared flush timer instead of starting a per-burst timer thread, and
+  a dead prewarmed-socket send parameter was removed.
 - **Hot-path invariant documented.** `KefPowerController` now records the rule:
   no synchronous network, no synchronous disk, and no unbounded lock waits in
   Windows message callbacks or pre-suspend paths.
