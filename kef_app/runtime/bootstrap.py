@@ -35,9 +35,7 @@ def build_runtime_context(*, extra_log_handlers: Iterable[logging.Handler] = ())
     user_config_store = UserConfigStore(base_config)
     config = user_config_store.load_or_create()
 
-    log = build_logger(config)
-    for handler in extra_log_handlers:
-        log.addHandler(handler)
+    log = build_logger(config, extra_handlers=extra_log_handlers)
 
     for message in user_config_store.drain_startup_messages():
         log.info(message)

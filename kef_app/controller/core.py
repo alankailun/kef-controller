@@ -53,12 +53,15 @@ class KefPowerController(
         # Lock order for future nested sections: action/discovery locks first,
         # then state/ip locks, and never call network or persistence work while
         # holding _ip_lock or _state_lock.
+        # Time-sensitive Windows callbacks and pre-suspend paths must stay
+        # non-blocking: no sync network, no sync disk, no unbounded lock waits.
+        # Network sends go through bounded raw_http; logging is async. New WM
+        # handlers should capture event mono, dispatch off-pump, and return.
         self._speaker_lock = threading.Lock()
         self._action_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._ip_lock = threading.Lock()
         self._event_listener_lock = threading.Lock()
-        self._structured_log_defer_local = threading.local()
         self._discovery_lock = threading.Lock()
         self._blind_discovery_lock = threading.Lock()
         self._speaker_event_monitor_lock = threading.Lock()

@@ -8,6 +8,7 @@ from .triggers import get_trigger
 
 _EARLY_STANDBY_EVENT_BUDGET_S = 0.30
 _SUSPEND_STANDBY_EVENT_BUDGET_S = 0.30
+_PUMP_CALLBACK_SLOW_THRESHOLD_S = 0.020
 
 
 class ControllerSessionEventsMixin:
@@ -72,6 +73,59 @@ class ControllerSessionEventsMixin:
 
     def on_lock(self, reason: str):
         return get_trigger("lock").fire(self, reason)
+
+    def dispatch_off_pump_standby(
+        self,
+        trigger_name: str,
+        reason: str,
+        event_mono: float,
+        *,
+        callback_started_mono: float | None = None,
+        state_recorded_mono: float | None = None,
+        step: str = "dispatch_off_pump_standby",
+    ) -> bool:
+        dispatch_started_mono = self.mono()
+        scheduled = self.schedule_off_pump_standby(trigger_name, reason, event_mono)
+        finished_mono = self.mono()
+        callback_started_mono = event_mono if callback_started_mono is None else callback_started_mono
+        callback_duration_s = max(0.0, finished_mono - callback_started_mono)
+        callback_duration_ms = int(callback_duration_s * 1000)
+
+        fields: dict[str, object] = {
+            "action": "WINDOW_MESSAGE",
+            "reason": reason,
+            "step": step,
+            "trigger": trigger_name,
+            "scheduled": scheduled,
+            "dispatch_duration_ms": int(max(0.0, finished_mono - dispatch_started_mono) * 1000),
+            "callback_duration_ms": callback_duration_ms,
+            "mono": f"{finished_mono:.3f}",
+        }
+        if state_recorded_mono is not None:
+            fields["state_recorded_ms"] = int(max(0.0, state_recorded_mono - callback_started_mono) * 1000)
+            fields["schedule_duration_ms"] = int(max(0.0, finished_mono - state_recorded_mono) * 1000)
+
+        self._log_structured("STEP", log_level="info", **fields)
+        if callback_duration_s > _PUMP_CALLBACK_SLOW_THRESHOLD_S:
+            self._log_structured(
+                "WARN",
+                log_level="info",
+                action="WINDOW_MESSAGE",
+                reason=reason,
+                step="pump_callback_slow",
+                trigger=trigger_name,
+                callback_duration_ms=callback_duration_ms,
+                threshold_ms=int(_PUMP_CALLBACK_SLOW_THRESHOLD_S * 1000),
+                mono=f"{finished_mono:.3f}",
+            )
+        return scheduled
+
+    def schedule_off_pump_standby(self, trigger_name: str, reason: str, event_mono: float) -> bool:
+        if trigger_name == "suspend":
+            return self.schedule_suspend_standby(reason, event_mono)
+        if trigger_name in {"lock", "lid_closed"}:
+            return self.schedule_early_standby(trigger_name, reason, event_mono)
+        raise ValueError(f"Unknown off-pump standby trigger: {trigger_name}")
 
     def schedule_suspend_standby(self, reason: str, event_mono: float) -> bool:
         generation = self._new_generation("sleep", reason, mono=f"{event_mono:.3f}")

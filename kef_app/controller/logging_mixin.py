@@ -3,53 +3,10 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from dataclasses import dataclass, field
 from typing import Optional
 
 _SLEEP_CROSSING_MIN_DURATION_S = 5.0
 _NETWORK_INTERFACE_DEDUP_WINDOW_S = 0.2
-
-
-@dataclass(slots=True)
-class _DeferredStructuredLogEntry:
-    tag: str
-    log_level: object
-    mono: object
-    fields: dict[str, object]
-
-
-@dataclass(slots=True)
-class _DeferredStructuredLogBuffer:
-    owner: "ControllerLoggingMixin"
-    entries: list[_DeferredStructuredLogEntry] = field(default_factory=list)
-
-    def __enter__(self) -> "_DeferredStructuredLogBuffer":
-        self.owner._structured_log_defer_stack().append(self)
-        return self
-
-    def __exit__(self, _exc_type, _exc, _tb) -> None:
-        stack = self.owner._structured_log_defer_stack()
-        if stack and stack[-1] is self:
-            stack.pop()
-        elif self in stack:
-            stack.remove(self)
-        self.flush()
-
-    def append(self, entry: _DeferredStructuredLogEntry) -> None:
-        self.entries.append(entry)
-
-    def flush(self) -> None:
-        entries = self.entries
-        if not entries:
-            return
-        self.entries = []
-        for entry in entries:
-            self.owner._write_structured_log(
-                entry.tag,
-                log_level=entry.log_level,
-                mono=entry.mono,
-                **entry.fields,
-            )
 
 
 def _get_pykefcontrol_version() -> str:
@@ -73,20 +30,6 @@ def _get_pykefcontrol_version() -> str:
 class ControllerLoggingMixin:
     def mono(self) -> float:
         return time.monotonic()
-
-    def _structured_log_defer_stack(self) -> list[_DeferredStructuredLogBuffer]:
-        local = getattr(self, "_structured_log_defer_local", None)
-        if local is None:
-            local = threading.local()
-            self._structured_log_defer_local = local
-        stack = getattr(local, "stack", None)
-        if stack is None:
-            stack = []
-            local.stack = stack
-        return stack
-
-    def defer_structured_logs(self) -> _DeferredStructuredLogBuffer:
-        return _DeferredStructuredLogBuffer(self)
 
     @staticmethod
     def _coerce_log_level(level: object) -> Optional[int]:
@@ -117,12 +60,6 @@ class ControllerLoggingMixin:
         return logging.INFO
 
     def _log_structured(self, tag: str, *, log_level: object = None, mono: object = None, **fields):
-        stack = self._structured_log_defer_stack()
-        if stack:
-            if mono is None and "mono" not in fields:
-                mono = f"{self.mono():.3f}"
-            stack[-1].append(_DeferredStructuredLogEntry(tag, log_level, mono, dict(fields)))
-            return
         self._write_structured_log(tag, log_level=log_level, mono=mono, **fields)
 
     def _write_structured_log(self, tag: str, *, log_level: object = None, mono: object = None, **fields):
@@ -247,8 +184,8 @@ class ControllerLoggingMixin:
         )
         self.log.info("=" * 64)
 
-    def log_power_event(self, name: str, wparam: int, lparam: int):
-        event_mono = self.mono()
+    def log_power_event(self, name: str, wparam: int, lparam: int, *, event_mono: float | None = None):
+        event_mono = self.mono() if event_mono is None else event_mono
         self._record_power_event_state(name, event_mono)
 
         self._log_structured(
@@ -272,8 +209,8 @@ class ControllerLoggingMixin:
                 self._last_system_resume_mono = event_mono
                 self._system_sleep_pending = False
 
-    def log_power_setting_event(self, change, wparam: int, lparam: int):
-        event_mono = self.mono()
+    def log_power_setting_event(self, change, wparam: int, lparam: int, *, event_mono: float | None = None):
+        event_mono = self.mono() if event_mono is None else event_mono
         with self._state_lock:
             self._last_windows_event_name = change.name
             self._last_windows_event_mono = event_mono

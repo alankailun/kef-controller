@@ -4,8 +4,8 @@
 [Setup]
 AppId={{8D6C2E54-89C6-4B9F-AE63-8F8A2A814101}
 AppName=KEF Controller
-AppVersion=1.4.0
-AppVerName=KEF Controller 1.4.0
+AppVersion=1.5.0
+AppVerName=KEF Controller 1.5.0
 DefaultDirName={autopf}\KEF Controller
 DefaultGroupName=KEF Controller
 DisableProgramGroupPage=yes

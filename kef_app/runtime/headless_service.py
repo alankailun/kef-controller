@@ -15,6 +15,7 @@ import win32gui
 
 from ..config import AppConfig
 from ..controller import KefPowerController
+from .logging_setup import shutdown_logger
 from ..platform.windows import (
     DEVICE_NOTIFY_WINDOW_HANDLE,
     IpInterfaceChangeMonitor,
@@ -262,24 +263,39 @@ class HeadlessRuntime:
 
                 if msg == WM_POWERBROADCAST:
                     if wparam == PBT_POWERSETTINGCHANGE:
+                        event_mono = self.controller.mono()
                         change = decode_power_setting_change(lparam)
                         if change is None:
-                            self.controller.log_power_event("PBT_POWERSETTINGCHANGE_UNPARSED", wparam, lparam)
+                            self.controller.log_power_event(
+                                "PBT_POWERSETTINGCHANGE_UNPARSED",
+                                wparam,
+                                lparam,
+                                event_mono=event_mono,
+                            )
                             return True
 
-                        event_mono = self.controller.log_power_setting_event(change, wparam, lparam)
+                        self.controller.log_power_setting_event(change, wparam, lparam, event_mono=event_mono)
                         if change.name == "GUID_LIDSWITCH_STATE_CHANGE" and change.value == LID_CLOSED:
-                            self.controller.schedule_early_standby(
+                            self.controller.dispatch_off_pump_standby(
                                 "lid_closed",
                                 "POWER_LID_CLOSED",
                                 event_mono,
+                                callback_started_mono=event_mono,
+                                step="dispatch_bounded_early_standby",
                             )
                         return True
 
                     if wparam == PBT_APMSUSPEND:
+                        event_mono = self.controller.mono()
                         try:
-                            event_mono = self.controller.log_power_event("PBT_APMSUSPEND", wparam, lparam)
-                            self.controller.schedule_suspend_standby("PBT_APMSUSPEND", event_mono)
+                            self.controller.log_power_event("PBT_APMSUSPEND", wparam, lparam, event_mono=event_mono)
+                            self.controller.dispatch_off_pump_standby(
+                                "suspend",
+                                "PBT_APMSUSPEND",
+                                event_mono,
+                                callback_started_mono=event_mono,
+                                step="dispatch_suspend_standby",
+                            )
                         finally:
                             self.controller.stop_speaker_event_monitor()
                             self.controller.stop_prewarmed_standby_socket_monitor()
@@ -315,23 +331,13 @@ class HeadlessRuntime:
                             mono=f"{msg_entry_mono:.3f}",
                         )
                         self.controller._log_session_event_line("WTS_SESSION_LOCK", wparam, lparam, msg_entry_mono)
-                        scheduled = self.controller.schedule_early_standby(
+                        self.controller.dispatch_off_pump_standby(
                             "lock",
                             "WTS_SESSION_LOCK",
                             msg_entry_mono,
-                        )
-                        after_schedule_mono = self.controller.mono()
-                        self.controller._log_structured(
-                            "STEP",
-                            log_level="info",
-                            action="WINDOW_MESSAGE",
-                            reason="WTS_SESSION_LOCK",
-                            step="schedule_bounded_early_standby",
-                            scheduled=scheduled,
-                            state_recorded_ms=int(max(0.0, state_recorded_mono - msg_entry_mono) * 1000),
-                            schedule_duration_ms=int(max(0.0, after_schedule_mono - state_recorded_mono) * 1000),
-                            callback_duration_ms=int(max(0.0, after_schedule_mono - msg_entry_mono) * 1000),
-                            mono=f"{after_schedule_mono:.3f}",
+                            state_recorded_mono=state_recorded_mono,
+                            callback_started_mono=msg_entry_mono,
+                            step="dispatch_bounded_early_standby",
                         )
                         return 0
                     if wparam == WTS_SESSION_UNLOCK:
@@ -466,6 +472,7 @@ class HeadlessRuntime:
                 f"uptime={uptime_seconds(self.process_start_mono):.1f}s class_registered={class_registered} "
                 f"session_notify_registered={session_notify_registered}"
             )
+            shutdown_logger(self.log)
             logging.shutdown()
 
 

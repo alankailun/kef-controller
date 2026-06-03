@@ -131,18 +131,43 @@ class PowerEventLogicTests(unittest.TestCase):
             )
         )
 
-    def test_structured_logs_can_be_deferred_until_after_critical_work(self):
+    def test_off_pump_dispatch_routes_time_sensitive_standby_events(self):
         controller = self.make_controller()
-        controller.log = Mock()
-        controller.log.isEnabledFor.return_value = True
+        controller.schedule_early_standby = Mock(return_value=True)
+        controller.schedule_suspend_standby = Mock(return_value=True)
+        controller._log_structured = Mock()
 
-        with controller.defer_structured_logs() as deferred_logs:
-            controller._log_structured("STEP", log_level="info", action="UNIT", step="before_send")
-            controller.log.log.assert_not_called()
-            deferred_logs.flush()
+        self.assertTrue(controller.dispatch_off_pump_standby("lock", "WTS_SESSION_LOCK", 100.0))
+        self.assertTrue(controller.dispatch_off_pump_standby("lid_closed", "POWER_LID_CLOSED", 101.0))
+        self.assertTrue(controller.dispatch_off_pump_standby("suspend", "PBT_APMSUSPEND", 102.0))
 
-        controller.log.log.assert_called_once()
-        self.assertIn("step=before_send", controller.log.log.call_args.args[1])
+        controller.schedule_early_standby.assert_any_call("lock", "WTS_SESSION_LOCK", 100.0)
+        controller.schedule_early_standby.assert_any_call("lid_closed", "POWER_LID_CLOSED", 101.0)
+        controller.schedule_suspend_standby.assert_called_once_with("PBT_APMSUSPEND", 102.0)
+
+    def test_off_pump_dispatch_warns_when_pump_callback_is_slow(self):
+        controller = self.make_controller()
+        controller.schedule_off_pump_standby = Mock(return_value=True)
+        controller._log_structured = Mock()
+        controller.mono = Mock(side_effect=[100.001, 100.030])
+
+        scheduled = controller.dispatch_off_pump_standby(
+            "lock",
+            "WTS_SESSION_LOCK",
+            100.0,
+            callback_started_mono=100.0,
+            step="unit_dispatch",
+        )
+
+        self.assertTrue(scheduled)
+        self.assertTrue(
+            any(
+                call.args[:1] == ("WARN",)
+                and call.kwargs.get("step") == "pump_callback_slow"
+                and call.kwargs.get("callback_duration_ms") == 30
+                for call in controller._log_structured.mock_calls
+            )
+        )
 
     def test_event_monitor_records_restart_request_while_stopping(self):
         controller = self.make_controller(home_event_poll_enabled=True)
