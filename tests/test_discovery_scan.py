@@ -3,7 +3,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from kef_app.config import AppConfig
 from kef_app.devices.scan.scan import discover_ip_by_mac, discover_kef_device_blind, discover_kef_devices
@@ -94,6 +94,34 @@ class DiscoveryScanTests(unittest.TestCase):
         self.assertEqual(identify.call_count, 2)
         sleep.assert_called_once_with(0.35)
 
+    def test_manual_scan_probes_all_candidate_networks_in_one_pool(self):
+        config = AppConfig()
+        executor = Mock()
+
+        with (
+            patch(
+                "kef_app.devices.scan.scan.build_candidate_networks",
+                return_value=[
+                    ipaddress.IPv4Network("10.0.0.0/30"),
+                    ipaddress.IPv4Network("10.0.1.0/30"),
+                ],
+            ),
+            patch("kef_app.devices.scan.scan.ThreadPoolExecutor") as executor_cls,
+            patch("kef_app.devices.scan.scan._reachable_hosts", return_value=[]) as reachable,
+            patch("kef_app.devices.scan.scan._identify_hosts") as identify,
+        ):
+            executor_cls.return_value.__enter__.return_value = executor
+            devices = discover_kef_devices(None, config, self.make_logger())
+
+        self.assertEqual(devices, [])
+        executor_cls.assert_called_once_with(max_workers=4)
+        reachable.assert_called_once_with(
+            executor,
+            ["10.0.0.1", "10.0.0.2", "10.0.1.1", "10.0.1.2"],
+            config,
+        )
+        identify.assert_not_called()
+
     def test_full_scan_matches_seed_before_broad_scan(self):
         config = AppConfig()
         seed = "10.0.0.222"
@@ -113,6 +141,36 @@ class DiscoveryScanTests(unittest.TestCase):
         self.assertEqual(found.ip, seed)
         self.assertEqual(found.matched_by, "target_mac")
         probe.assert_not_called()
+
+    def test_full_scan_probes_all_candidate_networks_in_one_pool(self):
+        config = AppConfig()
+        identity = self.make_identity("10.0.1.2")
+        executor = Mock()
+
+        with (
+            patch(
+                "kef_app.devices.scan.scan.build_candidate_networks",
+                return_value=[
+                    ipaddress.IPv4Network("10.0.0.0/30"),
+                    ipaddress.IPv4Network("10.0.1.0/30"),
+                ],
+            ),
+            patch("kef_app.devices.scan.scan.ThreadPoolExecutor") as executor_cls,
+            patch("kef_app.devices.scan.scan._reachable_hosts", return_value=["10.0.1.2"]) as reachable,
+            patch("kef_app.devices.scan.scan._identify_hosts", return_value=[identity]) as identify,
+        ):
+            executor_cls.return_value.__enter__.return_value = executor
+            found = discover_kef_device_blind(identity.mac, None, config, self.make_logger())
+
+        self.assertIsNotNone(found)
+        self.assertEqual(found.ip, "10.0.1.2")
+        executor_cls.assert_called_once_with(max_workers=4)
+        reachable.assert_called_once_with(
+            executor,
+            ["10.0.0.1", "10.0.0.2", "10.0.1.1", "10.0.1.2"],
+            config,
+        )
+        identify.assert_called_once_with(executor, ["10.0.1.2"], config)
 
 
 if __name__ == "__main__":

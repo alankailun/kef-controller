@@ -14,12 +14,6 @@ _SEED_IDENTITY_HTTP_TIMEOUT_FLOOR_S = 1.50
 _SEED_IDENTITY_RETRY_DELAY_S = 0.35
 
 
-def _prioritize_seed(hosts: list[str], seed_ip: Optional[str]) -> list[str]:
-    if seed_ip and seed_ip in hosts:
-        return [seed_ip] + [h for h in hosts if h != seed_ip]
-    return hosts
-
-
 def _candidate_summary(candidate: SpeakerIdentity) -> str:
     return (
         f"{candidate.ip}:{candidate.speaker_model or '?'}:{candidate.speaker_name or '<unnamed>'}:"
@@ -65,6 +59,37 @@ def _identify_hosts(
 
 def _shared_discovery_workers(host_count: int, config: AppConfig) -> int:
     return max(1, min(host_count, max(config.mac_discovery_max_workers, config.blind_discovery_max_workers)))
+
+
+def _candidate_hosts(networks: list[ipaddress.IPv4Network], seed_ip: Optional[str]) -> list[str]:
+    seen: set[str] = set()
+    hosts: list[str] = []
+    for network in networks:
+        for host in network.hosts():
+            host_ip = str(host)
+            if host_ip in seen:
+                continue
+            seen.add(host_ip)
+            if seed_ip and host_ip == seed_ip:
+                hosts.insert(0, host_ip)
+            else:
+                hosts.append(host_ip)
+    return hosts
+
+
+def _scan_candidate_hosts(
+    networks: list[ipaddress.IPv4Network],
+    seed_ip: Optional[str],
+    config: AppConfig,
+) -> tuple[list[str], list[str], list[SpeakerIdentity]]:
+    hosts = _candidate_hosts(networks, seed_ip)
+    if not hosts:
+        return [], [], []
+
+    with ThreadPoolExecutor(max_workers=_shared_discovery_workers(len(hosts), config)) as executor:
+        reachable_hosts = _reachable_hosts(executor, hosts, config)
+        identities = _identify_hosts(executor, reachable_hosts, config) if reachable_hosts else []
+    return hosts, reachable_hosts, identities
 
 
 def _probe_seed_identity(
@@ -122,25 +147,19 @@ def discover_kef_devices(seed_ip: Optional[str], config: AppConfig, log) -> list
         total_identified_kef += 1
         candidates_by_ip[seed_identity.ip] = seed_identity
 
-    for network in networks:
-        network_started = time.monotonic()
-        hosts = _prioritize_seed([str(host) for host in network.hosts()], seed_ip)
+    probe_started = time.monotonic()
+    hosts, reachable_hosts, identities = _scan_candidate_hosts(networks, seed_ip, config)
+    total_reachable_hosts += len(reachable_hosts)
+    total_identified_kef += len(identities)
+    for identity in identities:
+        candidates_by_ip[identity.ip] = identity
 
-        with ThreadPoolExecutor(max_workers=_shared_discovery_workers(len(hosts), config)) as executor:
-            reachable_hosts = _reachable_hosts(executor, hosts, config)
-            identities = _identify_hosts(executor, reachable_hosts, config) if reachable_hosts else []
-
-        total_reachable_hosts += len(reachable_hosts)
-        identified_count = len(identities)
-        for identity in identities:
-            candidates_by_ip[identity.ip] = identity
-
-        total_identified_kef += identified_count
-        log.info(
-            "Manual scan network finished | "
-            f"network={network} hosts={len(hosts)} reachable_hosts_count={len(reachable_hosts)} "
-            f"identified_kef_count={identified_count} duration_ms={int((time.monotonic() - network_started) * 1000)}"
-        )
+    log.info(
+        "Manual scan networks finished | "
+        f"networks={[str(n) for n in networks]} hosts={len(hosts)} "
+        f"reachable_hosts_count={len(reachable_hosts)} identified_kef_count={len(identities)} "
+        f"duration_ms={int((time.monotonic() - probe_started) * 1000)}"
+    )
 
     if seed_ip and seed_ip not in candidates_by_ip:
         seed_identity = _probe_seed_identity(
@@ -201,34 +220,28 @@ def discover_kef_device_blind(known_mac: str, seed_ip: Optional[str], config: Ap
             )
             return seed_identity.with_match("target_mac")
 
-    for network in networks:
-        network_started = time.monotonic()
-        hosts = _prioritize_seed([str(host) for host in network.hosts()], seed_ip)
+    probe_started = time.monotonic()
+    hosts, reachable_hosts, identities = _scan_candidate_hosts(networks, seed_ip, config)
+    total_reachable_hosts += len(reachable_hosts)
+    total_identified_kef += len(identities)
+    log.info(
+        "Full scan networks finished | "
+        f"networks={[str(n) for n in networks]} hosts={len(hosts)} "
+        f"reachable_hosts_count={len(reachable_hosts)} identified_kef_count={len(identities)} "
+        f"duration_ms={int((time.monotonic() - probe_started) * 1000)}"
+    )
 
-        with ThreadPoolExecutor(max_workers=_shared_discovery_workers(len(hosts), config)) as executor:
-            reachable_hosts = _reachable_hosts(executor, hosts, config)
-            identities = _identify_hosts(executor, reachable_hosts, config) if reachable_hosts else []
-
-        total_reachable_hosts += len(reachable_hosts)
-
-        total_identified_kef += len(identities)
-        log.info(
-            "Full scan network finished | "
-            f"network={network} hosts={len(hosts)} reachable_hosts_count={len(reachable_hosts)} "
-            f"identified_kef_count={len(identities)} duration_ms={int((time.monotonic() - network_started) * 1000)}"
-        )
-
-        for identity in identities:
-            candidates_by_ip[identity.ip] = identity
-            if normalized_known_mac and identity.mac == normalized_known_mac:
-                log.info(
-                    f"Full scan matched the Target Speaker MAC | ip={identity.ip} | "
-                    f"mac={identity.mac_display or identity.mac} | model={identity.speaker_model} | "
-                    f"name={identity.speaker_name or '<unnamed>'} "
-                    f"reachable_hosts_count={total_reachable_hosts} identified_kef_count={total_identified_kef} "
-                    f"duration_ms={int((time.monotonic() - scan_started) * 1000)}"
-                )
-                return identity.with_match("target_mac")
+    for identity in identities:
+        candidates_by_ip[identity.ip] = identity
+        if normalized_known_mac and identity.mac == normalized_known_mac:
+            log.info(
+                f"Full scan matched the Target Speaker MAC | ip={identity.ip} | "
+                f"mac={identity.mac_display or identity.mac} | model={identity.speaker_model} | "
+                f"name={identity.speaker_name or '<unnamed>'} "
+                f"reachable_hosts_count={total_reachable_hosts} identified_kef_count={total_identified_kef} "
+                f"duration_ms={int((time.monotonic() - scan_started) * 1000)}"
+            )
+            return identity.with_match("target_mac")
 
     if seed_ip and seed_ip not in candidates_by_ip:
         seed_identity = _probe_seed_identity(

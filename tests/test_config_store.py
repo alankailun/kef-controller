@@ -81,10 +81,10 @@ class UserConfigStoreTests(unittest.TestCase):
 
             loaded = UserConfigStore(base_config).load_or_create()
 
-            self.assertEqual(loaded.mac_discovery_probe_timeout, 0.50)
+            self.assertEqual(loaded.mac_discovery_probe_timeout, 0.30)
             with open(path, "r", encoding="utf-8") as handle:
                 saved = json.load(handle)
-            self.assertEqual(saved["discovery"]["mac_discovery_probe_timeout"], 0.50)
+            self.assertEqual(saved["discovery"]["mac_discovery_probe_timeout"], 0.30)
 
     def test_legacy_prewarmed_standby_tuning_is_raised_to_current_default(self):
         with tempfile.TemporaryDirectory() as temp_dir:

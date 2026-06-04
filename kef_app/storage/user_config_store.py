@@ -29,7 +29,7 @@ _USER_SETTINGS_SECTION_FIELDS = {
 _CONFIGURABLE_INPUT_SOURCES = {value for _, value in INPUT_SOURCE_OPTIONS}
 # Added 2026-05. Safe to remove after 2026-11 once released installs have auto-rewritten config.json.
 _LEGACY_MAC_DISCOVERY_PROBE_TIMEOUT = 0.20
-_DEFAULT_MAC_DISCOVERY_PROBE_TIMEOUT = 0.50
+_DEFAULT_MAC_DISCOVERY_PROBE_TIMEOUT = 0.30
 _LEGACY_PREWARMED_PERSIST_SOCKET = False
 _LEGACY_PREWARMED_KEEPALIVE_INTERVAL_S = 20.0
 _DEFAULT_PREWARMED_PERSIST_SOCKET = True
@@ -287,7 +287,7 @@ class UserConfigStore:
 
         config.mac_discovery_probe_timeout = _DEFAULT_MAC_DISCOVERY_PROBE_TIMEOUT
         self._startup_messages.append(
-            "Raised legacy MAC discovery probe timeout from 0.20s to 0.50s"
+            "Raised legacy MAC discovery probe timeout from 0.20s to 0.30s"
         )
         return True
 
