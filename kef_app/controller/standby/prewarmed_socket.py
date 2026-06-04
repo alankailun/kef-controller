@@ -123,16 +123,23 @@ def _close_socket(sock: socket.socket | None) -> None:
 class PrewarmedStandbySocketMonitorMixin:
     def start_prewarmed_standby_socket_monitor(self, reason: str = "runtime") -> bool:
         if not self.config.prewarmed_standby_enabled:
+            self._close_prewarmed_socket_holders()
             return False
 
+        stale_holders: list[PrewarmedSocketHolder] = []
         with self._prewarmed_standby_lock:
             if self._prewarmed_standby_running:
                 if self._prewarmed_standby_stop.is_set():
                     self._prewarmed_standby_restart_reason = reason
                 return False
+            stale_holders = self._prewarmed_standby_holders
+            self._prewarmed_standby_holders = []
             self._prewarmed_standby_running = True
             self._prewarmed_standby_restart_reason = None
             self._prewarmed_standby_stop.clear()
+
+        for holder in stale_holders:
+            holder.close()
 
         thread = threading.Thread(
             target=lambda: self._run_prewarmed_standby_socket_monitor(reason),
@@ -203,7 +210,9 @@ class PrewarmedStandbySocketMonitorMixin:
                 if self._prewarmed_standby_stop.wait(delay):
                     return
         finally:
-            self._close_prewarmed_socket_holders()
+            # A suspend worker may have just been dispatched off-pump and still need
+            # the remaining holder. Fresh monitor starts clear stale holders before
+            # rebuilding the pool, so stopping only halts keepalive work here.
             self._finish_prewarmed_standby_socket_monitor()
             self._log_structured(
                 "STEP",

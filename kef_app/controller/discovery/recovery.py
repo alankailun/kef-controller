@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ...devices.scan import discover_ip_by_mac, discover_kef_device_blind, discover_kef_devices
 from ...devices.speaker_models import SpeakerIdentity
+from ...platform.windows import has_best_route_to_ipv4
 
 
 _BLIND_DISCOVERY_MAC_MISS_THRESHOLD = 2
@@ -262,6 +263,19 @@ class ControllerDiscoveryRecoveryMixin:
             self._blind_discovery_lock.release()
 
     def maybe_refresh_kef_ip(self, reason: str, trigger: str, force: bool = False) -> bool:
+        target_ip = self.get_current_kef_ip()
+        if target_ip and has_best_route_to_ipv4(target_ip) is False:
+            self._log_structured(
+                "SKIP",
+                action="DISCOVER_IP",
+                reason=reason,
+                trigger=trigger,
+                cause="no_local_route",
+                target_ip=target_ip,
+                mono=f"{self.mono():.3f}",
+            )
+            return False
+
         refreshed = self.maybe_refresh_kef_ip_by_mac(reason=reason, trigger=trigger, force=force)
         if refreshed:
             return True

@@ -1503,6 +1503,47 @@ class PowerEventLogicTests(unittest.TestCase):
 
         self.assertEqual(blind.call_count, 1)
 
+    def test_refresh_ip_skips_discovery_when_local_route_is_unavailable(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
+        controller._log_structured = Mock()
+        controller.maybe_refresh_kef_ip_by_mac = Mock(return_value=True)
+        controller.maybe_refresh_kef_ip_by_blind = Mock(return_value=True)
+
+        with patch("kef_app.controller.discovery.recovery.has_best_route_to_ipv4", return_value=False) as route:
+            refreshed = controller.maybe_refresh_kef_ip("unit_test", "unit_test", force=True)
+
+        self.assertFalse(refreshed)
+        route.assert_called_once_with("192.168.1.10")
+        controller.maybe_refresh_kef_ip_by_mac.assert_not_called()
+        controller.maybe_refresh_kef_ip_by_blind.assert_not_called()
+        self.assertTrue(
+            any(
+                call.args == ("SKIP",)
+                and call.kwargs.get("action") == "DISCOVER_IP"
+                and call.kwargs.get("cause") == "no_local_route"
+                and call.kwargs.get("target_ip") == "192.168.1.10"
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
+    def test_refresh_ip_runs_discovery_when_local_route_is_available_or_unknown(self):
+        for route_state in (True, None):
+            with self.subTest(route_state=route_state):
+                controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
+                controller.maybe_refresh_kef_ip_by_mac = Mock(return_value=True)
+                controller.maybe_refresh_kef_ip_by_blind = Mock(return_value=False)
+
+                with patch("kef_app.controller.discovery.recovery.has_best_route_to_ipv4", return_value=route_state):
+                    refreshed = controller.maybe_refresh_kef_ip("unit_test", "unit_test", force=True)
+
+                self.assertTrue(refreshed)
+                controller.maybe_refresh_kef_ip_by_mac.assert_called_once_with(
+                    reason="unit_test",
+                    trigger="unit_test",
+                    force=True,
+                )
+                controller.maybe_refresh_kef_ip_by_blind.assert_not_called()
+
     def test_startup_http_identity_snapshot_does_not_mutate_target(self):
         controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
         other_identity = SpeakerIdentity(

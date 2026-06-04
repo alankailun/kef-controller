@@ -5,10 +5,11 @@ import socket
 import threading
 import time
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from kef_app.config import AppConfig
 from kef_app.controller import KefPowerController
+from kef_app.controller.standby.prewarmed_socket import PrewarmedSocketHolder
 
 
 class _LoopbackHttpSpeaker:
@@ -160,6 +161,47 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
             sum(1 for request in speaker.requests if request.startswith(b"POST /api/setData")),
             2,
         )
+
+    def test_monitor_stop_keeps_holder_for_pending_suspend_worker(self):
+        controller = self.make_controller(80, prewarmed_persist_socket=True)
+        controller._log_structured = Mock()
+        sock = Mock()
+        holder = PrewarmedSocketHolder(sock, "127.0.0.1", controller.mono())
+        with controller._prewarmed_standby_lock:
+            controller._prewarmed_standby_holders = [holder]
+            controller._prewarmed_standby_running = True
+        controller._prewarmed_standby_stop.set()
+
+        controller._run_prewarmed_standby_socket_monitor("unit_test")
+
+        with controller._prewarmed_standby_lock:
+            holders = list(controller._prewarmed_standby_holders)
+        self.assertEqual(holders, [holder])
+        sock.close.assert_not_called()
+
+        taken = controller._take_prewarmed_socket_holder("127.0.0.1")
+
+        self.assertIs(taken, sock)
+        with controller._prewarmed_standby_lock:
+            self.assertEqual(controller._prewarmed_standby_holders, [])
+
+    def test_monitor_start_clears_stale_holders_before_rebuilding_pool(self):
+        controller = self.make_controller(80, prewarmed_persist_socket=True)
+        stale_sock = Mock()
+        stale_holder = PrewarmedSocketHolder(stale_sock, "127.0.0.1", controller.mono())
+        with controller._prewarmed_standby_lock:
+            controller._prewarmed_standby_holders = [stale_holder]
+        thread = Mock()
+
+        with patch("kef_app.controller.standby.prewarmed_socket.threading.Thread", return_value=thread):
+            started = controller.start_prewarmed_standby_socket_monitor("resume")
+
+        self.assertTrue(started)
+        stale_sock.close.assert_called_once()
+        thread.start.assert_called_once()
+        with controller._prewarmed_standby_lock:
+            self.assertEqual(controller._prewarmed_standby_holders, [])
+            self.assertIs(controller._prewarmed_standby_thread, thread)
 
     def test_cached_prewarmed_send_uses_snapshot_bytes_and_matching_socket(self):
         with _LoopbackHttpSpeaker() as speaker:
