@@ -290,50 +290,23 @@ def discover_kef_device_blind(known_mac: str, seed_ip: Optional[str], config: Ap
     return None
 
 
-def discover_ip_by_mac(target_mac: str, seed_ip: Optional[str], config: AppConfig, log) -> Optional[str]:
+def discover_ip_by_mac(target_mac: str, seed_ip: Optional[str], _config: AppConfig, log) -> Optional[str]:
     normalized_target = normalize_mac(target_mac)
     if not normalized_target:
         return None
 
-    arp_before = read_arp_table(log)
-    for ip, mac in arp_before.items():
+    arp_map = read_arp_table(log)
+    for ip, mac in arp_map.items():
         if mac == normalized_target:
+            log.info(
+                f"Recovered the speaker IP from the existing ARP cache | "
+                f"target_primary_mac={target_mac} | ip={ip}"
+            )
             return ip
 
-    networks = build_candidate_networks(seed_ip, config, log)
-    if not networks:
-        log.info("No scan networks are available, so ARP-based IP recovery cannot run")
-        return None
-
+    seed_arp_mac = arp_map.get(seed_ip, "") if seed_ip else ""
     log.info(
-        "Starting ARP-based IP recovery | "
-        f"target_primary_mac={target_mac} normalized={normalized_target} "
-        f"seed_ip={seed_ip or '<empty>'} networks={[str(n) for n in networks]} "
-        f"port={config.mac_discovery_tcp_port} timeout={config.mac_discovery_probe_timeout:.2f}s "
-        f"workers={config.mac_discovery_max_workers} "
-        f"note=arp_mac_may_differ_from_kef_primary_mac"
-    )
-
-    last_arp_map = arp_before
-    for network in networks:
-        hosts = _prioritize_seed([str(host) for host in network.hosts()], seed_ip)
-
-        with ThreadPoolExecutor(max_workers=config.mac_discovery_max_workers) as executor:
-            _reachable_hosts(executor, hosts, config)
-
-        arp_map = read_arp_table(log)
-        last_arp_map = arp_map
-        for ip, mac in arp_map.items():
-            if mac == normalized_target:
-                log.info(
-                    f"Recovered the speaker IP from the ARP table | "
-                    f"target_primary_mac={target_mac} | ip={ip} | network={network}"
-                )
-                return ip
-
-    seed_arp_mac = last_arp_map.get(seed_ip, "") if seed_ip else ""
-    log.info(
-        f"ARP-based IP recovery did not match the Target Speaker primary MAC | "
+        f"Existing ARP cache did not match the Target Speaker primary MAC | "
         f"target_primary_mac={target_mac} | seed_ip={seed_ip or '<empty>'} "
         f"seed_arp_mac={seed_arp_mac or '<empty>'} "
         f"note=arp_mac_may_differ_from_kef_primary_mac; falling_back_to_http_full_scan"

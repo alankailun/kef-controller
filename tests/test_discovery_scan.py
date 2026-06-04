@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from kef_app.config import AppConfig
-from kef_app.devices.scan.scan import discover_kef_device_blind, discover_kef_devices
+from kef_app.devices.scan.scan import discover_ip_by_mac, discover_kef_device_blind, discover_kef_devices
 from kef_app.devices.speaker_models import SpeakerIdentity
 
 
@@ -27,6 +27,34 @@ class DiscoveryScanTests(unittest.TestCase):
         logger.handlers = [logging.NullHandler()]
         logger.propagate = False
         return logger
+
+    def test_arp_recovery_uses_existing_cache_without_network_sweep(self):
+        config = AppConfig()
+
+        with (
+            patch("kef_app.devices.scan.scan.read_arp_table", return_value={"10.0.0.222": "84171517AC77"}),
+            patch("kef_app.devices.scan.scan.build_candidate_networks") as build_networks,
+            patch("kef_app.devices.scan.scan.probe_ip_port") as probe,
+        ):
+            ip = discover_ip_by_mac("84:17:15:17:AC:77", "10.0.0.222", config, self.make_logger())
+
+        self.assertEqual(ip, "10.0.0.222")
+        build_networks.assert_not_called()
+        probe.assert_not_called()
+
+    def test_arp_recovery_miss_falls_back_without_network_sweep(self):
+        config = AppConfig()
+
+        with (
+            patch("kef_app.devices.scan.scan.read_arp_table", return_value={"10.0.0.222": "841715175722"}),
+            patch("kef_app.devices.scan.scan.build_candidate_networks") as build_networks,
+            patch("kef_app.devices.scan.scan.probe_ip_port") as probe,
+        ):
+            ip = discover_ip_by_mac("84:17:15:17:AC:77", "10.0.0.222", config, self.make_logger())
+
+        self.assertIsNone(ip)
+        build_networks.assert_not_called()
+        probe.assert_not_called()
 
     def test_manual_scan_identifies_seed_without_tcp_probe(self):
         config = AppConfig()

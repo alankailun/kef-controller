@@ -1468,7 +1468,7 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertFalse(resolved)
         identify.assert_called_once_with("192.168.1.10", controller.config)
 
-    def test_refresh_ip_requires_consecutive_mac_misses_before_blind_scan(self):
+    def test_refresh_ip_runs_blind_scan_after_arp_cache_miss(self):
         controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
         identity = SpeakerIdentity(
             ip="192.168.1.20",
@@ -1478,28 +1478,27 @@ class PowerEventLogicTests(unittest.TestCase):
         )
 
         with (
+            patch("kef_app.controller.discovery.recovery.has_best_route_to_ipv4", return_value=True),
             patch("kef_app.controller.discovery.recovery.discover_ip_by_mac", return_value=None) as discover_by_mac,
             patch("kef_app.controller.discovery.recovery.discover_kef_device_blind", return_value=identity) as blind,
         ):
-            first = controller.maybe_refresh_kef_ip("unit_test", "unit_test", force=True)
-            second = controller.maybe_refresh_kef_ip("unit_test", "unit_test", force=True)
+            refreshed = controller.maybe_refresh_kef_ip("unit_test", "unit_test", force=True)
 
-        self.assertFalse(first)
-        self.assertTrue(second)
-        self.assertEqual(discover_by_mac.call_count, 2)
+        self.assertTrue(refreshed)
+        discover_by_mac.assert_called_once()
         blind.assert_called_once()
         self.assertEqual(controller.get_current_kef_ip(), "192.168.1.20")
 
-    def test_refresh_ip_resets_blind_gate_after_full_scan_attempt(self):
+    def test_refresh_ip_does_not_repeat_blind_scan_during_blind_cooldown(self):
         controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
 
         with (
+            patch("kef_app.controller.discovery.recovery.has_best_route_to_ipv4", return_value=True),
             patch("kef_app.controller.discovery.recovery.discover_ip_by_mac", return_value=None),
             patch("kef_app.controller.discovery.recovery.discover_kef_device_blind", return_value=None) as blind,
         ):
-            self.assertFalse(controller.maybe_refresh_kef_ip("unit_test", "unit_test", force=True))
-            self.assertFalse(controller.maybe_refresh_kef_ip("unit_test", "unit_test", force=True))
-            self.assertFalse(controller.maybe_refresh_kef_ip("unit_test", "unit_test", force=True))
+            self.assertFalse(controller.maybe_refresh_kef_ip("unit_test", "unit_test"))
+            self.assertFalse(controller.maybe_refresh_kef_ip("unit_test", "unit_test"))
 
         self.assertEqual(blind.call_count, 1)
 
