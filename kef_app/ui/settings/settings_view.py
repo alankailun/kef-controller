@@ -55,6 +55,8 @@ class SpeakerSelectionDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.selected_speaker: Optional[SpeakerIdentity] = None
+        self._current_ip = current_ip
+        self._current_mac = normalize_mac(current_mac)
         self.setWindowTitle("Select Speaker")
         self.setMinimumWidth(680)
         self.setMinimumHeight(360)
@@ -66,33 +68,18 @@ class SpeakerSelectionDialog(QDialog):
         title = TitleLabel("Select Speaker")
         root.addWidget(title)
 
-        hint = QLabel("Choose the KEF speaker this app should control.")
-        hint.setWordWrap(True)
-        root.addWidget(hint)
+        self._hint = QLabel()
+        self._hint.setWordWrap(True)
+        root.addWidget(self._hint)
 
         scroll = QtScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QtScrollArea.Shape.NoFrame)
 
         content = QWidget()
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(8)
-
-        normalized_current_mac = normalize_mac(current_mac)
-        for speaker in speakers:
-            selected = self._speaker_is_selected(speaker, current_ip, normalized_current_mac)
-            card = ButtonCard(
-                FIF.IOT,
-                self._speaker_title(speaker),
-                self._speaker_content(speaker),
-                "Selected" if selected else "Select",
-            )
-            card.button.setEnabled(not selected)
-            card.button.clicked.connect(lambda _checked=False, item=speaker: self._select(item))
-            content_layout.addWidget(card)
-
-        content_layout.addStretch()
+        self._content_layout = QVBoxLayout(content)
+        self._content_layout.setContentsMargins(0, 0, 0, 0)
+        self._content_layout.setSpacing(8)
         scroll.setWidget(content)
         root.addWidget(scroll, stretch=1)
 
@@ -102,6 +89,33 @@ class SpeakerSelectionDialog(QDialog):
         close_btn.clicked.connect(self.reject)
         close_row.addWidget(close_btn)
         root.addLayout(close_row)
+        self.update_speakers(speakers, scanning=False)
+
+    def update_speakers(self, speakers: list[SpeakerIdentity], *, scanning: bool) -> None:
+        self._hint.setText(
+            "Choose the KEF speaker this app should control. The network scan is still running, so this list may update."
+            if scanning
+            else "Choose the KEF speaker this app should control."
+        )
+        while self._content_layout.count():
+            item = self._content_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        for speaker in speakers:
+            selected = self._speaker_is_selected(speaker, self._current_ip, self._current_mac)
+            card = ButtonCard(
+                FIF.IOT,
+                self._speaker_title(speaker),
+                self._speaker_content(speaker),
+                "Selected" if selected else "Select",
+            )
+            card.button.setEnabled(not selected)
+            card.button.clicked.connect(lambda _checked=False, item=speaker: self._select(item))
+            self._content_layout.addWidget(card)
+
+        self._content_layout.addStretch()
 
     def _select(self, speaker: SpeakerIdentity) -> None:
         self.selected_speaker = speaker
@@ -171,6 +185,7 @@ class ManualTargetDialog(QDialog):
 
 class SettingsInterface(ScrollArea):
     settings_saved = Signal()
+    _speaker_scan_candidate = Signal(object)
     _speaker_scan_finished = Signal(object)
     _speaker_scan_failed = Signal(str)
     _manual_target_apply_finished = Signal(object)
@@ -190,9 +205,13 @@ class SettingsInterface(ScrollArea):
         self._config_store = config_store
         self._log = logging.getLogger("kef_controller")
         self._last_scanned_speakers: list[SpeakerIdentity] = []
+        self._speaker_selection_dialog: SpeakerSelectionDialog | None = None
+        self._speaker_scan_in_progress = False
+        self._speaker_scan_dialog_closed = False
         self._pending_manual_target: tuple[str, str] | None = None
         self._event_tests_expanded = False
 
+        self._speaker_scan_candidate.connect(self._on_speaker_scan_candidate)
         self._speaker_scan_finished.connect(self._on_speaker_scan_finished)
         self._speaker_scan_failed.connect(self._on_speaker_scan_failed)
         self._manual_target_apply_finished.connect(self._on_manual_target_apply_finished)
@@ -700,19 +719,37 @@ class SettingsInterface(ScrollArea):
     def _on_scan_speakers(self) -> None:
         self._scan_speakers.button.setEnabled(False)
         self._scan_speakers.button.setText("Scanning...")
+        self._last_scanned_speakers = []
+        self._speaker_scan_in_progress = True
+        self._speaker_scan_dialog_closed = False
 
         start_background_task(
             "SettingsScanSpeakers",
-            self._controller.scan_kef_devices,
+            lambda: self._controller.scan_kef_devices(
+                on_candidate=lambda speaker: self._speaker_scan_candidate.emit([speaker])
+            ),
             on_success=self._speaker_scan_finished.emit,
             on_error=lambda exc: self._speaker_scan_failed.emit(str(exc)),
             log=self._log,
         )
 
+    def _on_speaker_scan_candidate(self, speakers: object) -> None:
+        devices = list(speakers) if isinstance(speakers, list) else []
+        if not devices or self._speaker_scan_dialog_closed:
+            return
+
+        self._last_scanned_speakers = self._merge_speaker_lists(self._last_scanned_speakers, devices)
+        self._scan_speakers.button.setText(f"Scanning... Found {len(self._last_scanned_speakers)}")
+        self._show_or_update_speaker_selection_dialog(self._last_scanned_speakers, scanning=True)
+
     def _on_speaker_scan_finished(self, speakers: object) -> None:
+        self._speaker_scan_in_progress = False
         self._scan_speakers.button.setEnabled(True)
         self._scan_speakers.button.setText("Select Speaker...")
-        devices = list(speakers) if isinstance(speakers, list) else []
+        devices = self._merge_speaker_lists(
+            self._last_scanned_speakers,
+            list(speakers) if isinstance(speakers, list) else [],
+        )
         self._last_scanned_speakers = devices
         if not devices:
             InfoBar.warning(
@@ -724,9 +761,14 @@ class SettingsInterface(ScrollArea):
             )
             return
 
-        self._open_speaker_selection_dialog(devices)
+        if self._speaker_scan_dialog_closed and (
+            self._speaker_selection_dialog is None or not self._speaker_selection_dialog.isVisible()
+        ):
+            return
+        self._show_or_update_speaker_selection_dialog(devices, scanning=False)
 
     def _on_speaker_scan_failed(self, detail: str) -> None:
+        self._speaker_scan_in_progress = False
         self._scan_speakers.button.setEnabled(True)
         self._scan_speakers.button.setText("Select Speaker...")
         self._last_scanned_speakers = []
@@ -738,14 +780,55 @@ class SettingsInterface(ScrollArea):
             position=InfoBarPosition.TOP_RIGHT,
         )
 
+    @staticmethod
+    def _speaker_identity_key(speaker: SpeakerIdentity) -> tuple[str, str]:
+        speaker_mac = normalize_mac(speaker.mac or speaker.mac_display or "")
+        return ("mac", speaker_mac) if speaker_mac else ("ip", speaker.ip or "")
+
+    @classmethod
+    def _merge_speaker_lists(
+        cls,
+        existing: list[SpeakerIdentity],
+        incoming: list[SpeakerIdentity],
+    ) -> list[SpeakerIdentity]:
+        merged: dict[tuple[str, str], SpeakerIdentity] = {}
+        fallback_index = 0
+        for speaker in [*existing, *incoming]:
+            key = cls._speaker_identity_key(speaker)
+            if not key[1]:
+                fallback_index += 1
+                key = ("item", str(fallback_index))
+            merged[key] = speaker
+        return list(merged.values())
+
     def _open_speaker_selection_dialog(self, speakers: list[SpeakerIdentity]) -> None:
-        dialog = SpeakerSelectionDialog(
-            speakers,
-            current_ip=self._runtime_config.kef_ip,
-            current_mac=self._runtime_config.kef_mac or self._controller.get_effective_target_mac(),
-            parent=self.window(),
-        )
-        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected_speaker:
+        self._show_or_update_speaker_selection_dialog(speakers, scanning=False)
+
+    def _show_or_update_speaker_selection_dialog(self, speakers: list[SpeakerIdentity], *, scanning: bool) -> None:
+        dialog = self._speaker_selection_dialog
+        if dialog is None or not dialog.isVisible():
+            dialog = SpeakerSelectionDialog(
+                speakers,
+                current_ip=self._runtime_config.kef_ip,
+                current_mac=self._runtime_config.kef_mac or self._controller.get_effective_target_mac(),
+                parent=self.window(),
+            )
+            self._speaker_selection_dialog = dialog
+            dialog.finished.connect(lambda result, item=dialog: self._on_speaker_selection_dialog_finished(item, result))
+            dialog.update_speakers(speakers, scanning=scanning)
+            dialog.open()
+            return
+
+        dialog.update_speakers(speakers, scanning=scanning)
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _on_speaker_selection_dialog_finished(self, dialog: SpeakerSelectionDialog, result: int) -> None:
+        if self._speaker_selection_dialog is dialog:
+            self._speaker_selection_dialog = None
+        if self._speaker_scan_in_progress:
+            self._speaker_scan_dialog_closed = True
+        if result == QDialog.DialogCode.Accepted and dialog.selected_speaker:
             self._use_speaker(dialog.selected_speaker)
 
     def _use_speaker(self, speaker: SpeakerIdentity) -> None:

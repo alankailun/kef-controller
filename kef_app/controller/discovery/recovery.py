@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from typing import Callable
+
 from ...devices.scan import discover_ip_by_mac, discover_kef_device_blind, discover_kef_devices
 from ...devices.speaker_models import SpeakerIdentity
 from ...platform.windows import has_best_route_to_ipv4
 
 
 class ControllerDiscoveryRecoveryMixin:
-    def scan_kef_devices(self) -> list[SpeakerIdentity]:
+    def scan_kef_devices(self, on_candidate: Callable[[SpeakerIdentity], None] | None = None) -> list[SpeakerIdentity]:
         if not self._blind_discovery_lock.acquire(blocking=False):
             self._log_structured(
                 "SKIP",
@@ -24,7 +26,7 @@ class ControllerDiscoveryRecoveryMixin:
                 seed_ip=seed_ip or "<empty>",
                 mono=f"{self.mono():.3f}",
             )
-            devices = discover_kef_devices(seed_ip, self.config, self.log)
+            devices = discover_kef_devices(seed_ip, self.config, self.log, on_candidate=on_candidate)
             self._log_structured(
                 "END",
                 action="MANUAL_SCAN",

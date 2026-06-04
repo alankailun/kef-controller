@@ -60,6 +60,7 @@ class DiscoveryScanTests(unittest.TestCase):
         config = AppConfig()
         seed = "10.0.0.222"
         identity = self.make_identity(seed)
+        candidates: list[SpeakerIdentity] = []
 
         with (
             patch(
@@ -69,9 +70,10 @@ class DiscoveryScanTests(unittest.TestCase):
             patch("kef_app.devices.scan.scan.probe_ip_port", return_value=False),
             patch("kef_app.devices.scan.scan.identify_kef_device", return_value=identity) as identify,
         ):
-            devices = discover_kef_devices(seed, config, self.make_logger())
+            devices = discover_kef_devices(seed, config, self.make_logger(), on_candidate=candidates.append)
 
         self.assertEqual([device.ip for device in devices], [seed])
+        self.assertEqual([device.ip for device in candidates], [seed])
         identify.assert_called_once_with(seed, config, timeout=1.5)
 
     def test_manual_scan_retries_seed_after_network_miss(self):

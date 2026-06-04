@@ -3,7 +3,7 @@ from __future__ import annotations
 import ipaddress
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
+from typing import Callable, Optional
 
 from ...config import AppConfig
 from ..speaker_models import SpeakerIdentity, normalize_mac
@@ -124,7 +124,26 @@ def _probe_seed_identity(
     return None
 
 
-def discover_kef_devices(seed_ip: Optional[str], config: AppConfig, log) -> list[SpeakerIdentity]:
+def _notify_candidate(
+    on_candidate: Optional[Callable[[SpeakerIdentity], None]],
+    identity: SpeakerIdentity,
+    log,
+) -> None:
+    if on_candidate is None:
+        return
+    try:
+        on_candidate(identity)
+    except Exception as exc:
+        log.info(f"Speaker scan candidate callback failed | ip={identity.ip or '<empty>'} | {exc}")
+
+
+def discover_kef_devices(
+    seed_ip: Optional[str],
+    config: AppConfig,
+    log,
+    *,
+    on_candidate: Optional[Callable[[SpeakerIdentity], None]] = None,
+) -> list[SpeakerIdentity]:
     networks = build_candidate_networks(seed_ip, config, log)
     if not networks:
         log.info("No scan networks are available, so a manual KEF device scan cannot run")
@@ -146,6 +165,7 @@ def discover_kef_devices(seed_ip: Optional[str], config: AppConfig, log) -> list
     if seed_identity:
         total_identified_kef += 1
         candidates_by_ip[seed_identity.ip] = seed_identity
+        _notify_candidate(on_candidate, seed_identity, log)
 
     probe_started = time.monotonic()
     hosts, reachable_hosts, identities = _scan_candidate_hosts(networks, seed_ip, config)
@@ -153,6 +173,7 @@ def discover_kef_devices(seed_ip: Optional[str], config: AppConfig, log) -> list
     total_identified_kef += len(identities)
     for identity in identities:
         candidates_by_ip[identity.ip] = identity
+        _notify_candidate(on_candidate, identity, log)
 
     log.info(
         "Manual scan networks finished | "
@@ -172,6 +193,7 @@ def discover_kef_devices(seed_ip: Optional[str], config: AppConfig, log) -> list
         if seed_identity:
             total_identified_kef += 1
             candidates_by_ip[seed_identity.ip] = seed_identity
+            _notify_candidate(on_candidate, seed_identity, log)
 
     candidates = sorted(candidates_by_ip.values(), key=_sort_identity_key)
     summary = ", ".join(_candidate_summary(candidate) for candidate in candidates) or "<none>"
