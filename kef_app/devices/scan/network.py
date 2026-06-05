@@ -20,33 +20,33 @@ def is_routable_ipv4(ip: str) -> bool:
     return not (addr.is_loopback or addr.is_link_local or addr.is_multicast or addr.is_unspecified)
 
 
+def _append_routable_candidate(candidates: list[str], seen: set[str], ip: str) -> None:
+    if is_routable_ipv4(ip) and ip not in seen:
+        seen.add(ip)
+        candidates.append(ip)
+
+
+def _source_ip_for_route(target: str) -> str | None:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect((target, 80))
+            ip = sock.getsockname()[0]
+            return ip if is_routable_ipv4(ip) else None
+    except OSError:
+        return None
+
+
 def get_local_ipv4_candidates(seed_ip: Optional[str] = None) -> list[str]:
-    candidates: set[str] = set()
+    candidates: list[str] = []
+    seen: set[str] = set()
 
-    for host in {socket.gethostname(), socket.getfqdn()}:
-        if not host:
-            continue
-        try:
-            for info in socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM):
-                ip = info[4][0]
-                if is_routable_ipv4(ip):
-                    candidates.add(ip)
-        except socket.gaierror:
-            pass
+    for target in ["8.8.8.8", "1.1.1.1"]:
+        ip = _source_ip_for_route(target)
+        if ip:
+            _append_routable_candidate(candidates, seen, ip)
+            break
 
-    for target in [seed_ip, "8.8.8.8", "1.1.1.1"]:
-        if not target:
-            continue
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                sock.connect((target, 80))
-                ip = sock.getsockname()[0]
-                if is_routable_ipv4(ip):
-                    candidates.add(ip)
-        except OSError:
-            pass
-
-    return sorted(candidates)
+    return candidates
 
 
 def build_candidate_networks(seed_ip: Optional[str], config: AppConfig, log) -> list[ipaddress.IPv4Network]:
@@ -71,11 +71,11 @@ def build_candidate_networks(seed_ip: Optional[str], config: AppConfig, log) -> 
             seen.add(key)
             networks.append(network)
 
-    if seed_ip and is_routable_ipv4(seed_ip):
-        add_network(f"{seed_ip}/{config.mac_discovery_subnet_prefix}")
-
     for ip in get_local_ipv4_candidates(seed_ip):
         add_network(f"{ip}/{config.mac_discovery_subnet_prefix}")
+
+    if seed_ip and is_routable_ipv4(seed_ip):
+        add_network(f"{seed_ip}/{config.mac_discovery_subnet_prefix}")
 
     for cidr in config.mac_discovery_extra_cidrs:
         if cidr:

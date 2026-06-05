@@ -113,6 +113,26 @@ def _scan_candidate_hosts(
     return hosts, reachable_hosts, identities
 
 
+def _log_network_scan_finished(
+    log,
+    *,
+    scan_kind: str,
+    network: ipaddress.IPv4Network,
+    network_index: int,
+    network_count: int,
+    hosts: list[str],
+    reachable_hosts: list[str],
+    identities: list[SpeakerIdentity],
+    started_mono: float,
+) -> None:
+    log.info(
+        f"{scan_kind} scan network finished | "
+        f"network={network} network_index={network_index}/{network_count} hosts={len(hosts)} "
+        f"reachable_hosts_count={len(reachable_hosts)} identified_kef_count={len(identities)} "
+        f"duration_ms={int((time.monotonic() - started_mono) * 1000)}"
+    )
+
+
 def _probe_seed_identity(
     seed_ip: Optional[str],
     config: AppConfig,
@@ -190,22 +210,39 @@ def discover_kef_devices(
         _notify_candidate(on_candidate, seed_identity, log)
 
     probe_started = time.monotonic()
-    hosts, reachable_hosts, identities = _scan_candidate_hosts(
-        networks,
-        seed_ip,
-        config,
-        should_continue=should_continue,
-    )
-    total_reachable_hosts += len(reachable_hosts)
-    total_identified_kef += len(identities)
-    for identity in identities:
-        candidates_by_ip[identity.ip] = identity
-        _notify_candidate(on_candidate, identity, log)
+    total_hosts = 0
+    for index, network in enumerate(networks, start=1):
+        if should_continue is not None and not should_continue():
+            break
+        network_started = time.monotonic()
+        hosts, reachable_hosts, identities = _scan_candidate_hosts(
+            [network],
+            seed_ip,
+            config,
+            should_continue=should_continue,
+        )
+        total_hosts += len(hosts)
+        total_reachable_hosts += len(reachable_hosts)
+        total_identified_kef += len(identities)
+        for identity in identities:
+            candidates_by_ip[identity.ip] = identity
+            _notify_candidate(on_candidate, identity, log)
+        _log_network_scan_finished(
+            log,
+            scan_kind="Manual",
+            network=network,
+            network_index=index,
+            network_count=len(networks),
+            hosts=hosts,
+            reachable_hosts=reachable_hosts,
+            identities=identities,
+            started_mono=network_started,
+        )
 
     log.info(
         "Manual scan networks finished | "
-        f"networks={[str(n) for n in networks]} hosts={len(hosts)} "
-        f"reachable_hosts_count={len(reachable_hosts)} identified_kef_count={len(identities)} "
+        f"networks={[str(n) for n in networks]} hosts={total_hosts} "
+        f"reachable_hosts_count={total_reachable_hosts} identified_kef_count={total_identified_kef} "
         f"duration_ms={int((time.monotonic() - probe_started) * 1000)}"
     )
 
@@ -270,27 +307,43 @@ def discover_kef_device_blind(known_mac: str, seed_ip: Optional[str], config: Ap
             return seed_identity.with_match("target_mac")
 
     probe_started = time.monotonic()
-    hosts, reachable_hosts, identities = _scan_candidate_hosts(networks, seed_ip, config)
-    total_reachable_hosts += len(reachable_hosts)
-    total_identified_kef += len(identities)
+    total_hosts = 0
+    for index, network in enumerate(networks, start=1):
+        network_started = time.monotonic()
+        hosts, reachable_hosts, identities = _scan_candidate_hosts([network], seed_ip, config)
+        total_hosts += len(hosts)
+        total_reachable_hosts += len(reachable_hosts)
+        total_identified_kef += len(identities)
+        _log_network_scan_finished(
+            log,
+            scan_kind="Full",
+            network=network,
+            network_index=index,
+            network_count=len(networks),
+            hosts=hosts,
+            reachable_hosts=reachable_hosts,
+            identities=identities,
+            started_mono=network_started,
+        )
+
+        for identity in identities:
+            candidates_by_ip[identity.ip] = identity
+            if normalized_known_mac and identity.mac == normalized_known_mac:
+                log.info(
+                    f"Full scan matched the Target Speaker MAC | ip={identity.ip} | "
+                    f"mac={identity.mac_display or identity.mac} | model={identity.speaker_model} | "
+                    f"name={identity.speaker_name or '<unnamed>'} "
+                    f"reachable_hosts_count={total_reachable_hosts} identified_kef_count={total_identified_kef} "
+                    f"duration_ms={int((time.monotonic() - scan_started) * 1000)}"
+                )
+                return identity.with_match("target_mac")
+
     log.info(
         "Full scan networks finished | "
-        f"networks={[str(n) for n in networks]} hosts={len(hosts)} "
-        f"reachable_hosts_count={len(reachable_hosts)} identified_kef_count={len(identities)} "
+        f"networks={[str(n) for n in networks]} hosts={total_hosts} "
+        f"reachable_hosts_count={total_reachable_hosts} identified_kef_count={total_identified_kef} "
         f"duration_ms={int((time.monotonic() - probe_started) * 1000)}"
     )
-
-    for identity in identities:
-        candidates_by_ip[identity.ip] = identity
-        if normalized_known_mac and identity.mac == normalized_known_mac:
-            log.info(
-                f"Full scan matched the Target Speaker MAC | ip={identity.ip} | "
-                f"mac={identity.mac_display or identity.mac} | model={identity.speaker_model} | "
-                f"name={identity.speaker_name or '<unnamed>'} "
-                f"reachable_hosts_count={total_reachable_hosts} identified_kef_count={total_identified_kef} "
-                f"duration_ms={int((time.monotonic() - scan_started) * 1000)}"
-            )
-            return identity.with_match("target_mac")
 
     if seed_ip and seed_ip not in candidates_by_ip:
         seed_identity = _probe_seed_identity(

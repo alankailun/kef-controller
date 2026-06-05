@@ -11,6 +11,9 @@ from .cache import FastStandbyCacheSnapshot
 _PREWARM_RETRY_DELAY_S = 2.0
 _PREWARM_POWER_ACTION_DELAY_S = 0.5
 _PREWARM_FAILURE_LOG_THRESHOLD = 3
+_PREWARM_FAILURE_BACKOFF_THRESHOLD = 3
+_PREWARM_FAILURE_BACKOFF_STEP_S = 30.0
+_PREWARM_FAILURE_BACKOFF_MAX_S = 60.0
 _PREWARM_PERSISTENT_SOCKET_POOL_SIZE = 2
 _KEEPALIVE_REQUEST_PATH = "/api/getData?path=settings%3A%2Freleasetext&roles=value"
 
@@ -240,6 +243,7 @@ class PrewarmedStandbySocketMonitorMixin:
         if last_ip and last_ip != target_ip:
             self._close_prewarmed_socket_holders()
             with self._prewarmed_standby_lock:
+                self._prewarmed_standby_failures = 0
                 self._prewarmed_standby_ready_logged = False
                 self._prewarmed_standby_last_ok_mono = 0.0
 
@@ -251,8 +255,7 @@ class PrewarmedStandbySocketMonitorMixin:
             if self.config.prewarmed_persist_socket:
                 self._ensure_persistent_prewarmed_socket(target_ip)
         except OSError as exc:
-            self._record_prewarmed_keepalive_failure(reason, target_ip, exc)
-            return _PREWARM_RETRY_DELAY_S
+            return self._record_prewarmed_keepalive_failure(reason, target_ip, exc)
 
         finished = self.mono()
         duration_ms = int(max(0.0, finished - started) * 1000)
@@ -342,12 +345,21 @@ class PrewarmedStandbySocketMonitorMixin:
             mono=f"{self.mono():.3f}",
         )
 
-    def _record_prewarmed_keepalive_failure(self, reason: str, target_ip: str, exc: OSError) -> None:
+    def _prewarmed_keepalive_failure_delay(self, failures: int) -> float:
+        base_interval = max(1.0, float(self.config.prewarmed_keepalive_interval_s))
+        if failures < _PREWARM_FAILURE_BACKOFF_THRESHOLD:
+            return base_interval
+        if failures < _PREWARM_FAILURE_BACKOFF_THRESHOLD * 2:
+            return max(base_interval, _PREWARM_FAILURE_BACKOFF_STEP_S)
+        return max(base_interval, _PREWARM_FAILURE_BACKOFF_MAX_S)
+
+    def _record_prewarmed_keepalive_failure(self, reason: str, target_ip: str, exc: OSError) -> float:
         self._close_prewarmed_socket_holders()
         with self._prewarmed_standby_lock:
             self._prewarmed_standby_failures += 1
             failures = self._prewarmed_standby_failures
             self._prewarmed_standby_ready_logged = False
+        next_delay_s = self._prewarmed_keepalive_failure_delay(failures)
 
         log_level = (
             "info"
@@ -363,9 +375,11 @@ class PrewarmedStandbySocketMonitorMixin:
             status="failed",
             failures=failures,
             target_ip=target_ip,
+            next_delay_s=f"{next_delay_s:.1f}",
             error=repr(exc),
             mono=f"{self.mono():.3f}",
         )
+        return next_delay_s
 
     def _has_recent_prewarmed_keepalive(self) -> bool:
         with self._prewarmed_standby_lock:

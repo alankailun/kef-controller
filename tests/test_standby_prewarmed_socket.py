@@ -90,14 +90,15 @@ def _percentile(values: list[float], percentile: float) -> float:
 
 class PrewarmedStandbySocketTests(unittest.TestCase):
     def make_controller(self, port: int, **config_updates) -> KefPowerController:
-        config = AppConfig().with_updates(
-            kef_ip="127.0.0.1",
-            mac_discovery_tcp_port=port,
-            prewarmed_keepalive_interval_s=20.0,
-            prewarmed_socket_timeout_s=0.10,
-            prewarmed_send_deadline_s=0.10,
-            **config_updates,
-        )
+        updates = {
+            "kef_ip": "127.0.0.1",
+            "mac_discovery_tcp_port": port,
+            "prewarmed_keepalive_interval_s": 20.0,
+            "prewarmed_socket_timeout_s": 0.10,
+            "prewarmed_send_deadline_s": 0.10,
+        }
+        updates.update(config_updates)
+        config = AppConfig().with_updates(**updates)
         logger = logging.getLogger(f"tests.prewarmed_standby.{self._testMethodName}")
         logger.handlers = [logging.NullHandler()]
         logger.propagate = False
@@ -202,6 +203,27 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         with controller._prewarmed_standby_lock:
             self.assertEqual(controller._prewarmed_standby_holders, [])
             self.assertIs(controller._prewarmed_standby_thread, thread)
+
+    def test_keepalive_failures_back_off_until_success_resets_counter(self):
+        controller = self.make_controller(80, prewarmed_persist_socket=True, prewarmed_keepalive_interval_s=5.0)
+        controller._log_structured = Mock()
+        controller._ensure_persistent_prewarmed_socket = Mock()
+        controller._probe_prewarmed_keepalive = Mock(side_effect=OSError(10065, "host unreachable"))
+
+        delays = [controller._prewarmed_standby_tick("unit_test") for _ in range(7)]
+
+        self.assertEqual(delays[:2], [5.0, 5.0])
+        self.assertEqual(delays[2:5], [30.0, 30.0, 30.0])
+        self.assertEqual(delays[5:], [60.0, 60.0])
+        with controller._prewarmed_standby_lock:
+            self.assertEqual(controller._prewarmed_standby_failures, 7)
+
+        controller._probe_prewarmed_keepalive = Mock()
+        delay = controller._prewarmed_standby_tick("unit_test")
+
+        self.assertEqual(delay, 5.0)
+        with controller._prewarmed_standby_lock:
+            self.assertEqual(controller._prewarmed_standby_failures, 0)
 
     def test_cached_prewarmed_send_uses_snapshot_bytes_and_matching_socket(self):
         with _LoopbackHttpSpeaker() as speaker:

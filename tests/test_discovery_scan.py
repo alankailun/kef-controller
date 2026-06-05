@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from kef_app.config import AppConfig
+from kef_app.devices.scan.network import build_candidate_networks
 from kef_app.devices.scan.scan import discover_ip_by_mac, discover_kef_device_blind, discover_kef_devices
 from kef_app.devices.speaker_models import SpeakerIdentity
 
@@ -127,7 +128,21 @@ class DiscoveryScanTests(unittest.TestCase):
         self.assertEqual(identify.call_count, 2)
         sleep.assert_called_once_with(0.35)
 
-    def test_manual_scan_probes_all_candidate_networks_in_one_pool(self):
+    def test_candidate_networks_use_default_route_before_seed_and_extra_networks(self):
+        config = AppConfig().with_updates(mac_discovery_extra_cidrs=["172.16.10.0/24"])
+
+        with patch(
+            "kef_app.devices.scan.network.get_local_ipv4_candidates",
+            return_value=["10.0.0.5"],
+        ):
+            networks = build_candidate_networks("192.168.50.222", config, self.make_logger())
+
+        self.assertEqual(
+            [str(network) for network in networks],
+            ["10.0.0.0/24", "192.168.50.0/24", "172.16.10.0/24"],
+        )
+
+    def test_manual_scan_probes_candidate_networks_in_priority_order(self):
         config = AppConfig()
         executor = Mock()
 
@@ -147,13 +162,16 @@ class DiscoveryScanTests(unittest.TestCase):
             devices = discover_kef_devices(None, config, self.make_logger())
 
         self.assertEqual(devices, [])
-        executor_cls.assert_called_once_with(max_workers=4)
-        reachable.assert_called_once_with(
-            executor,
-            ["10.0.0.1", "10.0.0.2", "10.0.1.1", "10.0.1.2"],
-            config,
-            should_continue=None,
+        self.assertEqual(executor_cls.call_count, 2)
+        self.assertEqual([call.kwargs for call in executor_cls.call_args_list], [{"max_workers": 2}, {"max_workers": 2}])
+        self.assertEqual(
+            [call.args[1] for call in reachable.call_args_list],
+            [["10.0.0.1", "10.0.0.2"], ["10.0.1.1", "10.0.1.2"]],
         )
+        for call in reachable.call_args_list:
+            self.assertIs(call.args[0], executor)
+            self.assertIs(call.args[2], config)
+            self.assertIsNone(call.kwargs.get("should_continue"))
         identify.assert_not_called()
 
     def test_full_scan_matches_seed_before_broad_scan(self):
@@ -176,7 +194,7 @@ class DiscoveryScanTests(unittest.TestCase):
         self.assertEqual(found.matched_by, "target_mac")
         probe.assert_not_called()
 
-    def test_full_scan_probes_all_candidate_networks_in_one_pool(self):
+    def test_full_scan_probes_candidate_networks_in_priority_order_until_target_matches(self):
         config = AppConfig()
         identity = self.make_identity("10.0.1.2")
         executor = Mock()
@@ -190,7 +208,7 @@ class DiscoveryScanTests(unittest.TestCase):
                 ],
             ),
             patch("kef_app.devices.scan.scan.ThreadPoolExecutor") as executor_cls,
-            patch("kef_app.devices.scan.scan._reachable_hosts", return_value=["10.0.1.2"]) as reachable,
+            patch("kef_app.devices.scan.scan._reachable_hosts", side_effect=[[], ["10.0.1.2"]]) as reachable,
             patch("kef_app.devices.scan.scan._identify_hosts", return_value=[identity]) as identify,
         ):
             executor_cls.return_value.__enter__.return_value = executor
@@ -198,12 +216,11 @@ class DiscoveryScanTests(unittest.TestCase):
 
         self.assertIsNotNone(found)
         self.assertEqual(found.ip, "10.0.1.2")
-        executor_cls.assert_called_once_with(max_workers=4)
-        reachable.assert_called_once_with(
-            executor,
-            ["10.0.0.1", "10.0.0.2", "10.0.1.1", "10.0.1.2"],
-            config,
-            should_continue=None,
+        self.assertEqual(executor_cls.call_count, 2)
+        self.assertEqual([call.kwargs for call in executor_cls.call_args_list], [{"max_workers": 2}, {"max_workers": 2}])
+        self.assertEqual(
+            [call.args[1] for call in reachable.call_args_list],
+            [["10.0.0.1", "10.0.0.2"], ["10.0.1.1", "10.0.1.2"]],
         )
         identify.assert_called_once_with(executor, ["10.0.1.2"], config, should_continue=None)
 
