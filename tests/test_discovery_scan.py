@@ -142,6 +142,17 @@ class DiscoveryScanTests(unittest.TestCase):
             ["10.0.0.0/24", "192.168.50.0/24", "172.16.10.0/24"],
         )
 
+    def test_candidate_networks_fall_back_to_seed_route_when_default_route_is_missing(self):
+        config = AppConfig()
+
+        def route_source(target: str) -> str | None:
+            return "192.168.50.10" if target == "192.168.50.222" else None
+
+        with patch("kef_app.devices.scan.network._source_ip_for_route", side_effect=route_source):
+            networks = build_candidate_networks("192.168.50.222", config, self.make_logger())
+
+        self.assertEqual([str(network) for network in networks], ["192.168.50.0/24"])
+
     def test_manual_scan_probes_candidate_networks_in_priority_order(self):
         config = AppConfig()
         executor = Mock()

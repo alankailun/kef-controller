@@ -139,6 +139,7 @@ class PrewarmedStandbySocketMonitorMixin:
             self._prewarmed_standby_holders = []
             self._prewarmed_standby_running = True
             self._prewarmed_standby_restart_reason = None
+            self._prewarmed_standby_failures = 0
             self._prewarmed_standby_stop.clear()
 
         for holder in stale_holders:

@@ -204,6 +204,19 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
             self.assertEqual(controller._prewarmed_standby_holders, [])
             self.assertIs(controller._prewarmed_standby_thread, thread)
 
+    def test_monitor_start_resets_keepalive_failure_backoff(self):
+        controller = self.make_controller(80, prewarmed_persist_socket=True)
+        with controller._prewarmed_standby_lock:
+            controller._prewarmed_standby_failures = 100
+        thread = Mock()
+
+        with patch("kef_app.controller.standby.prewarmed_socket.threading.Thread", return_value=thread):
+            started = controller.start_prewarmed_standby_socket_monitor("resume")
+
+        self.assertTrue(started)
+        with controller._prewarmed_standby_lock:
+            self.assertEqual(controller._prewarmed_standby_failures, 0)
+
     def test_keepalive_failures_back_off_until_success_resets_counter(self):
         controller = self.make_controller(80, prewarmed_persist_socket=True, prewarmed_keepalive_interval_s=5.0)
         controller._log_structured = Mock()
