@@ -32,25 +32,38 @@ def _reachable_hosts(
     executor: ThreadPoolExecutor,
     hosts: list[str],
     config: AppConfig,
+    *,
+    should_continue: Optional[Callable[[], bool]] = None,
 ) -> list[str]:
-    reachable_pairs = zip(
-        hosts,
-        executor.map(
-            lambda host_ip: probe_ip_port(host_ip, config.mac_discovery_tcp_port, config.mac_discovery_probe_timeout),
-            hosts,
-        ),
-    )
-    return [host_ip for host_ip, ok in reachable_pairs if ok]
+    reachable: list[str] = []
+    batch_size = max(1, config.mac_discovery_max_workers)
+    for start in range(0, len(hosts), batch_size):
+        if should_continue is not None and not should_continue():
+            break
+        batch = hosts[start : start + batch_size]
+        reachable_pairs = zip(
+            batch,
+            executor.map(
+                lambda host_ip: probe_ip_port(host_ip, config.mac_discovery_tcp_port, config.mac_discovery_probe_timeout),
+                batch,
+            ),
+        )
+        reachable.extend(host_ip for host_ip, ok in reachable_pairs if ok)
+    return reachable
 
 
 def _identify_hosts(
     executor: ThreadPoolExecutor,
     hosts: list[str],
     config: AppConfig,
+    *,
+    should_continue: Optional[Callable[[], bool]] = None,
 ) -> list[SpeakerIdentity]:
     identities: list[SpeakerIdentity] = []
     batch_size = max(1, config.blind_discovery_max_workers)
     for start in range(0, len(hosts), batch_size):
+        if should_continue is not None and not should_continue():
+            break
         batch = hosts[start : start + batch_size]
         found = executor.map(lambda host_ip: identify_kef_device(host_ip, config), batch)
         identities.extend(identity for identity in found if identity)
@@ -81,14 +94,22 @@ def _scan_candidate_hosts(
     networks: list[ipaddress.IPv4Network],
     seed_ip: Optional[str],
     config: AppConfig,
+    *,
+    should_continue: Optional[Callable[[], bool]] = None,
 ) -> tuple[list[str], list[str], list[SpeakerIdentity]]:
     hosts = _candidate_hosts(networks, seed_ip)
     if not hosts:
         return [], [], []
+    if should_continue is not None and not should_continue():
+        return hosts, [], []
 
     with ThreadPoolExecutor(max_workers=_shared_discovery_workers(len(hosts), config)) as executor:
-        reachable_hosts = _reachable_hosts(executor, hosts, config)
-        identities = _identify_hosts(executor, reachable_hosts, config) if reachable_hosts else []
+        reachable_hosts = _reachable_hosts(executor, hosts, config, should_continue=should_continue)
+        identities = (
+            _identify_hosts(executor, reachable_hosts, config, should_continue=should_continue)
+            if reachable_hosts and (should_continue is None or should_continue())
+            else []
+        )
     return hosts, reachable_hosts, identities
 
 
@@ -143,6 +164,7 @@ def discover_kef_devices(
     log,
     *,
     on_candidate: Optional[Callable[[SpeakerIdentity], None]] = None,
+    should_continue: Optional[Callable[[], bool]] = None,
 ) -> list[SpeakerIdentity]:
     networks = build_candidate_networks(seed_ip, config, log)
     if not networks:
@@ -168,7 +190,12 @@ def discover_kef_devices(
         _notify_candidate(on_candidate, seed_identity, log)
 
     probe_started = time.monotonic()
-    hosts, reachable_hosts, identities = _scan_candidate_hosts(networks, seed_ip, config)
+    hosts, reachable_hosts, identities = _scan_candidate_hosts(
+        networks,
+        seed_ip,
+        config,
+        should_continue=should_continue,
+    )
     total_reachable_hosts += len(reachable_hosts)
     total_identified_kef += len(identities)
     for identity in identities:
@@ -182,7 +209,7 @@ def discover_kef_devices(
         f"duration_ms={int((time.monotonic() - probe_started) * 1000)}"
     )
 
-    if seed_ip and seed_ip not in candidates_by_ip:
+    if seed_ip and seed_ip not in candidates_by_ip and (should_continue is None or should_continue()):
         seed_identity = _probe_seed_identity(
             seed_ip,
             config,

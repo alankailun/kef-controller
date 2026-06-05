@@ -76,6 +76,37 @@ class DiscoveryScanTests(unittest.TestCase):
         self.assertEqual([device.ip for device in candidates], [seed])
         identify.assert_called_once_with(seed, config, timeout=1.5)
 
+    def test_manual_scan_can_cancel_after_seed_candidate_before_network_sweep(self):
+        config = AppConfig()
+        seed = "10.0.0.222"
+        identity = self.make_identity(seed)
+        scanning = {"continue": True}
+
+        def on_candidate(_speaker: SpeakerIdentity) -> None:
+            scanning["continue"] = False
+
+        with (
+            patch(
+                "kef_app.devices.scan.scan.build_candidate_networks",
+                return_value=[ipaddress.IPv4Network("10.0.0.220/30")],
+            ),
+            patch("kef_app.devices.scan.scan.ThreadPoolExecutor") as executor_cls,
+            patch("kef_app.devices.scan.scan.probe_ip_port") as probe,
+            patch("kef_app.devices.scan.scan.identify_kef_device", return_value=identity) as identify,
+        ):
+            devices = discover_kef_devices(
+                seed,
+                config,
+                self.make_logger(),
+                on_candidate=on_candidate,
+                should_continue=lambda: scanning["continue"],
+            )
+
+        self.assertEqual([device.ip for device in devices], [seed])
+        identify.assert_called_once_with(seed, config, timeout=1.5)
+        executor_cls.assert_not_called()
+        probe.assert_not_called()
+
     def test_manual_scan_retries_seed_after_network_miss(self):
         config = AppConfig()
         seed = "10.0.0.222"
@@ -121,6 +152,7 @@ class DiscoveryScanTests(unittest.TestCase):
             executor,
             ["10.0.0.1", "10.0.0.2", "10.0.1.1", "10.0.1.2"],
             config,
+            should_continue=None,
         )
         identify.assert_not_called()
 
@@ -171,8 +203,9 @@ class DiscoveryScanTests(unittest.TestCase):
             executor,
             ["10.0.0.1", "10.0.0.2", "10.0.1.1", "10.0.1.2"],
             config,
+            should_continue=None,
         )
-        identify.assert_called_once_with(executor, ["10.0.1.2"], config)
+        identify.assert_called_once_with(executor, ["10.0.1.2"], config, should_continue=None)
 
 
 if __name__ == "__main__":

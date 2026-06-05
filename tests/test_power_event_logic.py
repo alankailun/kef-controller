@@ -1604,6 +1604,17 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertEqual(controller.get_current_kef_ip(), "192.168.1.10")
         self.assertEqual(controller.get_target_kef_mac(), "AABBCCDDEE01")
 
+    def test_scan_kef_devices_releases_blind_discovery_lock_after_cancelled_scan(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
+
+        with patch("kef_app.controller.discovery.recovery.discover_kef_devices", return_value=[]) as discover:
+            result = controller.scan_kef_devices(should_continue=lambda: False)
+
+        self.assertEqual(result, [])
+        self.assertTrue(controller._blind_discovery_lock.acquire(blocking=False))
+        controller._blind_discovery_lock.release()
+        self.assertFalse(discover.call_args.kwargs["should_continue"]())
+
     def test_select_kef_device_updates_current_target(self):
         controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
         identity = SpeakerIdentity(

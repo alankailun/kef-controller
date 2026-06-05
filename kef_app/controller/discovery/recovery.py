@@ -8,7 +8,11 @@ from ...platform.windows import has_best_route_to_ipv4
 
 
 class ControllerDiscoveryRecoveryMixin:
-    def scan_kef_devices(self, on_candidate: Callable[[SpeakerIdentity], None] | None = None) -> list[SpeakerIdentity]:
+    def scan_kef_devices(
+        self,
+        on_candidate: Callable[[SpeakerIdentity], None] | None = None,
+        should_continue: Callable[[], bool] | None = None,
+    ) -> list[SpeakerIdentity]:
         if not self._blind_discovery_lock.acquire(blocking=False):
             self._log_structured(
                 "SKIP",
@@ -26,7 +30,13 @@ class ControllerDiscoveryRecoveryMixin:
                 seed_ip=seed_ip or "<empty>",
                 mono=f"{self.mono():.3f}",
             )
-            devices = discover_kef_devices(seed_ip, self.config, self.log, on_candidate=on_candidate)
+            devices = discover_kef_devices(
+                seed_ip,
+                self.config,
+                self.log,
+                on_candidate=on_candidate,
+                should_continue=should_continue,
+            )
             self._log_structured(
                 "END",
                 action="MANUAL_SCAN",

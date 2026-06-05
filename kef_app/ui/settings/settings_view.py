@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
@@ -206,6 +207,7 @@ class SettingsInterface(ScrollArea):
         self._log = logging.getLogger("kef_controller")
         self._last_scanned_speakers: list[SpeakerIdentity] = []
         self._speaker_selection_dialog: SpeakerSelectionDialog | None = None
+        self._speaker_scan_cancel: threading.Event | None = None
         self._speaker_scan_in_progress = False
         self._speaker_scan_dialog_closed = False
         self._pending_manual_target: tuple[str, str] | None = None
@@ -720,13 +722,16 @@ class SettingsInterface(ScrollArea):
         self._scan_speakers.button.setEnabled(False)
         self._scan_speakers.button.setText("Scanning...")
         self._last_scanned_speakers = []
+        cancel_event = threading.Event()
+        self._speaker_scan_cancel = cancel_event
         self._speaker_scan_in_progress = True
         self._speaker_scan_dialog_closed = False
 
         start_background_task(
             "SettingsScanSpeakers",
             lambda: self._controller.scan_kef_devices(
-                on_candidate=lambda speaker: self._speaker_scan_candidate.emit([speaker])
+                on_candidate=lambda speaker: self._speaker_scan_candidate.emit([speaker]),
+                should_continue=lambda: not cancel_event.is_set(),
             ),
             on_success=self._speaker_scan_finished.emit,
             on_error=lambda exc: self._speaker_scan_failed.emit(str(exc)),
@@ -743,6 +748,7 @@ class SettingsInterface(ScrollArea):
         self._show_or_update_speaker_selection_dialog(self._last_scanned_speakers, scanning=True)
 
     def _on_speaker_scan_finished(self, speakers: object) -> None:
+        canceled = self._consume_speaker_scan_cancelled()
         self._speaker_scan_in_progress = False
         self._scan_speakers.button.setEnabled(True)
         self._scan_speakers.button.setText("Select Speaker...")
@@ -751,6 +757,8 @@ class SettingsInterface(ScrollArea):
             list(speakers) if isinstance(speakers, list) else [],
         )
         self._last_scanned_speakers = devices
+        if canceled:
+            return
         if not devices:
             InfoBar.warning(
                 "No Speakers Found",
@@ -768,10 +776,13 @@ class SettingsInterface(ScrollArea):
         self._show_or_update_speaker_selection_dialog(devices, scanning=False)
 
     def _on_speaker_scan_failed(self, detail: str) -> None:
+        canceled = self._consume_speaker_scan_cancelled()
         self._speaker_scan_in_progress = False
         self._scan_speakers.button.setEnabled(True)
         self._scan_speakers.button.setText("Select Speaker...")
         self._last_scanned_speakers = []
+        if canceled:
+            return
         InfoBar.error(
             "Scan Failed",
             detail or "The speaker scan could not complete.",
@@ -779,6 +790,15 @@ class SettingsInterface(ScrollArea):
             parent=self.window(),
             position=InfoBarPosition.TOP_RIGHT,
         )
+
+    def _cancel_speaker_scan(self) -> None:
+        if self._speaker_scan_cancel is not None:
+            self._speaker_scan_cancel.set()
+
+    def _consume_speaker_scan_cancelled(self) -> bool:
+        cancel_event = self._speaker_scan_cancel
+        self._speaker_scan_cancel = None
+        return bool(cancel_event is not None and cancel_event.is_set())
 
     @staticmethod
     def _speaker_identity_key(speaker: SpeakerIdentity) -> tuple[str, str]:
@@ -828,6 +848,7 @@ class SettingsInterface(ScrollArea):
             self._speaker_selection_dialog = None
         if self._speaker_scan_in_progress:
             self._speaker_scan_dialog_closed = True
+            self._cancel_speaker_scan()
         if result == QDialog.DialogCode.Accepted and dialog.selected_speaker:
             self._use_speaker(dialog.selected_speaker)
 
