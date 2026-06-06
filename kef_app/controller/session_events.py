@@ -7,7 +7,6 @@ from .triggers import get_trigger
 
 
 _EARLY_STANDBY_EVENT_BUDGET_S = 0.30
-_DISPLAY_OFF_STANDBY_EVENT_BUDGET_S = 1.50
 _SUSPEND_STANDBY_EVENT_BUDGET_S = 0.30
 _PUMP_CALLBACK_SLOW_THRESHOLD_S = 0.020
 
@@ -183,12 +182,6 @@ class ControllerSessionEventsMixin:
         self._start_controller_thread(worker, f"SuspendStandby-{generation}")
         return True
 
-    @staticmethod
-    def _early_standby_event_budget_s(trigger_name: str) -> float:
-        if trigger_name == "display_off":
-            return _DISPLAY_OFF_STANDBY_EVENT_BUDGET_S
-        return _EARLY_STANDBY_EVENT_BUDGET_S
-
     def schedule_early_standby(self, trigger_name: str, reason: str, event_mono: float) -> bool:
         trigger = get_trigger(trigger_name)
         if not bool(getattr(self.config, trigger.enabled_field)):
@@ -211,7 +204,7 @@ class ControllerSessionEventsMixin:
             return False
 
         generation = self._new_generation("sleep", reason, mono=f"{event_mono:.3f}")
-        budget_s = self._early_standby_event_budget_s(trigger_name)
+        budget_s = _EARLY_STANDBY_EVENT_BUDGET_S
         deadline_mono = event_mono + budget_s
         self._log_structured(
             "STEP",
@@ -235,55 +228,6 @@ class ControllerSessionEventsMixin:
                 deadline_mono=deadline_mono,
             ):
                 return
-            if trigger_name == "display_off":
-                abort_reason = self._bounded_standby_abort_reason(
-                    deadline_mono=deadline_mono,
-                    generation=generation,
-                )
-                if abort_reason:
-                    self._log_structured(
-                        "ABORT",
-                        action=trigger.action_name,
-                        gen=generation,
-                        reason=reason,
-                        step="before_display_off_play_state_probe",
-                        cause=abort_reason,
-                        deadline_mono=f"{deadline_mono:.3f}",
-                        mono=f"{self.mono():.3f}",
-                    )
-                    return
-
-                playing = self.speaker_is_probably_playing()
-                if playing is not True:
-                    remaining_s = deadline_mono - self.mono()
-                    if remaining_s <= 0.05:
-                        self._log_structured(
-                            "ABORT",
-                            action=trigger.action_name,
-                            gen=generation,
-                            reason=reason,
-                            step="before_display_off_play_state_probe",
-                            cause="deadline_exceeded",
-                            deadline_mono=f"{deadline_mono:.3f}",
-                            mono=f"{self.mono():.3f}",
-                        )
-                        return
-                    playing = self.read_speaker_playing_live(
-                        reason,
-                        trigger_name,
-                        timeout=min(float(self.config.socket_timeout), remaining_s),
-                    )
-                if playing is not False:
-                    self._log_structured(
-                        "ABORT",
-                        action=trigger.action_name,
-                        gen=generation,
-                        reason=reason,
-                        step="before_display_off_worker_send",
-                        cause="speaker_playing" if playing else "play_state_unknown",
-                        mono=f"{self.mono():.3f}",
-                    )
-                    return
             self._run_early_standby_trigger(
                 trigger,
                 reason,
@@ -558,30 +502,10 @@ class ControllerSessionEventsMixin:
 
     def on_display_off(self, event_mono: float, reason: str = "DISPLAY_OFF") -> bool:
         # Modern Standby (Windows 11 S0 idle): the screen turning off is often the
-        # only timely "user stepped away" signal we get. Reuse the suspend standby
-        # behavior, but first use the cached playback state as a cheap fast skip.
-        # The worker does the bounded live read before any standby packet is sent.
-        if not self.config.standby_on_display_off:
-            self._log_structured(
-                "SKIP",
-                action="EARLY_STANDBY",
-                reason=reason,
-                cause="display_off_standby_disabled",
-                mono=f"{self.mono():.3f}",
-            )
-            return False
-
-        playing = self.speaker_is_probably_playing()
-        if playing is True:
-            self._log_structured(
-                "SKIP",
-                action="EARLY_STANDBY",
-                reason=reason,
-                cause="speaker_playing",
-                mono=f"{self.mono():.3f}",
-            )
-            return False
-
+        # only timely "user stepped away" signal we get. Pure display-off standby:
+        # when the screen turns off, put the speaker into standby (gated only by
+        # standby_on_display_off, like lock/lid). No playback check. The standby_on_
+        # display_off gate is enforced downstream in schedule_early_standby.
         return self.dispatch_off_pump_standby(
             "display_off",
             reason,

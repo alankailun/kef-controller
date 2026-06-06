@@ -6,8 +6,8 @@ Baseline for this note: GitHub tag `v1.5.0` at `30fa07e`.
 
 This release collects the post-1.5.0 reliability work into one official 1.6.0
 build. It improves speaker discovery, reduces long-running background noise
-when a speaker is unreachable, and adds a safer Windows 11 Modern Standby
-display-off standby path that does not cut active playback.
+when a speaker is unreachable, and adds a Windows 11 Modern Standby display-off
+standby trigger as an independent, toggleable power behavior.
 
 ## Compared With 1.5.0
 
@@ -17,27 +17,27 @@ display-off standby path that does not cut active playback.
   manual speaker selection is faster and cancellable, keepalive failures back
   off instead of logging every few seconds forever, resume/discovery avoids
   wasted network scans, and display-off becomes an additional Modern Standby
-  signal guarded by playback checks.
+  standby trigger with its own on/off setting.
 
 ## Highlights
 
 - **Display-off is now a Modern Standby trigger.** The app registers
-  `GUID_CONSOLE_DISPLAY_STATE` and handles `DisplayOff` as an early standby
+  `GUID_CONSOLE_DISPLAY_STATE` and handles `DisplayOff` as a standby
   opportunity. `DisplayOn` and `DisplayDim` are logged but do not wake or
   standby the speaker.
-- **Playback is protected before display-off standby.** A fresh cached
-  `playing` state skips immediately, and the display-off worker performs a
-  bounded live `is_playing` read before any standby packet is sent.
-- **Unknown playback state fails safe.** If the live playback read fails or the
-  state is unknown, display-off standby aborts and the later suspend path remains
-  available.
+- **It is its own power-behavior setting.** A new `standby_on_display_off`
+  toggle appears in Speaker Power Behavior, default on like the other behaviors
+  and independent of `standby_on_sleep`, so it can be enabled or disabled on its
+  own.
+- **Pure display-off standby.** When the screen turns off, the speaker is put
+  into standby exactly like the lock and lid-close paths — there is no playback
+  or audio check. Deciding whether playback should keep the speaker awake is left
+  to the user (toggle the setting) and to the speaker's own no-signal
+  auto-standby.
 - **Display-off runs off the Windows message pump.** The hidden-window callback
-  only records and dispatches work. Network reads and standby sends remain in a
-  daemon worker with generation and deadline checks.
-- **Display-off gets its own bounded budget.** Lock and lid-close standby keep
-  their tight `300 ms` budget. Display-off standby gets a bounded `1.5 s` budget
-  so it can perform the live playback check without making the feature mostly
-  inert.
+  only records and dispatches work. The standby send runs in a bounded daemon
+  worker with generation and deadline checks, sharing the standard `300 ms`
+  early-standby budget used by lock and lid-close.
 - **Manual speaker selection is more responsive.** Scan candidates can surface
   progressively, seed/known-IP identity checks run before broad probing, and
   candidate networks are prioritized by the default route instead of treating
@@ -69,17 +69,19 @@ display-off standby path that does not cut active playback.
 ## Compatibility
 
 - Existing configuration and state files remain compatible.
-- No user-facing setting was added or removed.
-- `standby_on_sleep=False` disables display-off standby as well as regular sleep
-  standby.
-- If playback cannot be confirmed as stopped/paused, display-off standby is
-  skipped rather than risking an audio interruption.
+- **One new setting:** `standby_on_display_off` (default on). Config files
+  written by older builds simply pick up the default on first load.
+- Because display-off standby has no playback check, disable
+  `standby_on_display_off` in Speaker Power Behavior if you do not want the
+  screen turning off to put the speaker into standby.
+- `standby_on_sleep` now controls only sleep standby; display-off standby is
+  controlled by its own toggle.
 
 ## Tests
 
-- Full unit test suite passes: `177 tests`.
+- Full unit test suite passes: `167 tests`.
 - Added coverage for scan cancellation, route-prioritized discovery, ARP
   recovery fallback behavior, keepalive backoff/reset behavior, console-display
-  power-setting decode, display-off trigger registration, cached playback-state
-  handling, stale/unknown playback safety, bounded live playback reads,
-  display-off worker aborts, and display-off deadline behavior.
+  power-setting decode, display-off trigger registration, the independent
+  `standby_on_display_off` toggle (round-trip and power-behavior options), and
+  display-off dispatch / disabled-skip / scheduled early-standby behavior.

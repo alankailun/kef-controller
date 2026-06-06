@@ -95,11 +95,6 @@ class KefPowerController(
         self._speaker_runtime_input_source = ""
         self._speaker_runtime_volume: int | None = None
         self._speaker_runtime_power_on: bool | None = None
-        # Last known player state ("playing" / "paused" / "stopped" / ...), cached
-        # from the speaker event stream. Used to gate the display-off standby
-        # trigger so playback is never cut when the screen blanks. None = unknown.
-        self._speaker_runtime_play_state: str | None = None
-        self._speaker_runtime_play_state_mono = 0.0
 
         self._generation = 0
         self._controller_active_power_actions = 0
