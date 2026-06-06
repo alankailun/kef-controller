@@ -266,6 +266,7 @@ class SettingsInterface(ScrollArea):
             "standby_on_lock": FIF.POWER_BUTTON,
             "wake_on_unlock_only": FIF.SYNC,
             "standby_on_sleep": FIF.POWER_BUTTON,
+            "standby_on_display_off": FIF.BRIGHTNESS,
         }
         self._power_behavior_cards: dict[str, SwitchCard] = {}
         for option in SPEAKER_POWER_OPTIONS:
@@ -417,6 +418,7 @@ class SettingsInterface(ScrollArea):
             wake_on_unlock_only=self._power_behavior_cards["wake_on_unlock_only"].is_checked(),
             standby_on_sleep=self._power_behavior_cards["standby_on_sleep"].is_checked(),
             standby_on_lock=self._power_behavior_cards["standby_on_lock"].is_checked(),
+            standby_on_display_off=self._power_behavior_cards["standby_on_display_off"].is_checked(),
             endsession_standby_on_shutdown=self._power_behavior_cards["endsession_standby_on_shutdown"].is_checked(),
             startup_registration_mode=selected_startup_mode,
         )

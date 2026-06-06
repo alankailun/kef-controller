@@ -18,6 +18,7 @@ EXPECTED_POWER_BEHAVIOR_KEYS = (
     "standby_on_lock",
     "wake_on_unlock_only",
     "standby_on_sleep",
+    "standby_on_display_off",
 )
 
 
@@ -44,6 +45,7 @@ class PowerBehaviorSettingsTests(unittest.TestCase):
             "standby_on_lock": False,
             "wake_on_unlock_only": True,
             "standby_on_sleep": False,
+            "standby_on_display_off": True,
         }
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -68,6 +70,7 @@ class PowerBehaviorSettingsTests(unittest.TestCase):
             standby_on_lock=False,
             wake_on_unlock_only=True,
             standby_on_sleep=False,
+            standby_on_display_off=True,
         )
 
         message = log_power_behavior_state_message(config)
@@ -77,6 +80,7 @@ class PowerBehaviorSettingsTests(unittest.TestCase):
         self.assertIn("lock_standby=False", message)
         self.assertIn("wake_after_unlock=True", message)
         self.assertIn("sleep_standby=False", message)
+        self.assertIn("display_off_standby=True", message)
 
 
 if __name__ == "__main__":

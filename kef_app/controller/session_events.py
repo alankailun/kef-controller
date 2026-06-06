@@ -561,12 +561,12 @@ class ControllerSessionEventsMixin:
         # only timely "user stepped away" signal we get. Reuse the suspend standby
         # behavior, but first use the cached playback state as a cheap fast skip.
         # The worker does the bounded live read before any standby packet is sent.
-        if not self.config.standby_on_sleep:
+        if not self.config.standby_on_display_off:
             self._log_structured(
                 "SKIP",
                 action="EARLY_STANDBY",
                 reason=reason,
-                cause="sleep_standby_disabled",
+                cause="display_off_standby_disabled",
                 mono=f"{self.mono():.3f}",
             )
             return False

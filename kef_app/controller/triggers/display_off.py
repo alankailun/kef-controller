@@ -5,10 +5,10 @@ from typing import Any
 from .base import EarlyStandbyTrigger
 
 
-# Reuses the existing `standby_on_sleep` master switch on purpose: display-off is
-# treated as an additional, earlier Modern-Standby path into the same "system is
-# going idle" standby behavior, so it needs no separate setting. The playback
-# gate (only fire when the speaker is known to be not playing) lives in
+# Independent toggle (`standby_on_display_off`), decoupled from `standby_on_sleep`:
+# display-off standby is a more eager, input-dependent behavior, so users can
+# enable/disable it without touching sleep standby. The playback gate (only fire
+# when the speaker is known to be not playing) lives in
 # ControllerSessionEventsMixin.on_display_off.
 class DisplayOffTrigger(EarlyStandbyTrigger):
     def fire(self, controller: Any, event_mono: float | str | None = None, reason: str | None = None) -> bool:
@@ -25,6 +25,6 @@ class DisplayOffTrigger(EarlyStandbyTrigger):
 DISPLAY_OFF_TRIGGER = DisplayOffTrigger(
     name="display_off",
     default_reason="DISPLAY_OFF",
-    enabled_field="standby_on_sleep",
-    disabled_cause="sleep_standby_disabled",
+    enabled_field="standby_on_display_off",
+    disabled_cause="display_off_standby_disabled",
 )

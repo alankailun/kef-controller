@@ -404,7 +404,7 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertEqual(controller._current_generation(), 1)
 
     def test_on_display_off_standbys_when_speaker_not_playing(self):
-        controller = self.make_controller(standby_on_sleep=True)
+        controller = self.make_controller(standby_on_display_off=True)
         controller.dispatch_off_pump_standby = Mock(return_value=True)
         controller._update_speaker_runtime_play_state("paused")
 
@@ -420,7 +420,7 @@ class PowerEventLogicTests(unittest.TestCase):
         )
 
     def test_on_display_off_skips_when_speaker_is_playing(self):
-        controller = self.make_controller(standby_on_sleep=True)
+        controller = self.make_controller(standby_on_display_off=True)
         controller.dispatch_off_pump_standby = Mock(return_value=True)
         controller._update_speaker_runtime_play_state("playing")
 
@@ -428,7 +428,7 @@ class PowerEventLogicTests(unittest.TestCase):
         controller.dispatch_off_pump_standby.assert_not_called()
 
     def test_on_display_off_schedules_live_probe_when_play_state_unknown(self):
-        controller = self.make_controller(standby_on_sleep=True)
+        controller = self.make_controller(standby_on_display_off=True)
         controller.dispatch_off_pump_standby = Mock(return_value=True)
         controller._speaker_runtime_play_state = None
 
@@ -441,8 +441,8 @@ class PowerEventLogicTests(unittest.TestCase):
             step="dispatch_display_off_standby",
         )
 
-    def test_on_display_off_skips_when_sleep_standby_disabled(self):
-        controller = self.make_controller(standby_on_sleep=False)
+    def test_on_display_off_skips_when_display_off_standby_disabled(self):
+        controller = self.make_controller(standby_on_display_off=False)
         controller.dispatch_off_pump_standby = Mock(return_value=True)
         controller._update_speaker_runtime_play_state("stopped")
 
@@ -506,7 +506,7 @@ class PowerEventLogicTests(unittest.TestCase):
         )
 
     def test_display_off_trigger_fire_uses_play_state_gate(self):
-        controller = self.make_controller(standby_on_sleep=True)
+        controller = self.make_controller(standby_on_display_off=True)
         controller.dispatch_off_pump_standby = Mock(return_value=True)
         controller._update_speaker_runtime_play_state("playing")
 
@@ -516,7 +516,7 @@ class PowerEventLogicTests(unittest.TestCase):
         controller.dispatch_off_pump_standby.assert_not_called()
 
     def test_scheduled_display_off_rechecks_play_state_before_worker_send(self):
-        controller = self.make_controller(standby_on_sleep=True)
+        controller = self.make_controller(standby_on_display_off=True)
         captured: dict[str, object] = {}
         controller._start_controller_thread = lambda target, thread_name: captured.update(
             target=target,
@@ -534,7 +534,7 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._run_early_standby_trigger.assert_not_called()
 
     def test_scheduled_display_off_aborts_when_live_play_state_is_playing(self):
-        controller = self.make_controller(standby_on_sleep=True)
+        controller = self.make_controller(standby_on_display_off=True)
         captured: dict[str, object] = {}
         controller._start_controller_thread = lambda target, thread_name: captured.update(
             target=target,
@@ -556,7 +556,7 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._run_early_standby_trigger.assert_not_called()
 
     def test_scheduled_display_off_uses_live_play_state_before_send(self):
-        controller = self.make_controller(standby_on_sleep=True)
+        controller = self.make_controller(standby_on_display_off=True)
         captured: dict[str, object] = {}
         controller._start_controller_thread = lambda target, thread_name: captured.update(
             target=target,

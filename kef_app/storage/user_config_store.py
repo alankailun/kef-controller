@@ -6,7 +6,7 @@ import os
 from dataclasses import fields as dataclass_fields, is_dataclass
 from typing import Any, Callable
 
-from ..config import AppConfig, UserSettings
+from ..config import AppConfig
 from ..config.user_settings import (
     USER_SETTINGS_FIELD_PATHS,
     USER_SETTINGS_FLAT_FIELD_NAMES,
@@ -161,6 +161,7 @@ class UserConfigStore:
         "suspend_fast_standby_socket_timeout": _coerce_positive_float,
         "standby_on_lock": lambda value: UserConfigStore._coerce_bool(value),
         "standby_on_lid_close": lambda value: UserConfigStore._coerce_bool(value),
+        "standby_on_display_off": lambda value: UserConfigStore._coerce_bool(value),
         "early_standby_action_lock_timeout": _coerce_non_negative_float,
         "early_standby_dedup_window": _coerce_non_negative_float,
         "prewarmed_standby_enabled": lambda value: UserConfigStore._coerce_bool(value),

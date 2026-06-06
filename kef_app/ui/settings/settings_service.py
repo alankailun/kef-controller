@@ -73,6 +73,14 @@ SPEAKER_POWER_OPTIONS: tuple[SpeakerPowerOption, ...] = (
         "Put Speaker in Standby When Windows Sleeps",
         "When Windows goes to sleep, put the speaker into standby.",
     ),
+    SpeakerPowerOption(
+        "standby_on_display_off",
+        "Put Speaker in Standby When the Screen Turns Off",
+        "When the display turns off (e.g. you step away), put the speaker into "
+        "standby — but only if it isn't playing. Helps on Windows 11 Modern "
+        "Standby. Works best with streaming inputs; may behave oddly on physical "
+        "inputs like optical or coaxial.",
+    ),
 )
 
 SPEAKER_POWER_OPTIONS_BY_KEY = {option.key: option for option in SPEAKER_POWER_OPTIONS}
@@ -118,7 +126,8 @@ def log_power_behavior_state_message(config: AppConfig) -> str:
         f"lock_standby={config.standby_on_lock} | "
         f"lid_close_standby={config.standby_on_lid_close} | "
         f"wake_after_unlock={config.wake_on_unlock_only} | "
-        f"sleep_standby={config.standby_on_sleep}"
+        f"sleep_standby={config.standby_on_sleep} | "
+        f"display_off_standby={config.standby_on_display_off}"
     )
 
 
