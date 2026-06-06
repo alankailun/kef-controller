@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from kef_app.config import AppConfig
 from kef_app.controller import KefPowerController
@@ -69,6 +69,7 @@ class PowerEventLogicTests(unittest.TestCase):
             {
                 "lock",
                 "lid_closed",
+                "display_off",
                 "suspend",
                 "query_end_session",
                 "end_session",
@@ -401,6 +402,185 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertTrue(result)
         controller.standby_kef_preemptive.assert_called_once_with(1, "POWER_LID_CLOSED")
         self.assertEqual(controller._current_generation(), 1)
+
+    def test_on_display_off_standbys_when_speaker_not_playing(self):
+        controller = self.make_controller(standby_on_sleep=True)
+        controller.dispatch_off_pump_standby = Mock(return_value=True)
+        controller._update_speaker_runtime_play_state("paused")
+
+        result = controller.on_display_off(100.0)
+
+        self.assertTrue(result)
+        controller.dispatch_off_pump_standby.assert_called_once_with(
+            "display_off",
+            "DISPLAY_OFF",
+            100.0,
+            callback_started_mono=100.0,
+            step="dispatch_display_off_standby",
+        )
+
+    def test_on_display_off_skips_when_speaker_is_playing(self):
+        controller = self.make_controller(standby_on_sleep=True)
+        controller.dispatch_off_pump_standby = Mock(return_value=True)
+        controller._update_speaker_runtime_play_state("playing")
+
+        self.assertFalse(controller.on_display_off(100.0))
+        controller.dispatch_off_pump_standby.assert_not_called()
+
+    def test_on_display_off_schedules_live_probe_when_play_state_unknown(self):
+        controller = self.make_controller(standby_on_sleep=True)
+        controller.dispatch_off_pump_standby = Mock(return_value=True)
+        controller._speaker_runtime_play_state = None
+
+        self.assertTrue(controller.on_display_off(100.0))
+        controller.dispatch_off_pump_standby.assert_called_once_with(
+            "display_off",
+            "DISPLAY_OFF",
+            100.0,
+            callback_started_mono=100.0,
+            step="dispatch_display_off_standby",
+        )
+
+    def test_on_display_off_skips_when_sleep_standby_disabled(self):
+        controller = self.make_controller(standby_on_sleep=False)
+        controller.dispatch_off_pump_standby = Mock(return_value=True)
+        controller._update_speaker_runtime_play_state("stopped")
+
+        self.assertFalse(controller.on_display_off(100.0))
+        controller.dispatch_off_pump_standby.assert_not_called()
+
+    def test_speaker_event_poll_caches_play_state(self):
+        controller = self.make_controller()
+        controller._update_speaker_runtime_play_state("Playing")
+        self.assertIs(controller.speaker_is_probably_playing(), True)
+        controller._update_speaker_runtime_play_state("stopped")
+        self.assertIs(controller.speaker_is_probably_playing(), False)
+        # None must not clobber the last known value.
+        controller._update_speaker_runtime_play_state(None)
+        self.assertIs(controller.speaker_is_probably_playing(), False)
+
+    def test_speaker_event_poll_treats_unknown_play_state_as_unknown(self):
+        controller = self.make_controller()
+        controller._update_speaker_runtime_play_state("buffering")
+
+        self.assertIs(controller.speaker_is_probably_playing(), None)
+
+    def test_speaker_event_poll_treats_stale_play_state_as_unknown(self):
+        controller = self.make_controller(home_event_reconcile_interval=10.0)
+        controller.mono = Mock(return_value=100.0)
+        controller._update_speaker_runtime_play_state("paused")
+        controller.mono = Mock(return_value=111.0)
+
+        self.assertIs(controller.speaker_is_probably_playing(), None)
+
+    def test_live_play_state_read_updates_cached_state(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        speaker = Mock()
+        speaker.is_playing = True
+        controller.get_speaker = Mock(return_value=speaker)
+
+        result = controller.read_speaker_playing_live("DISPLAY_OFF", "display_off", timeout=0.2)
+
+        self.assertIs(result, True)
+        self.assertIs(controller.speaker_is_probably_playing(), True)
+        controller.get_speaker.assert_called_once_with(fresh=False)
+
+    def test_live_play_state_read_failure_returns_unknown(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        controller.get_speaker = Mock(side_effect=OSError("offline"))
+        controller.reset_speaker = Mock()
+
+        result = controller.read_speaker_playing_live("DISPLAY_OFF", "display_off", timeout=0.2)
+
+        self.assertIs(result, None)
+        controller.reset_speaker.assert_called_once()
+
+    def test_display_off_event_matches_reason_for_early_standby_diagnostics(self):
+        controller = self.make_controller()
+
+        self.assertTrue(
+            controller._early_standby_event_matches_reason(
+                "GUID_CONSOLE_DISPLAY_STATE",
+                "DISPLAY_OFF",
+            )
+        )
+
+    def test_display_off_trigger_fire_uses_play_state_gate(self):
+        controller = self.make_controller(standby_on_sleep=True)
+        controller.dispatch_off_pump_standby = Mock(return_value=True)
+        controller._update_speaker_runtime_play_state("playing")
+
+        fired = TRIGGERS["display_off"].fire(controller, 100.0)
+
+        self.assertFalse(fired)
+        controller.dispatch_off_pump_standby.assert_not_called()
+
+    def test_scheduled_display_off_rechecks_play_state_before_worker_send(self):
+        controller = self.make_controller(standby_on_sleep=True)
+        captured: dict[str, object] = {}
+        controller._start_controller_thread = lambda target, thread_name: captured.update(
+            target=target,
+            thread_name=thread_name,
+        )
+        controller._run_early_standby_trigger = Mock(return_value=True)
+        controller._update_speaker_runtime_play_state("paused")
+        event_mono = controller.mono()
+
+        scheduled = controller.schedule_early_standby("display_off", "DISPLAY_OFF", event_mono)
+        controller._update_speaker_runtime_play_state("playing")
+        captured["target"]()
+
+        self.assertTrue(scheduled)
+        controller._run_early_standby_trigger.assert_not_called()
+
+    def test_scheduled_display_off_aborts_when_live_play_state_is_playing(self):
+        controller = self.make_controller(standby_on_sleep=True)
+        captured: dict[str, object] = {}
+        controller._start_controller_thread = lambda target, thread_name: captured.update(
+            target=target,
+            thread_name=thread_name,
+        )
+        controller.read_speaker_playing_live = Mock(return_value=True)
+        controller._run_early_standby_trigger = Mock(return_value=True)
+        event_mono = controller.mono()
+
+        scheduled = controller.schedule_early_standby("display_off", "DISPLAY_OFF", event_mono)
+        captured["target"]()
+
+        self.assertTrue(scheduled)
+        controller.read_speaker_playing_live.assert_called_once_with(
+            "DISPLAY_OFF",
+            "display_off",
+            timeout=ANY,
+        )
+        controller._run_early_standby_trigger.assert_not_called()
+
+    def test_scheduled_display_off_uses_live_play_state_before_send(self):
+        controller = self.make_controller(standby_on_sleep=True)
+        captured: dict[str, object] = {}
+        controller._start_controller_thread = lambda target, thread_name: captured.update(
+            target=target,
+            thread_name=thread_name,
+        )
+        controller.read_speaker_playing_live = Mock(return_value=False)
+        controller._run_early_standby_trigger = Mock(return_value=True)
+        event_mono = controller.mono()
+
+        scheduled = controller.schedule_early_standby("display_off", "DISPLAY_OFF", event_mono)
+        captured["target"]()
+
+        self.assertTrue(scheduled)
+        controller.read_speaker_playing_live.assert_called_once_with(
+            "DISPLAY_OFF",
+            "display_off",
+            timeout=ANY,
+        )
+        controller._run_early_standby_trigger.assert_called_once()
+        self.assertAlmostEqual(
+            controller._run_early_standby_trigger.call_args.kwargs["deadline_mono"],
+            event_mono + 1.50,
+            places=3,
+        )
 
     def test_scheduled_lock_standby_uses_event_anchored_deadline_in_worker(self):
         controller = self.make_controller(standby_on_lock=True)

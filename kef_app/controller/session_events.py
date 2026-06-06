@@ -7,6 +7,7 @@ from .triggers import get_trigger
 
 
 _EARLY_STANDBY_EVENT_BUDGET_S = 0.30
+_DISPLAY_OFF_STANDBY_EVENT_BUDGET_S = 1.50
 _SUSPEND_STANDBY_EVENT_BUDGET_S = 0.30
 _PUMP_CALLBACK_SLOW_THRESHOLD_S = 0.020
 
@@ -16,7 +17,9 @@ class ControllerSessionEventsMixin:
     def _early_standby_event_matches_reason(event_name: str, reason: str) -> bool:
         if event_name == reason:
             return True
-        return event_name == "GUID_LIDSWITCH_STATE_CHANGE" and reason == "POWER_LID_CLOSED"
+        if event_name == "GUID_LIDSWITCH_STATE_CHANGE" and reason == "POWER_LID_CLOSED":
+            return True
+        return event_name == "GUID_CONSOLE_DISPLAY_STATE" and reason == "DISPLAY_OFF"
 
     def _start_controller_thread(self, target, thread_name: str):
         def guarded():
@@ -123,7 +126,7 @@ class ControllerSessionEventsMixin:
     def schedule_off_pump_standby(self, trigger_name: str, reason: str, event_mono: float) -> bool:
         if trigger_name == "suspend":
             return self.schedule_suspend_standby(reason, event_mono)
-        if trigger_name in {"lock", "lid_closed"}:
+        if trigger_name in {"lock", "lid_closed", "display_off"}:
             return self.schedule_early_standby(trigger_name, reason, event_mono)
         raise ValueError(f"Unknown off-pump standby trigger: {trigger_name}")
 
@@ -180,6 +183,12 @@ class ControllerSessionEventsMixin:
         self._start_controller_thread(worker, f"SuspendStandby-{generation}")
         return True
 
+    @staticmethod
+    def _early_standby_event_budget_s(trigger_name: str) -> float:
+        if trigger_name == "display_off":
+            return _DISPLAY_OFF_STANDBY_EVENT_BUDGET_S
+        return _EARLY_STANDBY_EVENT_BUDGET_S
+
     def schedule_early_standby(self, trigger_name: str, reason: str, event_mono: float) -> bool:
         trigger = get_trigger(trigger_name)
         if not bool(getattr(self.config, trigger.enabled_field)):
@@ -202,7 +211,8 @@ class ControllerSessionEventsMixin:
             return False
 
         generation = self._new_generation("sleep", reason, mono=f"{event_mono:.3f}")
-        deadline_mono = event_mono + _EARLY_STANDBY_EVENT_BUDGET_S
+        budget_s = self._early_standby_event_budget_s(trigger_name)
+        deadline_mono = event_mono + budget_s
         self._log_structured(
             "STEP",
             log_level="info",
@@ -213,7 +223,7 @@ class ControllerSessionEventsMixin:
             trigger=trigger_name,
             event_mono=f"{event_mono:.3f}",
             deadline_mono=f"{deadline_mono:.3f}",
-            budget_ms=int(_EARLY_STANDBY_EVENT_BUDGET_S * 1000),
+            budget_ms=int(budget_s * 1000),
             mono=f"{self.mono():.3f}",
         )
 
@@ -225,6 +235,55 @@ class ControllerSessionEventsMixin:
                 deadline_mono=deadline_mono,
             ):
                 return
+            if trigger_name == "display_off":
+                abort_reason = self._bounded_standby_abort_reason(
+                    deadline_mono=deadline_mono,
+                    generation=generation,
+                )
+                if abort_reason:
+                    self._log_structured(
+                        "ABORT",
+                        action=trigger.action_name,
+                        gen=generation,
+                        reason=reason,
+                        step="before_display_off_play_state_probe",
+                        cause=abort_reason,
+                        deadline_mono=f"{deadline_mono:.3f}",
+                        mono=f"{self.mono():.3f}",
+                    )
+                    return
+
+                playing = self.speaker_is_probably_playing()
+                if playing is not True:
+                    remaining_s = deadline_mono - self.mono()
+                    if remaining_s <= 0.05:
+                        self._log_structured(
+                            "ABORT",
+                            action=trigger.action_name,
+                            gen=generation,
+                            reason=reason,
+                            step="before_display_off_play_state_probe",
+                            cause="deadline_exceeded",
+                            deadline_mono=f"{deadline_mono:.3f}",
+                            mono=f"{self.mono():.3f}",
+                        )
+                        return
+                    playing = self.read_speaker_playing_live(
+                        reason,
+                        trigger_name,
+                        timeout=min(float(self.config.socket_timeout), remaining_s),
+                    )
+                if playing is not False:
+                    self._log_structured(
+                        "ABORT",
+                        action=trigger.action_name,
+                        gen=generation,
+                        reason=reason,
+                        step="before_display_off_worker_send",
+                        cause="speaker_playing" if playing else "play_state_unknown",
+                        mono=f"{self.mono():.3f}",
+                    )
+                    return
             self._run_early_standby_trigger(
                 trigger,
                 reason,
@@ -496,6 +555,40 @@ class ControllerSessionEventsMixin:
 
     def on_lid_closed(self, reason: str = "POWER_LID_CLOSED") -> bool:
         return get_trigger("lid_closed").fire(self, reason)
+
+    def on_display_off(self, event_mono: float, reason: str = "DISPLAY_OFF") -> bool:
+        # Modern Standby (Windows 11 S0 idle): the screen turning off is often the
+        # only timely "user stepped away" signal we get. Reuse the suspend standby
+        # behavior, but first use the cached playback state as a cheap fast skip.
+        # The worker does the bounded live read before any standby packet is sent.
+        if not self.config.standby_on_sleep:
+            self._log_structured(
+                "SKIP",
+                action="EARLY_STANDBY",
+                reason=reason,
+                cause="sleep_standby_disabled",
+                mono=f"{self.mono():.3f}",
+            )
+            return False
+
+        playing = self.speaker_is_probably_playing()
+        if playing is True:
+            self._log_structured(
+                "SKIP",
+                action="EARLY_STANDBY",
+                reason=reason,
+                cause="speaker_playing",
+                mono=f"{self.mono():.3f}",
+            )
+            return False
+
+        return self.dispatch_off_pump_standby(
+            "display_off",
+            reason,
+            event_mono,
+            callback_started_mono=event_mono,
+            step="dispatch_display_off_standby",
+        )
 
     def on_resume(self, reason: str):
         self._clear_early_standby_state()

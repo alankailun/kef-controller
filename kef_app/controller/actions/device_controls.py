@@ -15,6 +15,10 @@ T = TypeVar("T")
 _EVENT_MONITOR_IDLE_DELAY_S = 0.2
 _EVENT_MONITOR_RETRY_DELAY_S = 2.0
 _EVENT_MONITOR_POWER_ACTION_DELAY_S = 0.5
+_PLAY_STATE_MIN_FRESHNESS_S = 5.0
+_PLAY_STATE_MAX_FRESHNESS_S = 120.0
+_SPEAKER_PLAYING_STATES = {"playing"}
+_SPEAKER_NOT_PLAYING_STATES = {"paused", "pause", "stopped", "stop", "idle"}
 
 
 class ControllerDeviceControlsMixin:
@@ -77,6 +81,90 @@ class ControllerDeviceControlsMixin:
                 source=source,
             )
         return changed
+
+    def _update_speaker_runtime_play_state(self, raw_state: object) -> None:
+        if raw_state is None:
+            return
+        state = str(raw_state).strip().casefold()
+        if not state:
+            return
+        updated_mono = self.mono()
+        with self._state_lock:
+            self._speaker_runtime_play_state = state
+            self._speaker_runtime_play_state_mono = updated_mono
+
+    def _speaker_runtime_play_state_max_age_s(self) -> float:
+        max_age = float(getattr(self.config, "home_event_reconcile_interval", 60.0))
+        return max(_PLAY_STATE_MIN_FRESHNESS_S, min(_PLAY_STATE_MAX_FRESHNESS_S, max_age))
+
+    def speaker_is_probably_playing(self) -> Optional[bool]:
+        """Cached playback hint: True (playing), False (known idle), None (unknown/stale)."""
+        now = self.mono()
+        with self._state_lock:
+            state = self._speaker_runtime_play_state
+            updated_mono = self._speaker_runtime_play_state_mono
+        if state is None or updated_mono <= 0.0:
+            return None
+        if now - updated_mono > self._speaker_runtime_play_state_max_age_s():
+            return None
+        if state in _SPEAKER_PLAYING_STATES:
+            return True
+        if state in _SPEAKER_NOT_PLAYING_STATES:
+            return False
+        return None
+
+    def read_speaker_playing_live(
+        self,
+        reason: str,
+        trigger: str,
+        *,
+        timeout: float,
+    ) -> Optional[bool]:
+        """Bounded live playback read for display-off standby gating."""
+        if not self.get_current_kef_ip():
+            return None
+
+        timeout_s = max(0.05, float(timeout))
+        started = self.mono()
+        try:
+            with temporary_socket_timeout(timeout_s):
+                speaker = self.get_speaker(fresh=False)
+                playing = bool(speaker.is_playing)
+        except Exception as exc:
+            self.reset_speaker()
+            finished = self.mono()
+            self._log_structured(
+                "STEP",
+                log_level="info",
+                action="POLL_EXTERNAL_STATE",
+                reason=reason,
+                trigger=trigger,
+                step="display_off_live_play_state",
+                status="failed",
+                cause="host_unreachable" if is_host_unreachable(exc) else "read_failed",
+                timeout_s=f"{timeout_s:.2f}",
+                duration_ms=int(max(0.0, finished - started) * 1000),
+                error=repr(exc),
+                mono=f"{finished:.3f}",
+            )
+            return None
+
+        self._update_speaker_runtime_play_state("playing" if playing else "stopped")
+        finished = self.mono()
+        self._log_structured(
+            "STEP",
+            log_level="info",
+            action="POLL_EXTERNAL_STATE",
+            reason=reason,
+            trigger=trigger,
+            step="display_off_live_play_state",
+            status="ok",
+            speaker_playing=playing,
+            timeout_s=f"{timeout_s:.2f}",
+            duration_ms=int(max(0.0, finished - started) * 1000),
+            mono=f"{finished:.3f}",
+        )
+        return playing
 
     def _clear_speaker_event_poll_failures(self) -> None:
         with self._state_lock:
@@ -380,6 +468,10 @@ class ControllerDeviceControlsMixin:
         if not isinstance(events, dict) or not events:
             self._clear_speaker_event_poll_failures()
             return None, None, None
+
+        # Cache the player state even when this event carries nothing else, so the
+        # display-off standby trigger can read it without a fresh network call.
+        self._update_speaker_runtime_play_state(events.get("status"))
 
         input_source = normalize_input_source(events.get("source")) or None
         volume = events.get("volume") if isinstance(events.get("volume"), int) else None

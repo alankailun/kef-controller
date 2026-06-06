@@ -6,8 +6,11 @@ from unittest.mock import patch
 
 from kef_app.platform.windows.api import (
     ERROR_NETWORK_UNREACHABLE,
+    GUID_CONSOLE_DISPLAY_STATE,
     GUID_LIDSWITCH_STATE_CHANGE,
     LID_CLOSED,
+    MONITOR_DISPLAY_OFF,
+    MONITOR_DISPLAY_ON,
     POWERBROADCAST_SETTING,
     decode_power_setting_change,
     has_best_route_to_ipv4,
@@ -34,6 +37,18 @@ class WindowsPowerSettingsTests(unittest.TestCase):
         self.assertEqual(change.name, "GUID_LIDSWITCH_STATE_CHANGE")
         self.assertEqual(change.value, LID_CLOSED)
         self.assertEqual(change.label, "LidClosed")
+
+    def test_decode_console_display_state_power_setting(self):
+        off_buffer = _power_setting_lparam(GUID_CONSOLE_DISPLAY_STATE, MONITOR_DISPLAY_OFF)
+        off = decode_power_setting_change(ctypes.addressof(off_buffer))
+        self.assertIsNotNone(off)
+        self.assertEqual(off.name, "GUID_CONSOLE_DISPLAY_STATE")
+        self.assertEqual(off.value, MONITOR_DISPLAY_OFF)
+        self.assertEqual(off.label, "DisplayOff")
+
+        on_buffer = _power_setting_lparam(GUID_CONSOLE_DISPLAY_STATE, MONITOR_DISPLAY_ON)
+        on = decode_power_setting_change(ctypes.addressof(on_buffer))
+        self.assertEqual(on.label, "DisplayOn")
 
     def test_best_route_preflight_reports_available_interface(self):
         def fake_get_best_interface(_address, interface_index):

@@ -284,9 +284,20 @@ class POWERBROADCAST_SETTING(ctypes.Structure):
 RegisterPowerSettingNotification.argtypes = [wintypes.HANDLE, ctypes.POINTER(GUID), wintypes.DWORD]
 
 GUID_LIDSWITCH_STATE_CHANGE = GUID.from_string("{BA3E0F4D-B817-4094-A2D1-D56379E6A0F3}")
+# Display on/off/dim. On Windows 11 Modern Standby (S0 idle) the display turning
+# off is the earliest reliable "user stepped away" signal: it usually arrives
+# while the message pump is still alive and well before a clean PBT_APMSUSPEND
+# (which under Modern Standby may be late or never fire). We use it as an extra,
+# playback-gated standby trigger.
+GUID_CONSOLE_DISPLAY_STATE = GUID.from_string("{6FE69556-704A-47A0-8F24-C28D936FDA47}")
+
+MONITOR_DISPLAY_OFF = 0
+MONITOR_DISPLAY_ON = 1
+MONITOR_DISPLAY_DIM = 2
 
 POWER_SETTING_GUIDS: tuple[tuple[str, GUID], ...] = (
     ("GUID_LIDSWITCH_STATE_CHANGE", GUID_LIDSWITCH_STATE_CHANGE),
+    ("GUID_CONSOLE_DISPLAY_STATE", GUID_CONSOLE_DISPLAY_STATE),
 )
 
 _POWER_SETTING_NAME_BY_GUID = {guid.canonical(): name for name, guid in POWER_SETTING_GUIDS}
@@ -309,6 +320,12 @@ def _label_power_setting_value(name: str, value: int | None) -> str:
             LID_CLOSED: "LidClosed",
             LID_OPENED: "LidOpened",
         }.get(value, f"LIDSWITCH_STATE({value})")
+    if name == "GUID_CONSOLE_DISPLAY_STATE":
+        return {
+            MONITOR_DISPLAY_OFF: "DisplayOff",
+            MONITOR_DISPLAY_ON: "DisplayOn",
+            MONITOR_DISPLAY_DIM: "DisplayDim",
+        }.get(value, f"CONSOLE_DISPLAY_STATE({value})")
     return str(value)
 
 

@@ -20,6 +20,7 @@ from ..platform.windows import (
     DEVICE_NOTIFY_WINDOW_HANDLE,
     IpInterfaceChangeMonitor,
     LID_CLOSED,
+    MONITOR_DISPLAY_OFF,
     NOTIFY_FOR_THIS_SESSION,
     PBT_APMSUSPEND,
     PBT_APMRESUMEAUTOMATIC,
@@ -283,6 +284,9 @@ class HeadlessRuntime:
                                 callback_started_mono=event_mono,
                                 step="dispatch_bounded_early_standby",
                             )
+                        elif change.name == "GUID_CONSOLE_DISPLAY_STATE" and change.value == MONITOR_DISPLAY_OFF:
+                            # Modern Standby early standby; gated on speaker not playing.
+                            self.controller.on_display_off(event_mono)
                         return True
 
                     if wparam == PBT_APMSUSPEND:
