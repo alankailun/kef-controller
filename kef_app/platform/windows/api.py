@@ -287,8 +287,8 @@ GUID_LIDSWITCH_STATE_CHANGE = GUID.from_string("{BA3E0F4D-B817-4094-A2D1-D56379E
 # Display on/off/dim. On Windows 11 Modern Standby (S0 idle) the display turning
 # off is the earliest reliable "user stepped away" signal: it usually arrives
 # while the message pump is still alive and well before a clean PBT_APMSUSPEND
-# (which under Modern Standby may be late or never fire). We use it as an extra,
-# playback-gated standby trigger.
+# (which under Modern Standby may be late or never fire). We use it as an extra
+# display-off standby trigger.
 GUID_CONSOLE_DISPLAY_STATE = GUID.from_string("{6FE69556-704A-47A0-8F24-C28D936FDA47}")
 
 MONITOR_DISPLAY_OFF = 0

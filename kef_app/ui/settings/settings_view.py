@@ -107,7 +107,7 @@ class SpeakerSelectionDialog(QDialog):
         for speaker in speakers:
             selected = self._speaker_is_selected(speaker, self._current_ip, self._current_mac)
             card = ButtonCard(
-                FIF.IOT,
+                FIF.SPEAKERS,
                 self._speaker_title(speaker),
                 self._speaker_content(speaker),
                 "Selected" if selected else "Select",
@@ -263,9 +263,9 @@ class SettingsInterface(ScrollArea):
         icon_by_key = {
             "wake_on_startup": FIF.POWER_BUTTON,
             "endsession_standby_on_shutdown": FIF.POWER_BUTTON,
-            "standby_on_lock": FIF.POWER_BUTTON,
-            "wake_on_unlock_only": FIF.SYNC,
-            "standby_on_sleep": FIF.POWER_BUTTON,
+            "standby_on_lock": FIF.FINGERPRINT,
+            "wake_on_unlock_only": FIF.FINGERPRINT,
+            "standby_on_sleep": FIF.QUIET_HOURS,
             "standby_on_display_off": FIF.BRIGHTNESS,
         }
         self._power_behavior_cards: dict[str, SwitchCard] = {}

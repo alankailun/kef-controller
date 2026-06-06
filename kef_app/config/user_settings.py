@@ -65,8 +65,8 @@ class StandbyTriggers:
     standby_on_lock: bool = True
     standby_on_lid_close: bool = True
     # Modern-Standby helper: put the speaker into standby when the display turns
-    # off (and the speaker isn't playing). Default on, like the other power
-    # behaviors; independent of standby_on_sleep so it can be toggled separately.
+    # off. No playback check. Default on, like the other power behaviors;
+    # independent of standby_on_sleep so it can be toggled separately.
     standby_on_display_off: bool = True
     early_standby_dedup_window: float = 30.0
 

@@ -285,7 +285,7 @@ class HeadlessRuntime:
                                 step="dispatch_bounded_early_standby",
                             )
                         elif change.name == "GUID_CONSOLE_DISPLAY_STATE" and change.value == MONITOR_DISPLAY_OFF:
-                            # Modern Standby early standby; gated on speaker not playing.
+                            # Pure display-off standby; gated only by standby_on_display_off.
                             self.controller.on_display_off(event_mono)
                         return True
 
