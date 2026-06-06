@@ -76,8 +76,7 @@ SPEAKER_POWER_OPTIONS: tuple[SpeakerPowerOption, ...] = (
     SpeakerPowerOption(
         "standby_on_display_off",
         "Put Speaker in Standby When the Screen Turns Off",
-        "Turns the speaker off when the display goes dark. Useful for Windows 11 "
-        "Modern Standby. Disable this if you listen with the screen off.",
+        "When the screen turns off, put the speaker into standby.",
     ),
 )
 
