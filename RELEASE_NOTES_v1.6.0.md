@@ -62,6 +62,9 @@ display-off standby path that does not cut active playback.
 - **Diagnostics are wired for the new event.** `DISPLAY_OFF` maps back to
   `GUID_CONSOLE_DISPLAY_STATE`, so early-standby timing logs and frozen-thread
   warnings can attribute this path correctly.
+- **Run Events can simulate display-off.** The diagnostics panel now includes a
+  `Display Off` event test, so the new Modern Standby path can be exercised
+  without waiting for the real screen timeout.
 
 ## Compatibility
 
@@ -74,7 +77,7 @@ display-off standby path that does not cut active playback.
 
 ## Tests
 
-- Full unit test suite passes: `175 tests`.
+- Full unit test suite passes: `177 tests`.
 - Added coverage for scan cancellation, route-prioritized discovery, ARP
   recovery fallback behavior, keepalive backoff/reset behavior, console-display
   power-setting decode, display-off trigger registration, cached playback-state

@@ -346,7 +346,7 @@ class SettingsInterface(ScrollArea):
         self._event_tests_toggle = ButtonCard(
             FIF.SPEED_HIGH,
             "Event Tests",
-            "Simulate startup, shutdown, lock, unlock, and sleep behavior.",
+            "Simulate startup, shutdown, lock, unlock, display-off, and sleep behavior.",
             "Show Tests",
         )
         self._event_tests_toggle.button.clicked.connect(self._toggle_event_tests)

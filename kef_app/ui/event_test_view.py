@@ -83,6 +83,7 @@ class EventTestPanel(QWidget):
             ("Shutdown", self._test_shutdown),
             ("Lock", self._test_lock),
             ("Unlock", self._test_unlock),
+            ("Display Off", self._test_display_off),
             ("Sleep", self._test_suspend),
         ]
 
@@ -90,10 +91,7 @@ class EventTestPanel(QWidget):
             button = PushButton(label)
             button.setMinimumHeight(40)
             button.clicked.connect(handler)
-            if label == "Sleep":
-                grid.addWidget(button, 2, 0, 1, 2)
-            else:
-                grid.addWidget(button, index // 2, index % 2)
+            grid.addWidget(button, index // 2, index % 2)
             self._buttons_by_label[label] = button
 
         layout.addLayout(grid)
@@ -201,6 +199,14 @@ class EventTestPanel(QWidget):
         self._start_test(
             "Sleep",
             lambda: self._controller.on_suspend("UI_TEST_SUSPEND"),
+            enabled=self._config.standby_on_sleep,
+            disabled_reason=get_speaker_power_disabled_reason("standby_on_sleep"),
+        )
+
+    def _test_display_off(self) -> None:
+        self._start_test(
+            "Display Off",
+            lambda: self._controller.on_display_off(self._controller.mono(), "UI_TEST_DISPLAY_OFF"),
             enabled=self._config.standby_on_sleep,
             disabled_reason=get_speaker_power_disabled_reason("standby_on_sleep"),
         )

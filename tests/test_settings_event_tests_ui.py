@@ -82,6 +82,34 @@ class SettingsEventTestsUiTests(unittest.TestCase):
             panel.deleteLater()
             self._app.processEvents()
 
+    def test_event_test_panel_includes_display_off_event(self):
+        config = AppConfig()
+        controller = self.make_controller(config)
+        panel = EventTestPanel(config, controller)
+
+        try:
+            self.assertIn("Display Off", panel._buttons_by_label)
+        finally:
+            panel.deleteLater()
+            self._app.processEvents()
+
+    def test_event_test_panel_skips_disabled_display_off_event(self):
+        config = AppConfig().with_updates(standby_on_sleep=False)
+        controller = self.make_controller(config)
+        controller.on_display_off = Mock()
+        panel = EventTestPanel(config, controller)
+
+        try:
+            with patch("kef_app.ui.event_test_view.InfoBar.warning"):
+                panel._test_display_off()
+
+            controller.on_display_off.assert_not_called()
+            self.assertEqual(panel._event_status.text(), "Skipped: Display Off.")
+            self.assertEqual(panel._active_tests, 0)
+        finally:
+            panel.deleteLater()
+            self._app.processEvents()
+
 
 if __name__ == "__main__":
     unittest.main()
