@@ -94,7 +94,7 @@ class SettingsEventTestsUiTests(unittest.TestCase):
             self._app.processEvents()
 
     def test_event_test_panel_skips_disabled_display_off_event(self):
-        config = AppConfig().with_updates(standby_on_sleep=False)
+        config = AppConfig().with_updates(standby_on_display_off=False)
         controller = self.make_controller(config)
         controller.on_display_off = Mock()
         panel = EventTestPanel(config, controller)

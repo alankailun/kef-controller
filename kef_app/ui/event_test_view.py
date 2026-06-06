@@ -207,8 +207,8 @@ class EventTestPanel(QWidget):
         self._start_test(
             "Display Off",
             lambda: self._controller.on_display_off(self._controller.mono(), "UI_TEST_DISPLAY_OFF"),
-            enabled=self._config.standby_on_sleep,
-            disabled_reason=get_speaker_power_disabled_reason("standby_on_sleep"),
+            enabled=self._config.standby_on_display_off,
+            disabled_reason=get_speaker_power_disabled_reason("standby_on_display_off"),
         )
 
     def _test_lock(self) -> None:
