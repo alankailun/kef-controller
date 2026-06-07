@@ -6,13 +6,21 @@ Baseline for this note: GitHub tag `v1.6.0` at `8021854`.
 
 This is a packaging-focused maintenance release. Runtime behavior is unchanged
 from 1.6.0; the work in this build trims unused Qt modules and DLLs from the
-frozen Windows executable.
+frozen Windows executable. The final 1.6.1 bundle is about `42 MB` for the
+one-file executable and about `44 MB` for the installer.
 
 ## Highlights
 
 - **Smaller PyInstaller bundle.** The app now excludes unused PySide6 modules
   and strips leftover unused Qt feature DLLs/plugins from the final one-file
   executable.
+- **Optional Qt plugins were trimmed too.** Unused platform backends, image
+  format plugins, virtual keyboard/touch plugins, and Qt translation payloads
+  are removed from the bundle. The app still keeps the Windows platform plugin
+  plus SVG/ICO/GIF support needed by the current UI and icon stack.
+- **QFluentWidgets media widgets are excluded.** The app does not use
+  QFluentWidgets' media-player/video widgets, so those hidden imports are
+  filtered out to avoid pulling multimedia analysis back into the build.
 - **Kept the Qt pieces the app actually uses.** QtCore, QtGui, QtWidgets,
   QtSvg, QtSvgWidgets, and QtXml remain available for the QFluentWidgets UI and
   icon stack.
