@@ -4,7 +4,16 @@ from PyInstaller.utils.hooks import collect_all
 datas = []
 binaries = []
 hiddenimports = []
-tmp_ret = collect_all('qfluentwidgets')
+
+
+def _keep_qfluentwidgets_submodule(name: str) -> bool:
+    # The app does not use qfluentwidgets' media player/video widgets. Excluding
+    # them avoids pulling QtMultimedia back into analysis after we intentionally
+    # drop the multimedia Qt DLLs below.
+    return not name.startswith('qfluentwidgets.multimedia')
+
+
+tmp_ret = collect_all('qfluentwidgets', filter_submodules=_keep_qfluentwidgets_submodule)
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 datas += [('installer/assets/setup-icon.ico', 'installer/assets')]
 
@@ -72,9 +81,35 @@ _drop_binary_substrings = (
     "qt6printsupport", "qt6virtualkeyboard", "qt6quick3d", "qt6uitools",
 )
 
+_drop_exact_paths = {
+    # Keep only the Windows platform backend. The direct2d/offscreen/minimal
+    # backends are optional alternatives and not used by this desktop app.
+    "pyside6/plugins/platforms/qdirect2d.dll",
+    "pyside6/plugins/platforms/qminimal.dll",
+    "pyside6/plugins/platforms/qoffscreen.dll",
+    # Image formats not used by the app or the embedded QFluentWidgets resource.
+    # Keep qsvg/qsvgicon for Fluent icons, qico for Windows icons, and qgif
+    # because QFluentWidgets embeds a few GIF resources.
+    "pyside6/plugins/imageformats/qicns.dll",
+    "pyside6/plugins/imageformats/qjpeg.dll",
+    "pyside6/plugins/imageformats/qpdf.dll",
+    "pyside6/plugins/imageformats/qtga.dll",
+    "pyside6/plugins/imageformats/qtiff.dll",
+    "pyside6/plugins/imageformats/qwbmp.dll",
+    "pyside6/plugins/imageformats/qwebp.dll",
+    # Optional plugins not used by this UI.
+    "pyside6/plugins/generic/qtuiotouchplugin.dll",
+    "pyside6/plugins/platforminputcontexts/qtvirtualkeyboardplugin.dll",
+    "pyside6/plugins/styles/qmodernwindowsstyle.dll",
+}
+
 
 def _keep_binary(dest_name: str) -> bool:
     name = dest_name.replace("\\", "/").lower()
+    if name.startswith("pyside6/translations/"):
+        return False
+    if name in _drop_exact_paths:
+        return False
     if any(token in name for token in _drop_binary_substrings):
         return False
     # Drop QML payloads and plugins for unused Qt feature groups.
