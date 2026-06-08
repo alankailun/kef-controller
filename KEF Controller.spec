@@ -97,10 +97,11 @@ _drop_exact_paths = {
     "pyside6/plugins/imageformats/qtiff.dll",
     "pyside6/plugins/imageformats/qwbmp.dll",
     "pyside6/plugins/imageformats/qwebp.dll",
-    # Optional plugins not used by this UI.
+    # Optional plugins not used by this UI. Keep qmodernwindowsstyle.dll: it is
+    # small and preserves modern Windows styling for native controls such as
+    # combo boxes, scrollbars, and push buttons in the frozen app.
     "pyside6/plugins/generic/qtuiotouchplugin.dll",
     "pyside6/plugins/platforminputcontexts/qtvirtualkeyboardplugin.dll",
-    "pyside6/plugins/styles/qmodernwindowsstyle.dll",
 }
 
 

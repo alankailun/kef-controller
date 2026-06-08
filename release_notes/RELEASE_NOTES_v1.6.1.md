@@ -17,7 +17,8 @@ one-file executable and about `44 MB` for the installer.
 - **Optional Qt plugins were trimmed too.** Unused platform backends, image
   format plugins, virtual keyboard/touch plugins, and Qt translation payloads
   are removed from the bundle. The app still keeps the Windows platform plugin
-  plus SVG/ICO/GIF support needed by the current UI and icon stack.
+  plus the Modern Windows style plugin and SVG/ICO/GIF support needed by the
+  current UI and icon stack.
 - **QFluentWidgets media widgets are excluded.** The app does not use
   QFluentWidgets' media-player/video widgets, so those hidden imports are
   filtered out to avoid pulling multimedia analysis back into the build.
