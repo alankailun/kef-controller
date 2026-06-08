@@ -473,6 +473,7 @@ class PrewarmedStandbySocketMonitorMixin:
         *,
         deadline_mono: float | None = None,
         generation: int | None = None,
+        reason: str = "fast_standby",
     ) -> PrewarmedStandbySendResult:
         if not self.config.prewarmed_standby_enabled:
             return PrewarmedStandbySendResult(False, False, "disabled", target_ip=current_ip)
@@ -493,11 +494,10 @@ class PrewarmedStandbySocketMonitorMixin:
         started = self.mono()
         mode = "persistent_socket" if self.config.prewarmed_persist_socket else "short_connection"
         with self._state_lock:
-            event_name = self._last_windows_event_name
             event_mono = float(self._last_windows_event_mono or 0.0)
         fields: dict[str, object] = {
             "action": "PREWARMED_STANDBY_SOCKET",
-            "reason": event_name or "fast_standby",
+            "reason": reason,
             "step": "send_enter",
             "target_ip": current_ip,
             "mode": mode,

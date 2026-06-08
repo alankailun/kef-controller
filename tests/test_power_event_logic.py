@@ -874,7 +874,10 @@ class PowerEventLogicTests(unittest.TestCase):
         result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
 
         self.assertTrue(result)
-        controller.try_send_prewarmed_standby.assert_called_once_with("192.168.1.10")
+        controller.try_send_prewarmed_standby.assert_called_once_with(
+            "192.168.1.10",
+            reason="WTS_SESSION_LOCK",
+        )
         controller._send_fire_and_forget_shutdown.assert_not_called()
         controller._request_shutdown.assert_not_called()
         self.assertEqual(controller._early_standby_state.status, "UNCONFIRMED")
@@ -922,7 +925,10 @@ class PowerEventLogicTests(unittest.TestCase):
         result = controller.standby_kef_fast_suspend(suspend_generation, "PBT_APMSUSPEND")
 
         self.assertTrue(result)
-        controller.try_send_prewarmed_standby.assert_called_once_with("192.168.1.10")
+        controller.try_send_prewarmed_standby.assert_called_once_with(
+            "192.168.1.10",
+            reason="PBT_APMSUSPEND",
+        )
         controller._send_fire_and_forget_shutdown.assert_not_called()
         controller._request_shutdown.assert_not_called()
         self.assertEqual(controller._early_standby_state.status, "NONE")
@@ -941,7 +947,7 @@ class PowerEventLogicTests(unittest.TestCase):
         )
         generation = controller._new_generation("sleep", "PBT_APMSUSPEND")
         controller.try_send_prewarmed_standby = Mock(
-            side_effect=lambda _ip: order.append("prewarmed_send")
+            side_effect=lambda _ip, **_kwargs: order.append("prewarmed_send")
             or PrewarmedStandbySendResult(
                 attempted=True,
                 success=True,
@@ -985,7 +991,10 @@ class PowerEventLogicTests(unittest.TestCase):
         result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
 
         self.assertTrue(result)
-        controller.try_send_prewarmed_standby.assert_called_once_with("192.168.1.10")
+        controller.try_send_prewarmed_standby.assert_called_once_with(
+            "192.168.1.10",
+            reason="WTS_SESSION_LOCK",
+        )
         controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
         controller._request_shutdown.assert_not_called()
         self.assertTrue(
@@ -1008,7 +1017,7 @@ class PowerEventLogicTests(unittest.TestCase):
         generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
         controller._log_structured = Mock()
         controller.try_send_prewarmed_standby = Mock(
-            side_effect=lambda _ip: order.append("prewarmed")
+            side_effect=lambda _ip, **_kwargs: order.append("prewarmed")
             or PrewarmedStandbySendResult(
                 attempted=True,
                 success=False,
@@ -1058,7 +1067,10 @@ class PowerEventLogicTests(unittest.TestCase):
         result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
 
         self.assertTrue(result)
-        controller.try_send_prewarmed_standby.assert_called_once_with("192.168.1.10")
+        controller.try_send_prewarmed_standby.assert_called_once_with(
+            "192.168.1.10",
+            reason="WTS_SESSION_LOCK",
+        )
         controller._send_fire_and_forget_shutdown.assert_not_called()
         controller._request_shutdown.assert_not_called()
         self.assertFalse(controller._recently_early_standby_confirmed())

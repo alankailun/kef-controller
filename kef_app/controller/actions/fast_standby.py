@@ -39,11 +39,12 @@ class ControllerFastStandbyMixin:
         *,
         deadline_mono: float | None = None,
         generation: int | None = None,
+        reason: str = "fast_standby",
     ) -> FastStandbySendResult:
         if deadline_mono is None and generation is None:
             return send_fast_standby(
                 current_ip,
-                self.try_send_prewarmed_standby,
+                lambda ip: self.try_send_prewarmed_standby(ip, reason=reason),
                 self._send_fire_and_forget_shutdown,
             )
 
@@ -61,6 +62,7 @@ class ControllerFastStandbyMixin:
                 ip,
                 deadline_mono=deadline_mono,
                 generation=generation,
+                reason=reason,
             ),
             lambda ip: self._send_fire_and_forget_shutdown(
                 ip,
@@ -192,6 +194,7 @@ class ControllerFastStandbyMixin:
             current_ip,
             deadline_mono=deadline_mono,
             generation=generation if deadline_mono is not None else None,
+            reason=reason,
         )
         self._log_prewarmed_fast_send(
             fast_result,

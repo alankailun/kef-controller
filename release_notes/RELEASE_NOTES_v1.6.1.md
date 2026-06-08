@@ -4,10 +4,10 @@ Release date: 2026-06-06
 
 Baseline for this note: GitHub tag `v1.6.0` at `8021854`.
 
-This is a packaging-focused maintenance release. Runtime behavior is unchanged
-from 1.6.0; the work in this build trims unused Qt modules and DLLs from the
-frozen Windows executable. The final 1.6.1 bundle is about `42 MB` for the
-one-file executable and about `44 MB` for the installer.
+This is a packaging-focused maintenance release. Speaker control behavior is
+unchanged from 1.6.0; the work in this build trims unused Qt modules and DLLs
+from the frozen Windows executable. The final 1.6.1 bundle is about `42 MB` for
+the one-file executable and about `44 MB` for the installer.
 
 ## Highlights
 
@@ -30,11 +30,14 @@ one-file executable and about `44 MB` for the installer.
   drivers.
 - **Release notes are now organized.** Historical release notes were moved into
   the `release_notes/` folder so future release notes live in one place.
+- **Standby diagnostics are easier to follow.** Prewarmed standby socket
+  `send_enter` logs now use the same trigger reason as the surrounding standby
+  action, such as `DISPLAY_OFF`, `WTS_SESSION_LOCK`, or `PBT_APMSUSPEND`.
 
 ## Compatibility
 
 - No configuration changes.
-- No runtime behavior changes.
+- No speaker control behavior changes.
 - Existing `config.json`, `state.json`, startup registration, and logs remain
   compatible with 1.6.0.
 
