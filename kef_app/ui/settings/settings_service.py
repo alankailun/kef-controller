@@ -54,14 +54,14 @@ SPEAKER_POWER_OPTIONS: tuple[SpeakerPowerOption, ...] = (
         "When the app starts, wake the speaker and switch to the default input.",
     ),
     SpeakerPowerOption(
-        "wake_on_unlock_only",
-        "Wake Speaker When Windows Unlocks",
-        "After sleep or resume, wait for Windows to unlock before waking the speaker.",
-    ),
-    SpeakerPowerOption(
         "standby_on_display_off",
         "Put Speaker in Standby When the Screen Turns Off",
         "When the screen turns off, put the speaker into standby.",
+    ),
+    SpeakerPowerOption(
+        "wake_on_unlock_only",
+        "Wake Speaker When Windows Unlocks",
+        "After sleep or resume, wait for Windows to unlock before waking the speaker.",
     ),
     SpeakerPowerOption(
         "standby_on_lock",
