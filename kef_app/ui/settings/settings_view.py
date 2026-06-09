@@ -7,7 +7,9 @@ from typing import Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QDialog, QLabel, QHBoxLayout, QScrollArea as QtScrollArea, QVBoxLayout, QWidget
 from qfluentwidgets import (
+    BodyLabel,
     FluentIcon as FIF,
+    IndeterminateProgressRing,
     InfoBar,
     InfoBarPosition,
     LineEdit,
@@ -74,6 +76,19 @@ class SpeakerSelectionDialog(QDialog):
         self._hint.setWordWrap(True)
         root.addWidget(self._hint)
 
+        self._scanning_row = QWidget()
+        scanning_layout = QHBoxLayout(self._scanning_row)
+        scanning_layout.setContentsMargins(0, 0, 0, 0)
+        scanning_layout.setSpacing(10)
+        self._spinner = IndeterminateProgressRing()
+        self._spinner.setFixedSize(20, 20)
+        self._spinner.setStrokeWidth(3)
+        scanning_layout.addWidget(self._spinner)
+        scanning_layout.addWidget(BodyLabel("Searching for speakers on your network…"))
+        scanning_layout.addStretch()
+        self._scanning_row.setVisible(False)
+        root.addWidget(self._scanning_row)
+
         scroll = QtScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QtScrollArea.Shape.NoFrame)
@@ -94,11 +109,13 @@ class SpeakerSelectionDialog(QDialog):
         self.update_speakers(speakers, scanning=False)
 
     def update_speakers(self, speakers: list[SpeakerIdentity], *, scanning: bool) -> None:
-        self._hint.setText(
-            "Choose the KEF speaker this app should control. The network scan is still running, so this list may update."
-            if scanning
-            else "Choose the KEF speaker this app should control."
-        )
+        self._hint.setText("Choose the KEF speaker this app should control.")
+        self._scanning_row.setVisible(scanning)
+        if scanning:
+            self._spinner.start()
+        else:
+            self._spinner.stop()
+
         while self._content_layout.count():
             item = self._content_layout.takeAt(0)
             widget = item.widget()
@@ -116,6 +133,13 @@ class SpeakerSelectionDialog(QDialog):
             card.button.setEnabled(not selected)
             card.button.clicked.connect(lambda _checked=False, item=speaker: self._select(item))
             self._content_layout.addWidget(card)
+
+        if not speakers and not scanning:
+            empty = BodyLabel(
+                "No speakers found. Make sure the speaker is powered on and on the same network."
+            )
+            empty.setWordWrap(True)
+            self._content_layout.addWidget(empty)
 
         self._content_layout.addStretch()
 
@@ -730,6 +754,10 @@ class SettingsInterface(ScrollArea):
         self._speaker_scan_in_progress = True
         self._speaker_scan_dialog_closed = False
 
+        # Show the picker immediately with a spinner so the search is visible
+        # right away, even before the first speaker is found.
+        self._show_or_update_speaker_selection_dialog([], scanning=True)
+
         start_background_task(
             "SettingsScanSpeakers",
             lambda: self._controller.scan_kef_devices(
@@ -763,6 +791,9 @@ class SettingsInterface(ScrollArea):
         if canceled:
             return
         if not devices:
+            # Stop the spinner and show the empty state in the open picker.
+            if self._speaker_selection_dialog is not None and self._speaker_selection_dialog.isVisible():
+                self._speaker_selection_dialog.update_speakers([], scanning=False)
             InfoBar.warning(
                 "No Speakers Found",
                 "The scan did not find a supported KEF speaker on the local network.",
@@ -786,6 +817,8 @@ class SettingsInterface(ScrollArea):
         self._last_scanned_speakers = []
         if canceled:
             return
+        if self._speaker_selection_dialog is not None and self._speaker_selection_dialog.isVisible():
+            self._speaker_selection_dialog.update_speakers([], scanning=False)
         InfoBar.error(
             "Scan Failed",
             detail or "The speaker scan could not complete.",
