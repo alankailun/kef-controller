@@ -54,9 +54,9 @@ SPEAKER_POWER_OPTIONS: tuple[SpeakerPowerOption, ...] = (
         "When the app starts, wake the speaker and switch to the default input.",
     ),
     SpeakerPowerOption(
-        "endsession_standby_on_shutdown",
-        "Put Speaker in Standby When Windows Shuts Down",
-        "When Windows shuts down or signs out, put the speaker into standby.",
+        "standby_on_display_off",
+        "Put Speaker in Standby When the Screen Turns Off",
+        "When the screen turns off, put the speaker into standby.",
     ),
     SpeakerPowerOption(
         "standby_on_lock",
@@ -74,9 +74,9 @@ SPEAKER_POWER_OPTIONS: tuple[SpeakerPowerOption, ...] = (
         "When Windows goes to sleep, put the speaker into standby.",
     ),
     SpeakerPowerOption(
-        "standby_on_display_off",
-        "Put Speaker in Standby When the Screen Turns Off",
-        "When the screen turns off, put the speaker into standby.",
+        "endsession_standby_on_shutdown",
+        "Put Speaker in Standby When Windows Shuts Down",
+        "When Windows shuts down or signs out, put the speaker into standby.",
     ),
 )
 

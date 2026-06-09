@@ -262,7 +262,7 @@ class SettingsInterface(ScrollArea):
         config = self._runtime_config
         group = SettingCardGroup("Speaker Power Behavior", container)
         icon_by_key = {
-            "wake_on_startup": FIF.POWER_BUTTON,
+            "wake_on_startup": AppIcon.DESKTOP,
             "endsession_standby_on_shutdown": FIF.POWER_BUTTON,
             "standby_on_lock": AppIcon.LOCK_CLOSED,
             "wake_on_unlock_only": AppIcon.LOCK_OPEN,
