@@ -267,7 +267,7 @@ class SettingsInterface(ScrollArea):
             "standby_on_lock": AppIcon.LOCK_CLOSED,
             "wake_on_unlock_only": AppIcon.LOCK_OPEN,
             "standby_on_sleep": FIF.QUIET_HOURS,
-            "standby_on_display_off": FIF.BRIGHTNESS,
+            "standby_on_display_off": AppIcon.DESKTOP_OFF,
         }
         self._power_behavior_cards: dict[str, SwitchCard] = {}
         for option in SPEAKER_POWER_OPTIONS:
