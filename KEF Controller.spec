@@ -16,6 +16,7 @@ def _keep_qfluentwidgets_submodule(name: str) -> bool:
 tmp_ret = collect_all('qfluentwidgets', filter_submodules=_keep_qfluentwidgets_submodule)
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 datas += [('installer/assets/setup-icon.ico', 'installer/assets')]
+datas += [('kef_app/ui/assets/icons', 'kef_app/ui/assets/icons')]
 
 # The app only uses QtCore/QtGui/QtWidgets; qfluentwidgets additionally needs
 # QtSvg/QtSvgWidgets (icons) and QtXml (icon.py). Every PySide6 module below was

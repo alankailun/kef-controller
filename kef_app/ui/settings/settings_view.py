@@ -30,6 +30,7 @@ from ...platform.windows import (
 )
 from ..background_tasks import start_background_task
 from ..event_test_view import EventTestPanel
+from ..svg_icons import AppIcon
 from .settings_cards import ButtonCard, ComboCard, StatusCard, SwitchCard
 from .settings_service import (
     INPUTS,
@@ -263,8 +264,8 @@ class SettingsInterface(ScrollArea):
         icon_by_key = {
             "wake_on_startup": FIF.POWER_BUTTON,
             "endsession_standby_on_shutdown": FIF.POWER_BUTTON,
-            "standby_on_lock": FIF.FINGERPRINT,
-            "wake_on_unlock_only": FIF.FINGERPRINT,
+            "standby_on_lock": AppIcon.LOCK_CLOSED,
+            "wake_on_unlock_only": AppIcon.LOCK_OPEN,
             "standby_on_sleep": FIF.QUIET_HOURS,
             "standby_on_display_off": FIF.BRIGHTNESS,
         }
@@ -301,7 +302,7 @@ class SettingsInterface(ScrollArea):
         group.addSettingCard(self._target_summary)
 
         self._manual_target = ButtonCard(
-            FIF.TAG,
+            FIF.EDIT,
             "Manual Target Details",
             "Edit the target IP and MAC directly. Apply validates before saving.",
             "Edit...",
@@ -345,7 +346,7 @@ class SettingsInterface(ScrollArea):
         group = SettingCardGroup("Diagnostics", container)
 
         self._event_tests_toggle = ButtonCard(
-            FIF.SPEED_HIGH,
+            AppIcon.BEAKER,
             "Event Tests",
             "Simulate startup, shutdown, lock, unlock, display-off, and sleep behavior.",
             "Show Tests",
