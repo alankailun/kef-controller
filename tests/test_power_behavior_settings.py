@@ -14,9 +14,9 @@ from kef_app.ui.settings.settings_service import (
 
 EXPECTED_POWER_BEHAVIOR_KEYS = (
     "wake_on_startup",
+    "wake_on_unlock_only",
     "standby_on_display_off",
     "standby_on_lock",
-    "wake_on_unlock_only",
     "standby_on_sleep",
     "endsession_standby_on_shutdown",
 )
