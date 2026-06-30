@@ -20,4 +20,10 @@ class EarlyStandbyTrigger:
     action_name: str = "EARLY_STANDBY"
 
     def fire(self, controller: Any, reason: str | None = None) -> bool:
-        return controller._run_early_standby_trigger(self, reason or self.default_reason)
+        event_mono = controller.mono()
+        return controller.dispatch_off_pump_standby(
+            self.name,
+            reason or self.default_reason,
+            event_mono,
+            callback_started_mono=event_mono,
+        )

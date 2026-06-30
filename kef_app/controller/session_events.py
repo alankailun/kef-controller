@@ -269,7 +269,6 @@ class ControllerSessionEventsMixin:
             # Direct callers do not pre-record the Windows event or generation.
             self._record_session_event_state(reason, event_mono)
             generation = self._new_generation("sleep", reason, mono=f"{event_mono:.3f}")
-        self._mark_early_standby_sent_unconfirmed()
         self._log_cached_lock_fast_path_success(reason, event_mono, generation, result)
         return True
 
@@ -515,7 +514,6 @@ class ControllerSessionEventsMixin:
         )
 
     def on_resume(self, reason: str):
-        self._clear_early_standby_state()
         if self._should_dedupe_resume_and_mark(reason):
             return
 
@@ -527,7 +525,6 @@ class ControllerSessionEventsMixin:
         self._schedule_delayed_wake(generation, reason, self.config.resume_wake_delay, "resume_delay", "WakeWorker")
 
     def on_unlock(self, reason: str):
-        self._clear_early_standby_state()
         if self._is_session_ending():
             self._log_structured("SKIP", action="WAKE", reason=reason, cause="session_ending", mono=f"{self.mono():.3f}")
             return

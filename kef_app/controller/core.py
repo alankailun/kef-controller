@@ -15,7 +15,7 @@ from .logging_mixin import ControllerLoggingMixin
 from .network_timeout import temporary_socket_timeout
 from .power_state import ControllerStateMixin
 from .session_events import ControllerSessionEventsMixin
-from .standby import EarlyStandbyState, FastStandbySendCache, PrewarmedStandbySocketMonitorMixin
+from .standby import FastStandbySendCache, PrewarmedStandbySocketMonitorMixin
 
 from ..devices.speaker_models import normalize_mac
 
@@ -103,7 +103,6 @@ class KefPowerController(
         self._last_windows_event_name = ""
         self._last_windows_event_mono = 0.0
 
-        self._early_standby_state = EarlyStandbyState()
         self._system_sleep_pending = False
         self._last_system_suspend_mono = 0.0
         self._last_system_resume_mono = 0.0

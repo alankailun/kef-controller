@@ -157,13 +157,9 @@ class UserConfigStore:
         "resume_dedup_window": _coerce_non_negative_float,
         "standby_on_sleep": lambda value: UserConfigStore._coerce_bool(value),
         "suspend_fast_standby_enabled": lambda value: UserConfigStore._coerce_bool(value),
-        "suspend_fast_standby_action_lock_timeout": _coerce_non_negative_float,
-        "suspend_fast_standby_socket_timeout": _coerce_positive_float,
         "standby_on_lock": lambda value: UserConfigStore._coerce_bool(value),
         "standby_on_lid_close": lambda value: UserConfigStore._coerce_bool(value),
         "standby_on_display_off": lambda value: UserConfigStore._coerce_bool(value),
-        "early_standby_action_lock_timeout": _coerce_non_negative_float,
-        "early_standby_dedup_window": _coerce_non_negative_float,
         "prewarmed_standby_enabled": lambda value: UserConfigStore._coerce_bool(value),
         "prewarmed_persist_socket": lambda value: UserConfigStore._coerce_bool(value),
         "prewarmed_keepalive_interval_s": _coerce_positive_float,
@@ -174,8 +170,6 @@ class UserConfigStore:
         "persist_runtime_state": lambda value: UserConfigStore._coerce_bool(value),
         "fast_exit_on_endsession": lambda value: UserConfigStore._coerce_bool(value),
         "endsession_standby_on_shutdown": lambda value: UserConfigStore._coerce_bool(value),
-        "endsession_standby_action_lock_timeout": _coerce_non_negative_float,
-        "endsession_standby_socket_timeout": _coerce_positive_float,
     }
 
     def __init__(self, base_config: AppConfig):

@@ -5,32 +5,25 @@ from typing import Callable
 
 from .device_common import _STANDBY_VERIFY_TIMEOUT, StandbyVerificationError
 from .fast_standby import ControllerFastStandbyMixin, _outcome_is_success
-from ...devices.transport import is_host_unreachable
 
 
-_FAST_STANDBY_STANDARD_HARD_TIMEOUT = 1.5
+_ENDSESSION_FAST_STANDBY_BUDGET_S = 0.30
+_ENDSESSION_FAST_STANDBY_BUDGET_MS = int(_ENDSESSION_FAST_STANDBY_BUDGET_S * 1000)
 
 
 @dataclass(frozen=True, slots=True)
 class FastStandbyPolicy:
     action: str
     begin_step: str
-    success_step: str
-    lock_purpose: str
-    lock_timeout_field: str
-    socket_timeout_field: str
-    success_outcome: str
     failed_outcome: str
     fire_and_forget_outcome: str
     disabled_field: str = ""
     disabled_cause: str = "disabled"
-    failed_status: str | None = None
     host_unreachable_outcome: str = "sent_skipped_host_unreachable"
     host_unreachable_status: str = "host_unreachable_assumed_standby"
     host_unreachable_cause: str = "host_unreachable_assume_standby"
     host_unreachable_is_success: bool = True
     skip_if_session_ending: bool = False
-    attempt: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,13 +46,8 @@ class EndSessionStandbyPolicy:
     action: str
     begin_step: str
     success_step: str
-    lock_purpose: str
-    lock_timeout_field: str
-    socket_timeout_field: str
     disabled_field: str
     disabled_cause: str
-    identity_step: str
-    success_outcome: str
     failed_outcome: str
     fire_and_forget_outcome: str
 
@@ -70,11 +58,6 @@ StandbyLogPolicy = FastStandbyPolicy | VerifiedStandbyPolicy | EndSessionStandby
 PREEMPTIVE_STANDBY_POLICY = FastStandbyPolicy(
     action="EARLY_STANDBY",
     begin_step="lock_fast_path",
-    success_step="shutdown_request",
-    lock_purpose="early_standby",
-    lock_timeout_field="early_standby_action_lock_timeout",
-    socket_timeout_field="suspend_fast_standby_socket_timeout",
-    success_outcome="sent_unconfirmed_standard",
     failed_outcome="failed",
     fire_and_forget_outcome="sent_unconfirmed_fire_and_forget",
     host_unreachable_outcome="sent_skipped_host_unreachable",
@@ -87,21 +70,14 @@ PREEMPTIVE_STANDBY_POLICY = FastStandbyPolicy(
 FAST_SUSPEND_STANDBY_POLICY = FastStandbyPolicy(
     action="STANDBY",
     begin_step="suspend_fast_path",
-    success_step="suspend_fast_path",
-    lock_purpose="standby",
-    lock_timeout_field="suspend_fast_standby_action_lock_timeout",
-    socket_timeout_field="suspend_fast_standby_socket_timeout",
     disabled_field="suspend_fast_standby_enabled",
     disabled_cause="suspend_fast_standby_disabled",
-    success_outcome="sent_unconfirmed_standard",
     failed_outcome="failed_fast_suspend",
     fire_and_forget_outcome="sent_unconfirmed_fire_and_forget",
-    failed_status="fast_suspend_failed",
     host_unreachable_outcome="sent_skipped_host_unreachable",
     host_unreachable_status="host_unreachable_best_effort",
     host_unreachable_cause="suspend_network_or_speaker_unreachable",
     skip_if_session_ending=True,
-    attempt=1,
 )
 
 STANDARD_STANDBY_POLICY = VerifiedStandbyPolicy(
@@ -122,14 +98,9 @@ ENDSESSION_STANDBY_POLICY = EndSessionStandbyPolicy(
     action="ENDSESSION_STANDBY",
     begin_step="shutdown_request",
     success_step="shutdown_request",
-    lock_purpose="endsession_standby",
-    lock_timeout_field="endsession_standby_action_lock_timeout",
-    socket_timeout_field="endsession_standby_socket_timeout",
     disabled_field="endsession_standby_on_shutdown",
     disabled_cause="disabled",
-    identity_step="endsession_before_request",
-    success_outcome="sent_unconfirmed_standard",
-    failed_outcome="failed",
+    failed_outcome="failed_fast_endsession",
     fire_and_forget_outcome="sent_unconfirmed_fire_and_forget",
 )
 
@@ -216,8 +187,6 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             if defer_started_event:
                 self._emit_power_action_started_event(policy.action, reason)
             self._emit_power_action_finished(policy.action, reason, outcome)
-            if policy.action == "STANDBY":
-                self._clear_early_standby_state()
             self._log_action_end(policy.action, generation, reason, outcome, start_mono)
 
     def _abort_bounded_standby_if_needed(
@@ -329,10 +298,24 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             self._action_lock.release()
 
     def _execute_end_session_policy(self, policy: EndSessionStandbyPolicy, reason: str, flags: str) -> tuple[bool, str]:
-        if not self._ensure_target_identity(policy.action, reason, policy.identity_step):
-            return False, "skipped_target_identity_not_verified"
-
+        deadline_mono = self.mono() + _ENDSESSION_FAST_STANDBY_BUDGET_S
         current_ip = self.get_current_kef_ip()
+        self._log_standby(
+            "STEP",
+            policy,
+            None,
+            reason,
+            log_level="info",
+            step=policy.begin_step,
+            status="begin",
+            flags=flags,
+            target_ip=current_ip or "<empty>",
+            target_mac=self.get_effective_target_mac() or "<empty>",
+            identity_check="cached_target_only",
+            verify_standby=False,
+            deadline_mono=f"{deadline_mono:.3f}",
+            budget_ms=_ENDSESSION_FAST_STANDBY_BUDGET_MS,
+        )
         if not current_ip:
             self._log_standby(
                 "SKIP",
@@ -341,63 +324,81 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
                 reason,
                 cause="no_current_ip",
                 flags=flags,
+                identity_check="cached_target_only",
+                verify_standby=False,
             )
             return False, "skipped_no_current_ip"
 
-        fast_send_outcome = self._try_fast_standby_send(
-            action=policy.action,
+        abort_reason = self._bounded_standby_abort_reason(
+            deadline_mono=deadline_mono,
             generation=None,
-            reason=reason,
-            current_ip=current_ip,
-            mark_early_standby_sent_unconfirmed=False,
-            extra_fields={"flags": flags},
-            success_outcome=policy.fire_and_forget_outcome,
+            target_ip=current_ip,
         )
-        if fast_send_outcome is not None:
-            return True, fast_send_outcome
-
-        lock_timeout = float(self._config_value(policy.lock_timeout_field))
-        if not self._action_lock.acquire(timeout=lock_timeout):
-            self._log_standby(
-                "SKIP",
-                policy,
-                None,
-                reason,
-                cause="action_lock_busy",
-                flags=flags,
-                timeout_s=f"{lock_timeout:.2f}",
-            )
-            return False, "skipped_action_lock_busy"
-
-        try:
-            self._request_shutdown(fresh=False, timeout=float(self._config_value(policy.socket_timeout_field)))
+        if abort_reason == "local_route_unavailable":
+            outcome = "sent_skipped_host_unreachable"
             self._log_standby(
                 "STEP",
                 policy,
                 None,
                 reason,
-                step=policy.success_step,
-                status="sent",
+                step="before_fast_send",
+                status="host_unreachable_best_effort",
+                cause="local_route_preflight_unavailable",
                 flags=flags,
                 target_ip=current_ip,
+                deadline_mono=f"{deadline_mono:.3f}",
+                budget_ms=_ENDSESSION_FAST_STANDBY_BUDGET_MS,
             )
-            return True, policy.success_outcome
-        except Exception as exc:
-            self.reset_speaker()
+            return True, outcome
+        if abort_reason:
+            outcome = f"aborted_bounded_{abort_reason}"
             self._log_standby(
-                "RETRY",
+                "ABORT",
                 policy,
                 None,
                 reason,
-                attempt=1,
-                cause="shutdown_failed",
+                step="before_fast_send",
+                cause=abort_reason,
                 flags=flags,
-                error=repr(exc),
                 target_ip=current_ip,
+                deadline_mono=f"{deadline_mono:.3f}",
+                budget_ms=_ENDSESSION_FAST_STANDBY_BUDGET_MS,
             )
-            return False, policy.failed_outcome
-        finally:
-            self._action_lock.release()
+            return False, outcome
+
+        extra_fields = {
+            "flags": flags,
+            "deadline_mono": f"{deadline_mono:.3f}",
+            "budget_ms": _ENDSESSION_FAST_STANDBY_BUDGET_MS,
+        }
+        fast_send_outcome = self._try_fast_standby_send(
+            action=policy.action,
+            generation=None,
+            reason=reason,
+            current_ip=current_ip,
+            extra_fields=extra_fields,
+            success_outcome=policy.fire_and_forget_outcome,
+            host_unreachable_status="host_unreachable_best_effort",
+            host_unreachable_cause="endsession_network_or_speaker_unreachable",
+            deadline_mono=deadline_mono,
+        )
+        if fast_send_outcome is not None:
+            return _outcome_is_success(fast_send_outcome), fast_send_outcome
+
+        self._log_standby(
+            "WARN",
+            policy,
+            None,
+            reason,
+            step=policy.success_step,
+            status="standard_fallback_disabled",
+            cause="endsession_fast_send_failed",
+            flags=flags,
+            target_ip=current_ip,
+            deadline_mono=f"{deadline_mono:.3f}",
+            budget_ms=_ENDSESSION_FAST_STANDBY_BUDGET_MS,
+        )
+        return False, policy.failed_outcome
 
     def _perform_fast_shutdown(
         self,
@@ -408,7 +409,6 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         deadline_mono: float | None = None,
     ) -> tuple[bool, str]:
         current_ip = self.get_current_kef_ip()
-        socket_timeout = float(self._config_value(policy.socket_timeout_field))
         self._log_standby(
             "STEP",
             policy,
@@ -449,7 +449,6 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             generation=generation,
             reason=reason,
             current_ip=current_ip,
-            mark_early_standby_sent_unconfirmed=policy.action == "EARLY_STANDBY",
             success_outcome=policy.fire_and_forget_outcome,
             host_unreachable_outcome=policy.host_unreachable_outcome,
             host_unreachable_status=policy.host_unreachable_status,
@@ -459,152 +458,14 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         if fast_send_result is not None:
             return _outcome_is_success(fast_send_result), fast_send_result
 
+        fields: dict[str, object] = {"cause": "fast_standby_send_failed"}
         if deadline_mono is not None:
-            outcome = "failed_bounded_fast_send"
-            self._log_standby(
-                "SKIP",
-                policy,
-                generation,
-                reason,
-                cause="bounded_standby_does_not_use_standard_fallback",
-                deadline_mono=f"{deadline_mono:.3f}",
-            )
-            return False, outcome
-
-        outcome = self._abort_bounded_standby_if_needed(
-            policy,
-            generation,
-            reason,
-            deadline_mono=deadline_mono,
-            step="before_standard_fallback",
-            target_ip=current_ip,
-        )
-        if outcome is not None:
-            return False, outcome
-
-        if generation is None:
-            return False, "skipped_missing_generation"
-
-        outcome = self._acquire_generation_action_lock(
-            action=policy.action,
-            generation=generation,
-            reason=reason,
-            lock_timeout=float(self._config_value(policy.lock_timeout_field)),
-            purpose=policy.lock_purpose,
-        )
-        if outcome is not None:
-            return False, outcome
-
-        try:
-            outcome = self._abort_bounded_standby_if_needed(
-                policy,
-                generation,
-                reason,
-                deadline_mono=deadline_mono,
-                step="before_standard_request",
-                target_ip=current_ip,
-            )
-            if outcome is not None:
-                return _outcome_is_success(outcome), outcome
-
-            request_start_mono = self.mono()
-            self._request_shutdown(fresh=False, timeout=socket_timeout)
-            request_finished_mono = self.mono()
-            request_duration_ms = int(max(0.0, request_finished_mono - request_start_mono) * 1000)
-            if request_duration_ms > int(_FAST_STANDBY_STANDARD_HARD_TIMEOUT * 1000):
-                outcome = "failed_standard_request_deadline_exceeded"
-                self._log_standby(
-                    "WARN",
-                    policy,
-                    generation,
-                    reason,
-                    step=policy.success_step,
-                    status="late_success_ignored",
-                    cause="standard_fallback_deadline_exceeded",
-                    target_ip=current_ip,
-                    duration_ms=request_duration_ms,
-                    deadline_s=f"{_FAST_STANDBY_STANDARD_HARD_TIMEOUT:.2f}",
-                    mono=f"{request_finished_mono:.3f}",
-                )
-                return False, outcome
-            if policy.action == "EARLY_STANDBY":
-                self._mark_early_standby_sent_unconfirmed()
-            outcome = policy.success_outcome
-            self._log_standby(
-                "STEP",
-                policy,
-                generation,
-                reason,
-                step=policy.success_step,
-                status="sent",
-                target_ip=current_ip,
-                timeout_s=f"{socket_timeout:.2f}",
-                duration_ms=request_duration_ms,
-                mono=f"{request_finished_mono:.3f}",
-            )
-            return True, outcome
-        except Exception as exc:
-            request_finished_mono = self.mono()
-            request_duration_ms = int(max(0.0, request_finished_mono - request_start_mono) * 1000)
-            self.reset_speaker()
-            if request_duration_ms > int(_FAST_STANDBY_STANDARD_HARD_TIMEOUT * 1000):
-                outcome = "failed_standard_request_deadline_exceeded"
-                fields = {
-                    "step": policy.success_step,
-                    "status": "late_error_ignored",
-                    "cause": "standard_fallback_deadline_exceeded",
-                    "error": repr(exc),
-                    "target_ip": current_ip,
-                    "duration_ms": request_duration_ms,
-                    "deadline_s": f"{_FAST_STANDBY_STANDARD_HARD_TIMEOUT:.2f}",
-                    "mono": f"{request_finished_mono:.3f}",
-                }
-                if policy.attempt is not None:
-                    fields["attempt"] = policy.attempt
-                self._log_standby("WARN", policy, generation, reason, **fields)
-                return False, outcome
-
-            if is_host_unreachable(exc):
-                if policy.action == "EARLY_STANDBY":
-                    self.log_wifi_diagnostics(
-                        reason=reason,
-                        trigger="early_standby_host_unreachable",
-                        fresh=True,
-                        timeout=0.15,
-                    )
-                outcome = policy.host_unreachable_outcome
-                fields = {
-                    "step": policy.success_step,
-                    "status": policy.host_unreachable_status,
-                    "cause": policy.host_unreachable_cause,
-                    "error": repr(exc),
-                    "target_ip": current_ip,
-                }
-                if policy.attempt is not None:
-                    fields["attempt"] = policy.attempt
-                self._log_standby(
-                    "STEP" if policy.host_unreachable_is_success else "WARN",
-                    policy,
-                    generation,
-                    reason,
-                    **fields,
-                )
-                return policy.host_unreachable_is_success, outcome
-
-            outcome = policy.failed_outcome
-            fields = {
-                "cause": "shutdown_failed",
-                "error": repr(exc),
-                "target_ip": current_ip,
-            }
-            if policy.attempt is not None:
-                fields["attempt"] = policy.attempt
-            if policy.failed_status is not None:
-                fields["status"] = policy.failed_status
-            self._log_standby("WARN", policy, generation, reason, **fields)
-            return False, outcome
-        finally:
-            self._action_lock.release()
+            fields["deadline_mono"] = f"{deadline_mono:.3f}"
+            fields["standard_fallback"] = "disabled_for_bounded_path"
+        else:
+            fields["standard_fallback"] = "removed"
+        self._log_standby("SKIP", policy, generation, reason, **fields)
+        return False, policy.failed_outcome
 
     def _execute_fast_standby_policy(
         self,

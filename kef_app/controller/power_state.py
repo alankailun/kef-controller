@@ -17,23 +17,9 @@ class ControllerStateMixin:
         with self._state_lock:
             return self._generation
 
-    def _clear_early_standby_state(self):
-        with self._state_lock:
-            self._early_standby_state.clear()
-
-    def _mark_early_standby_sent_unconfirmed(self):
-        with self._state_lock:
-            self._early_standby_state.mark_sent_unconfirmed(self.mono())
-
-    def _recently_early_standby_confirmed(self) -> bool:
-        with self._state_lock:
-            return self._early_standby_state.is_confirmed_recent()
-
     def _set_session_ending(self, ending: bool):
         with self._state_lock:
             self._session_ending = ending
-            if ending:
-                self._early_standby_state.clear()
 
     def _is_session_ending(self) -> bool:
         with self._state_lock:

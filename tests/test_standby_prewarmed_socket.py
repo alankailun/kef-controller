@@ -280,7 +280,7 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         self.assertEqual(result.fast_path_skip_reason, "no_socket_for_cached_ip")
         self.assertEqual(result.target_ip, "127.0.0.2")
 
-    def test_cached_lock_fast_path_marks_unconfirmed_and_logs_diagnostics(self):
+    def test_cached_lock_fast_path_logs_diagnostics(self):
         with _LoopbackHttpSpeaker() as speaker:
             controller = self.make_controller(speaker.port, prewarmed_persist_socket=True)
             controller._prewarmed_standby_tick("unit_test")
@@ -292,7 +292,6 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
             controller._close_prewarmed_socket_holders()
 
         self.assertTrue(handled)
-        self.assertEqual(controller._early_standby_state.status, "UNCONFIRMED")
         self.assertEqual(controller._current_generation(), 1)
         self.assertEqual(events, [])
         self.assertFalse(controller._is_controller_power_action_active())
@@ -313,7 +312,6 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         handled = controller.try_handle_cached_lock_fast_path("WTS_SESSION_LOCK", controller.mono())
 
         self.assertFalse(handled)
-        self.assertEqual(controller._early_standby_state.status, "NONE")
         self.assertTrue(
             any(
                 call.kwargs.get("step") == "cached_lock_fast_path"

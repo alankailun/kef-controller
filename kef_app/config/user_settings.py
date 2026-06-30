@@ -68,16 +68,12 @@ class StandbyTriggers:
     # off. No playback check. Default on, like the other power behaviors;
     # independent of standby_on_sleep so it can be toggled separately.
     standby_on_display_off: bool = True
-    early_standby_dedup_window: float = 30.0
 
 
 @dataclass(slots=True)
 class StandbyTuning:
     suspend_action_lock_timeout: float = 2.0
     suspend_fast_standby_enabled: bool = True
-    suspend_fast_standby_action_lock_timeout: float = 0.20
-    suspend_fast_standby_socket_timeout: float = 0.60
-    early_standby_action_lock_timeout: float = 0.3
     prewarmed_standby_enabled: bool = True
     prewarmed_persist_socket: bool = True
     prewarmed_keepalive_interval_s: float = 5.0
@@ -90,8 +86,6 @@ class StandbyTuning:
 class EndSessionBehavior:
     fast_exit_on_endsession: bool = True
     endsession_standby_on_shutdown: bool = True
-    endsession_standby_action_lock_timeout: float = 0.20
-    endsession_standby_socket_timeout: float = 0.60
 
 
 @dataclass(slots=True)

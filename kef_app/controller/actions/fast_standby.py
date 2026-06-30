@@ -182,7 +182,6 @@ class ControllerFastStandbyMixin:
         generation: int | None,
         reason: str,
         current_ip: str,
-        mark_early_standby_sent_unconfirmed: bool,
         extra_fields: dict[str, object] | None = None,
         success_outcome: str = "sent_unconfirmed_fire_and_forget",
         host_unreachable_outcome: str = "sent_skipped_host_unreachable",
@@ -217,8 +216,6 @@ class ControllerFastStandbyMixin:
             extra_fields=extra_fields,
         )
 
-        if fast_result.success and mark_early_standby_sent_unconfirmed:
-            self._mark_early_standby_sent_unconfirmed()
         if fast_result.success:
             return "sent_unconfirmed_prewarmed" if fast_result.source == "prewarmed" else success_outcome
         if fast_result.host_unreachable:
