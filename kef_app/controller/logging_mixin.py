@@ -239,6 +239,10 @@ class ControllerLoggingMixin:
         with self._state_lock:
             self._last_windows_event_name = name
             self._last_windows_event_mono = event_mono
+            if name == "WTS_SESSION_LOCK":
+                self._session_locked = True
+            elif name == "WTS_SESSION_UNLOCK":
+                self._session_locked = False
 
     def _log_session_event_line(self, name: str, wparam: int, lparam: int, event_mono: float) -> None:
         self._log_structured(

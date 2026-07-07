@@ -171,7 +171,6 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         reason: str,
         run: Callable[[], tuple[bool, str]],
         defer_started_event: bool = False,
-        flags: str = "",
     ) -> bool:
         outcome = "unknown"
         start_mono = self._log_action_begin(policy.action, generation, reason)
@@ -527,7 +526,6 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             ENDSESSION_STANDBY_POLICY,
             generation=None,
             reason=reason,
-            flags=flags,
             run=run,
         )
 

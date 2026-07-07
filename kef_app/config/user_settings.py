@@ -40,6 +40,8 @@ class WakeBehavior:
     socket_timeout: float = 0.8
     wake_on_unlock_only: bool = True
     unlock_wake_delay: float = 1.2
+    wake_on_display_on: bool = True
+    display_on_wake_delay: float = 1.2
     reachability_wait_timeout: float = 4.0
     reachability_poll_interval: float = 0.25
     wake_action_lock_timeout: float = 1.2

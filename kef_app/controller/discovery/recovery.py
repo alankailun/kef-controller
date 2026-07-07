@@ -215,7 +215,15 @@ class ControllerDiscoveryRecoveryMixin:
                 mono=f"{now:.3f}",
             )
 
-            device_info = discover_kef_device_blind(known_mac, seed_ip, c, self.log)
+            device_info = discover_kef_device_blind(
+                known_mac,
+                seed_ip,
+                c,
+                self.log,
+                # Recovery sweeps are pointless once the session is tearing
+                # down; let them unwind instead of finishing the whole subnet.
+                should_continue=lambda: not self._is_session_ending(),
+            )
             if not device_info:
                 end_mono = self.mono()
                 self._log_action_sleep_crossing("BLIND_DISCOVER_IP", None, reason, now, end_mono)

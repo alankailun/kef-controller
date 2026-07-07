@@ -292,6 +292,7 @@ class SettingsInterface(ScrollArea):
             "wake_on_unlock_only": AppIcon.LOCK_OPEN,
             "standby_on_sleep": FIF.QUIET_HOURS,
             "standby_on_display_off": AppIcon.DESKTOP_OFF,
+            "wake_on_display_on": AppIcon.DESKTOP,
         }
         self._power_behavior_cards: dict[str, SwitchCard] = {}
         for option in SPEAKER_POWER_OPTIONS:
@@ -372,7 +373,7 @@ class SettingsInterface(ScrollArea):
         self._event_tests_toggle = ButtonCard(
             AppIcon.BEAKER,
             "Event Tests",
-            "Simulate startup, shutdown, lock, unlock, display-off, and sleep behavior.",
+            "Simulate startup, shutdown, lock, unlock, display-off, display-on, and sleep behavior.",
             "Show Tests",
         )
         self._event_tests_toggle.button.clicked.connect(self._toggle_event_tests)
@@ -441,6 +442,7 @@ class SettingsInterface(ScrollArea):
             kef_input=INPUTS[self._kef_input.current_index()],
             wake_on_startup=self._power_behavior_cards["wake_on_startup"].is_checked(),
             wake_on_unlock_only=self._power_behavior_cards["wake_on_unlock_only"].is_checked(),
+            wake_on_display_on=self._power_behavior_cards["wake_on_display_on"].is_checked(),
             standby_on_sleep=self._power_behavior_cards["standby_on_sleep"].is_checked(),
             standby_on_lock=self._power_behavior_cards["standby_on_lock"].is_checked(),
             standby_on_display_off=self._power_behavior_cards["standby_on_display_off"].is_checked(),

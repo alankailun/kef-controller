@@ -9,6 +9,7 @@ from .triggers import get_trigger
 _EARLY_STANDBY_EVENT_BUDGET_S = 0.30
 _SUSPEND_STANDBY_EVENT_BUDGET_S = 0.30
 _PUMP_CALLBACK_SLOW_THRESHOLD_S = 0.020
+_DISPLAY_OFF_STANDBY_REASONS = {"DISPLAY_OFF", "UI_TEST_DISPLAY_OFF"}
 
 
 class ControllerSessionEventsMixin:
@@ -74,6 +75,8 @@ class ControllerSessionEventsMixin:
         return get_trigger("suspend").fire(self, reason)
 
     def on_lock(self, reason: str):
+        if reason == "WTS_SESSION_LOCK":
+            self._set_session_locked(True)
         return get_trigger("lock").fire(self, reason)
 
     def dispatch_off_pump_standby(
@@ -269,7 +272,12 @@ class ControllerSessionEventsMixin:
             # Direct callers do not pre-record the Windows event or generation.
             self._record_session_event_state(reason, event_mono)
             generation = self._new_generation("sleep", reason, mono=f"{event_mono:.3f}")
+        # The send already finished, but listeners (tray/home power hints) track
+        # every standby through these events, so mirror _run_standby_action.
+        self._mark_power_action_started()
+        self._emit_power_action_started_event("EARLY_STANDBY", reason)
         self._log_cached_lock_fast_path_success(reason, event_mono, generation, result)
+        self._emit_power_action_finished("EARLY_STANDBY", reason, "sent_unconfirmed_prewarmed")
         return True
 
     def _log_cached_lock_fast_path_skip(self, reason: str, event_mono: float, skip_reason: str) -> None:
@@ -513,6 +521,82 @@ class ControllerSessionEventsMixin:
             step="dispatch_display_off_standby",
         )
 
+    def _log_display_on_wake_skip(
+        self,
+        reason: str,
+        cause: str,
+        *,
+        event_mono: float,
+        desired_state: str = "",
+        desired_reason: str = "",
+    ) -> None:
+        fields: dict[str, object] = {
+            "action": "WAKE",
+            "reason": reason,
+            "cause": cause,
+            "event_mono": f"{event_mono:.3f}",
+            "mono": f"{self.mono():.3f}",
+        }
+        if desired_state or desired_reason:
+            fields["desired_state"] = desired_state or "<empty>"
+            fields["desired_reason"] = desired_reason or "<empty>"
+        self._log_structured("SKIP", **fields)
+
+    def on_display_on(self, event_mono: float, reason: str = "DISPLAY_ON") -> bool:
+        if not self.config.wake_on_display_on:
+            self._log_display_on_wake_skip(reason, "display_on_wake_disabled", event_mono=event_mono)
+            return False
+
+        desired_state, desired_reason = self._current_desired_state()
+        if desired_state != "sleep" or desired_reason not in _DISPLAY_OFF_STANDBY_REASONS:
+            self._log_display_on_wake_skip(
+                reason,
+                "not_display_off_sleep",
+                event_mono=event_mono,
+                desired_state=desired_state,
+                desired_reason=desired_reason,
+            )
+            return False
+
+        if self._is_session_locked():
+            self._log_display_on_wake_skip(
+                reason,
+                "session_locked",
+                event_mono=event_mono,
+                desired_state=desired_state,
+                desired_reason=desired_reason,
+            )
+            return False
+        if self._is_session_ending():
+            self._log_display_on_wake_skip(
+                reason,
+                "session_ending",
+                event_mono=event_mono,
+                desired_state=desired_state,
+                desired_reason=desired_reason,
+            )
+            return False
+        generation = self._new_generation("wake", reason, mono=f"{event_mono:.3f}")
+        self._mark_wake_scheduled()
+        self._log_structured(
+            "STEP",
+            action="WAKE",
+            gen=generation,
+            reason=reason,
+            step="display_on_matched_display_off_standby",
+            event_mono=f"{event_mono:.3f}",
+            delay_s=f"{self.config.display_on_wake_delay:.2f}",
+            mono=f"{self.mono():.3f}",
+        )
+        self._schedule_delayed_wake(
+            generation,
+            reason,
+            self.config.display_on_wake_delay,
+            "display_on_delay",
+            "DisplayOnWake",
+        )
+        return True
+
     def on_resume(self, reason: str):
         if self._should_dedupe_resume_and_mark(reason):
             return
@@ -525,12 +609,15 @@ class ControllerSessionEventsMixin:
         self._schedule_delayed_wake(generation, reason, self.config.resume_wake_delay, "resume_delay", "WakeWorker")
 
     def on_unlock(self, reason: str):
+        self._set_session_locked(False)
         if self._is_session_ending():
             self._log_structured("SKIP", action="WAKE", reason=reason, cause="session_ending", mono=f"{self.mono():.3f}")
             return
 
         if not self.config.wake_on_unlock_only:
             self._log_structured("SKIP", action="WAKE", reason=reason, cause="unlock_wake_disabled", mono=f"{self.mono():.3f}")
+            return
+        if self._should_dedupe_wake_schedule_and_mark(reason):
             return
 
         generation = self._new_generation("wake", reason)

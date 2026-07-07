@@ -472,7 +472,12 @@ class ControllerDeviceControlsMixin:
                 mono=f"{self.mono():.3f}",
             )
             return False
-        if not self._ensure_target_identity("CHANGE_INPUT", "ui_live", "change_input_before_action"):
+        # Live UI controls respect the discovery cooldowns: a forced recovery
+        # here would fire a full subnet scan on every click while the speaker
+        # is offline. Power actions keep force_recovery=True.
+        if not self._ensure_target_identity(
+            "CHANGE_INPUT", "ui_live", "change_input_before_action", force_recovery=False
+        ):
             return False
         if not self.get_current_kef_ip():
             return False
@@ -531,7 +536,7 @@ class ControllerDeviceControlsMixin:
             self._action_lock.release()
 
     def get_volume(self) -> Optional[int]:
-        if not self._ensure_target_identity("GET_VOLUME", "ui_live", "get_volume_before_read"):
+        if not self._ensure_target_identity("GET_VOLUME", "ui_live", "get_volume_before_read", force_recovery=False):
             return None
         try:
             with temporary_socket_timeout(self.config.socket_timeout):
@@ -543,7 +548,7 @@ class ControllerDeviceControlsMixin:
             return None
 
     def set_volume(self, level: int) -> bool:
-        if not self._ensure_target_identity("SET_VOLUME", "ui_live", "set_volume_before_action"):
+        if not self._ensure_target_identity("SET_VOLUME", "ui_live", "set_volume_before_action", force_recovery=False):
             return False
         requested_level = level
         coerced_level = self._coerce_volume_level(level)

@@ -59,6 +59,11 @@ SPEAKER_POWER_OPTIONS: tuple[SpeakerPowerOption, ...] = (
         "When the screen turns off, put the speaker into standby.",
     ),
     SpeakerPowerOption(
+        "wake_on_display_on",
+        "Wake Speaker When the Screen Turns On",
+        "If the screen-off action put the speaker into standby, wake it when the screen turns on.",
+    ),
+    SpeakerPowerOption(
         "wake_on_unlock_only",
         "Wake Speaker When Windows Unlocks",
         "After sleep or resume, wait for Windows to unlock before waking the speaker.",
@@ -124,7 +129,8 @@ def log_power_behavior_state_message(config: AppConfig) -> str:
         f"lid_close_standby={config.standby_on_lid_close} | "
         f"wake_after_unlock={config.wake_on_unlock_only} | "
         f"sleep_standby={config.standby_on_sleep} | "
-        f"display_off_standby={config.standby_on_display_off}"
+        f"display_off_standby={config.standby_on_display_off} | "
+        f"display_on_wake={config.wake_on_display_on}"
     )
 
 

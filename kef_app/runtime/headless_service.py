@@ -21,6 +21,7 @@ from ..platform.windows import (
     IpInterfaceChangeMonitor,
     LID_CLOSED,
     MONITOR_DISPLAY_OFF,
+    MONITOR_DISPLAY_ON,
     NOTIFY_FOR_THIS_SESSION,
     PBT_APMSUSPEND,
     PBT_APMRESUMEAUTOMATIC,
@@ -287,6 +288,8 @@ class HeadlessRuntime:
                         elif change.name == "GUID_CONSOLE_DISPLAY_STATE" and change.value == MONITOR_DISPLAY_OFF:
                             # Pure display-off standby; gated only by standby_on_display_off.
                             self.controller.on_display_off(event_mono)
+                        elif change.name == "GUID_CONSOLE_DISPLAY_STATE" and change.value == MONITOR_DISPLAY_ON:
+                            self.controller.on_display_on(event_mono)
                         return True
 
                     if wparam == PBT_APMSUSPEND:

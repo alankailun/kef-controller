@@ -84,6 +84,7 @@ class EventTestPanel(QWidget):
             ("Lock", self._test_lock),
             ("Unlock", self._test_unlock),
             ("Display Off", self._test_display_off),
+            ("Display On", self._test_display_on),
             ("Sleep", self._test_suspend),
         ]
 
@@ -209,6 +210,14 @@ class EventTestPanel(QWidget):
             lambda: self._controller.on_display_off(self._controller.mono(), "UI_TEST_DISPLAY_OFF"),
             enabled=self._config.standby_on_display_off,
             disabled_reason=get_speaker_power_disabled_reason("standby_on_display_off"),
+        )
+
+    def _test_display_on(self) -> None:
+        self._start_test(
+            "Display On",
+            lambda: self._controller.on_display_on(self._controller.mono(), "UI_TEST_DISPLAY_ON"),
+            enabled=self._config.wake_on_display_on,
+            disabled_reason=get_speaker_power_disabled_reason("wake_on_display_on"),
         )
 
     def _test_lock(self) -> None:

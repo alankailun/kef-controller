@@ -205,6 +205,57 @@ class DiscoveryScanTests(unittest.TestCase):
         self.assertEqual(found.matched_by, "target_mac")
         probe.assert_not_called()
 
+    def test_full_scan_cancels_before_seed_probe(self):
+        config = AppConfig()
+        seed = "10.0.0.222"
+
+        with (
+            patch(
+                "kef_app.devices.scan.scan.build_candidate_networks",
+                return_value=[ipaddress.IPv4Network("10.0.0.220/30")],
+            ),
+            patch("kef_app.devices.scan.scan.ThreadPoolExecutor") as executor_cls,
+            patch("kef_app.devices.scan.scan.probe_ip_port") as probe,
+            patch("kef_app.devices.scan.scan.identify_kef_device") as identify,
+        ):
+            found = discover_kef_device_blind(
+                "84:17:15:17:AC:77",
+                seed,
+                config,
+                self.make_logger(),
+                should_continue=lambda: False,
+            )
+
+        self.assertIsNone(found)
+        identify.assert_not_called()
+        executor_cls.assert_not_called()
+        probe.assert_not_called()
+
+    def test_full_scan_does_not_accept_network_match_after_cancel(self):
+        config = AppConfig()
+        identity = self.make_identity("10.0.0.2")
+        continue_checks = iter([True, True, False])
+
+        with (
+            patch(
+                "kef_app.devices.scan.scan.build_candidate_networks",
+                return_value=[ipaddress.IPv4Network("10.0.0.0/30")],
+            ),
+            patch(
+                "kef_app.devices.scan.scan._scan_candidate_hosts",
+                return_value=(["10.0.0.1", "10.0.0.2"], ["10.0.0.2"], [identity]),
+            ),
+        ):
+            found = discover_kef_device_blind(
+                identity.mac,
+                None,
+                config,
+                self.make_logger(),
+                should_continue=lambda: next(continue_checks),
+            )
+
+        self.assertIsNone(found)
+
     def test_full_scan_probes_candidate_networks_in_priority_order_until_target_matches(self):
         config = AppConfig()
         identity = self.make_identity("10.0.1.2")

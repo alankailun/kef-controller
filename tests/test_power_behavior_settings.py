@@ -15,6 +15,7 @@ from kef_app.ui.settings.settings_service import (
 EXPECTED_POWER_BEHAVIOR_KEYS = (
     "wake_on_startup",
     "standby_on_display_off",
+    "wake_on_display_on",
     "wake_on_unlock_only",
     "standby_on_lock",
     "standby_on_sleep",
@@ -46,6 +47,7 @@ class PowerBehaviorSettingsTests(unittest.TestCase):
             "wake_on_unlock_only": True,
             "standby_on_sleep": False,
             "standby_on_display_off": True,
+            "wake_on_display_on": False,
         }
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -71,6 +73,7 @@ class PowerBehaviorSettingsTests(unittest.TestCase):
             wake_on_unlock_only=True,
             standby_on_sleep=False,
             standby_on_display_off=True,
+            wake_on_display_on=False,
         )
 
         message = log_power_behavior_state_message(config)
@@ -81,6 +84,7 @@ class PowerBehaviorSettingsTests(unittest.TestCase):
         self.assertIn("wake_after_unlock=True", message)
         self.assertIn("sleep_standby=False", message)
         self.assertIn("display_off_standby=True", message)
+        self.assertIn("display_on_wake=False", message)
 
 
 if __name__ == "__main__":

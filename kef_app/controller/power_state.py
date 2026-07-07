@@ -10,12 +10,18 @@ class ControllerStateMixin:
         with self._state_lock:
             self._generation += 1
             generation = self._generation
+            self._desired_state = desired_state
+            self._desired_reason = reason
             self._log_structured("STATE", desired=desired_state, gen=generation, reason=reason, mono=mono or f"{self.mono():.3f}")
             return generation
 
     def _current_generation(self) -> int:
         with self._state_lock:
             return self._generation
+
+    def _current_desired_state(self) -> tuple[str, str]:
+        with self._state_lock:
+            return self._desired_state, self._desired_reason
 
     def _set_session_ending(self, ending: bool):
         with self._state_lock:
@@ -24,6 +30,14 @@ class ControllerStateMixin:
     def _is_session_ending(self) -> bool:
         with self._state_lock:
             return self._session_ending
+
+    def _set_session_locked(self, locked: bool) -> None:
+        with self._state_lock:
+            self._session_locked = locked
+
+    def _is_session_locked(self) -> bool:
+        with self._state_lock:
+            return self._session_locked
 
     def _is_controller_power_action_active(self) -> bool:
         with self._state_lock:
@@ -122,3 +136,26 @@ class ControllerStateMixin:
                 return True
             self._last_resume_event_mono = now
             return False
+
+    def _should_dedupe_wake_schedule_and_mark(self, reason: str) -> bool:
+        with self._state_lock:
+            now = self.mono()
+            if (
+                self._last_wake_schedule_mono > 0
+                and (now - self._last_wake_schedule_mono) < self.config.resume_dedup_window
+            ):
+                self._log_structured(
+                    "SKIP",
+                    action="WAKE",
+                    reason=reason,
+                    cause="wake_event_deduped",
+                    window_s=f"{self.config.resume_dedup_window:.2f}",
+                    mono=f"{now:.3f}",
+                )
+                return True
+            self._last_wake_schedule_mono = now
+            return False
+
+    def _mark_wake_scheduled(self) -> None:
+        with self._state_lock:
+            self._last_wake_schedule_mono = self.mono()

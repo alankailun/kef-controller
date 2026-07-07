@@ -110,8 +110,8 @@ class ControllerDeviceCommonMixin:
     def _is_configurable_input_source(self, source: str) -> bool:
         return source in _CONFIGURABLE_INPUT_SOURCES
 
-    def _ensure_target_identity(self, action: str, reason: str, trigger: str) -> bool:
-        if self.resolve_target(reason=reason, trigger=trigger, force_recovery=True):
+    def _ensure_target_identity(self, action: str, reason: str, trigger: str, *, force_recovery: bool = True) -> bool:
+        if self.resolve_target(reason=reason, trigger=trigger, force_recovery=force_recovery):
             return True
 
         self._log_structured(

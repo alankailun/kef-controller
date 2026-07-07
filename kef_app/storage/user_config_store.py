@@ -141,6 +141,8 @@ class UserConfigStore:
         "socket_timeout": _coerce_positive_float,
         "wake_on_unlock_only": lambda value: UserConfigStore._coerce_bool(value),
         "unlock_wake_delay": _coerce_non_negative_float,
+        "wake_on_display_on": lambda value: UserConfigStore._coerce_bool(value),
+        "display_on_wake_delay": _coerce_non_negative_float,
         "reachability_wait_timeout": _coerce_non_negative_float,
         "reachability_poll_interval": _coerce_positive_float,
         "home_external_poll_interval": _coerce_positive_float,

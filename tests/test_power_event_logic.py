@@ -353,6 +353,15 @@ class PowerEventLogicTests(unittest.TestCase):
             callback_started_mono=124.0,
         )
 
+    def test_ui_test_lock_does_not_leave_session_locked(self):
+        controller = self.make_controller(standby_on_lock=True)
+        controller.dispatch_off_pump_standby = Mock(return_value=True)
+
+        result = controller.on_lock("UI_TEST_LOCK")
+
+        self.assertTrue(result)
+        self.assertFalse(controller._is_session_locked())
+
     def test_on_lid_closed_dispatches_off_pump_standby(self):
         controller = self.make_controller(standby_on_lid_close=True)
         controller.dispatch_off_pump_standby = Mock(return_value=True)
@@ -425,6 +434,118 @@ class PowerEventLogicTests(unittest.TestCase):
             controller._run_early_standby_trigger.call_args.kwargs["deadline_mono"],
             event_mono + 0.30,
             places=3,
+        )
+
+    def test_display_on_wakes_only_after_display_off_standby(self):
+        controller = self.make_controller(
+            standby_on_display_off=True,
+            wake_on_display_on=True,
+            display_on_wake_delay=0.45,
+        )
+        controller._start_controller_thread = lambda _target, _thread_name: None
+        controller._schedule_delayed_wake = Mock()
+
+        self.assertTrue(controller.schedule_early_standby("display_off", "DISPLAY_OFF", controller.mono()))
+        result = controller.on_display_on(controller.mono())
+
+        self.assertTrue(result)
+        controller._schedule_delayed_wake.assert_called_once_with(
+            2,
+            "DISPLAY_ON",
+            0.45,
+            "display_on_delay",
+            "DisplayOnWake",
+        )
+        self.assertEqual(controller._current_generation(), 2)
+
+    def test_display_on_skips_when_disabled(self):
+        controller = self.make_controller(wake_on_display_on=False)
+        controller._new_generation("sleep", "DISPLAY_OFF")
+        controller._schedule_delayed_wake = Mock()
+        controller._log_structured = Mock()
+
+        result = controller.on_display_on(controller.mono())
+
+        self.assertFalse(result)
+        controller._schedule_delayed_wake.assert_not_called()
+        self.assertTrue(
+            any(
+                call.args[:1] == ("SKIP",)
+                and call.kwargs.get("cause") == "display_on_wake_disabled"
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
+    def test_display_on_skips_after_non_display_off_sleep(self):
+        controller = self.make_controller(wake_on_display_on=True)
+        controller._new_generation("sleep", "PBT_APMSUSPEND")
+        controller._schedule_delayed_wake = Mock()
+        controller._log_structured = Mock()
+
+        result = controller.on_display_on(controller.mono())
+
+        self.assertFalse(result)
+        controller._schedule_delayed_wake.assert_not_called()
+        self.assertTrue(
+            any(
+                call.args[:1] == ("SKIP",)
+                and call.kwargs.get("cause") == "not_display_off_sleep"
+                and call.kwargs.get("desired_reason") == "PBT_APMSUSPEND"
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
+    def test_display_on_skips_while_session_locked(self):
+        controller = self.make_controller(wake_on_display_on=True)
+        controller._new_generation("sleep", "DISPLAY_OFF")
+        controller._set_session_locked(True)
+        controller._schedule_delayed_wake = Mock()
+        controller._log_structured = Mock()
+
+        result = controller.on_display_on(controller.mono())
+
+        self.assertFalse(result)
+        controller._schedule_delayed_wake.assert_not_called()
+        self.assertTrue(
+            any(
+                call.args[:1] == ("SKIP",)
+                and call.kwargs.get("cause") == "session_locked"
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
+    def test_display_on_wake_dedupes_following_unlock(self):
+        controller = self.make_controller(wake_on_display_on=True, wake_on_unlock_only=True)
+        controller._new_generation("sleep", "DISPLAY_OFF")
+        controller._schedule_delayed_wake = Mock()
+
+        self.assertTrue(controller.on_display_on(controller.mono()))
+        controller.on_unlock("WTS_SESSION_UNLOCK")
+
+        controller._schedule_delayed_wake.assert_called_once_with(
+            2,
+            "DISPLAY_ON",
+            controller.config.display_on_wake_delay,
+            "display_on_delay",
+            "DisplayOnWake",
+        )
+
+    def test_display_on_is_not_blocked_by_previous_unlock_wake_after_new_display_off(self):
+        controller = self.make_controller(wake_on_display_on=True, wake_on_unlock_only=True)
+        controller._schedule_delayed_wake = Mock()
+
+        controller.on_unlock("WTS_SESSION_UNLOCK")
+        controller._new_generation("sleep", "DISPLAY_OFF")
+        result = controller.on_display_on(controller.mono())
+
+        self.assertTrue(result)
+        self.assertEqual(controller._schedule_delayed_wake.call_count, 2)
+        controller._schedule_delayed_wake.assert_any_call(
+            3,
+            "DISPLAY_ON",
+            controller.config.display_on_wake_delay,
+            "display_on_delay",
+            "DisplayOnWake",
         )
 
     def test_scheduled_lock_standby_uses_event_anchored_deadline_in_worker(self):

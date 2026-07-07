@@ -102,6 +102,20 @@ class ControllerDeviceWakeMixin:
         self._emit_power_action_started("WAKE", reason)
 
         try:
+            if not target_input:
+                # Waking works by setting the input source; without one there is
+                # no request to send, so a "success" here would be a silent no-op.
+                outcome = "skipped_no_input_configured"
+                self._log_structured(
+                    "SKIP",
+                    action="WAKE",
+                    gen=generation,
+                    reason=reason,
+                    cause="no_input_configured",
+                    mono=f"{self.mono():.3f}",
+                )
+                return False
+
             if target_input and not self._is_configurable_input_source(target_input):
                 outcome = "skipped_unsupported_input_source"
                 self._log_structured(

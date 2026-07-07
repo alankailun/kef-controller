@@ -293,7 +293,9 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
 
         self.assertTrue(handled)
         self.assertEqual(controller._current_generation(), 1)
-        self.assertEqual(events, [])
+        # The fast path mirrors _run_standby_action so tray/home power hints
+        # see this standby like any other; the action is finished by then.
+        self.assertEqual(events, ["power_action_started", "power_action_finished"])
         self.assertFalse(controller._is_controller_power_action_active())
         self.assertTrue(
             any(

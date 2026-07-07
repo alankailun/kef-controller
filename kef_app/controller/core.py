@@ -97,9 +97,13 @@ class KefPowerController(
         self._speaker_runtime_power_on: bool | None = None
 
         self._generation = 0
+        self._desired_state = ""
+        self._desired_reason = ""
         self._controller_active_power_actions = 0
         self._last_resume_event_mono = 0.0
+        self._last_wake_schedule_mono = 0.0
         self._session_ending = False
+        self._session_locked = False
         self._last_windows_event_name = ""
         self._last_windows_event_mono = 0.0
 

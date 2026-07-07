@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import ipaddress
 import time
-from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Callable, Optional, TypeVar
+
+_T = TypeVar("_T")
 
 from ...config import AppConfig
 from ..speaker_models import SpeakerIdentity, normalize_mac
@@ -28,6 +30,30 @@ def _sort_identity_key(identity: SpeakerIdentity) -> tuple[int, str]:
         return (0, identity.speaker_name.casefold())
 
 
+# Submit every host at once and harvest completions as they arrive, so one
+# slow probe only delays its own worker instead of a whole batch. Results are
+# keyed by host and re-read in the caller's host order to keep output stable.
+def _map_hosts_concurrently(
+    executor: ThreadPoolExecutor,
+    hosts: list[str],
+    worker: Callable[[str], _T],
+    *,
+    should_continue: Optional[Callable[[], bool]] = None,
+) -> dict[str, _T]:
+    futures = {executor.submit(worker, host_ip): host_ip for host_ip in hosts}
+    results: dict[str, _T] = {}
+    for future in as_completed(futures):
+        if should_continue is not None and not should_continue():
+            for pending in futures:
+                pending.cancel()
+            break
+        try:
+            results[futures[future]] = future.result()
+        except Exception:
+            continue
+    return results
+
+
 def _reachable_hosts(
     executor: ThreadPoolExecutor,
     hosts: list[str],
@@ -35,21 +61,13 @@ def _reachable_hosts(
     *,
     should_continue: Optional[Callable[[], bool]] = None,
 ) -> list[str]:
-    reachable: list[str] = []
-    batch_size = max(1, config.mac_discovery_max_workers)
-    for start in range(0, len(hosts), batch_size):
-        if should_continue is not None and not should_continue():
-            break
-        batch = hosts[start : start + batch_size]
-        reachable_pairs = zip(
-            batch,
-            executor.map(
-                lambda host_ip: probe_ip_port(host_ip, config.mac_discovery_tcp_port, config.mac_discovery_probe_timeout),
-                batch,
-            ),
-        )
-        reachable.extend(host_ip for host_ip, ok in reachable_pairs if ok)
-    return reachable
+    results = _map_hosts_concurrently(
+        executor,
+        hosts,
+        lambda host_ip: probe_ip_port(host_ip, config.mac_discovery_tcp_port, config.mac_discovery_probe_timeout),
+        should_continue=should_continue,
+    )
+    return [host_ip for host_ip in hosts if results.get(host_ip)]
 
 
 def _identify_hosts(
@@ -59,15 +77,13 @@ def _identify_hosts(
     *,
     should_continue: Optional[Callable[[], bool]] = None,
 ) -> list[SpeakerIdentity]:
-    identities: list[SpeakerIdentity] = []
-    batch_size = max(1, config.blind_discovery_max_workers)
-    for start in range(0, len(hosts), batch_size):
-        if should_continue is not None and not should_continue():
-            break
-        batch = hosts[start : start + batch_size]
-        found = executor.map(lambda host_ip: identify_kef_device(host_ip, config), batch)
-        identities.extend(identity for identity in found if identity)
-    return identities
+    results = _map_hosts_concurrently(
+        executor,
+        hosts,
+        lambda host_ip: identify_kef_device(host_ip, config),
+        should_continue=should_continue,
+    )
+    return [results[host_ip] for host_ip in hosts if results.get(host_ip)]
 
 
 def _shared_discovery_workers(host_count: int, config: AppConfig) -> int:
@@ -269,7 +285,14 @@ def discover_kef_devices(
     return candidates
 
 
-def discover_kef_device_blind(known_mac: str, seed_ip: Optional[str], config: AppConfig, log) -> Optional[SpeakerIdentity]:
+def discover_kef_device_blind(
+    known_mac: str,
+    seed_ip: Optional[str],
+    config: AppConfig,
+    log,
+    *,
+    should_continue: Optional[Callable[[], bool]] = None,
+) -> Optional[SpeakerIdentity]:
     normalized_known_mac = normalize_mac(known_mac)
     if not normalized_known_mac:
         log.info("Full KEF target recovery requires a Target Speaker MAC")
@@ -292,9 +315,13 @@ def discover_kef_device_blind(known_mac: str, seed_ip: Optional[str], config: Ap
         f"identify_workers={config.blind_discovery_max_workers}"
     )
 
+    if should_continue is not None and not should_continue():
+        log.info("Full KEF device scan cancelled before the seed probe")
+        return None
+
     candidates_by_ip: dict[str, SpeakerIdentity] = {}
     seed_identity = _probe_seed_identity(seed_ip, config, log, phase="full_scan_start")
-    if seed_identity:
+    if seed_identity and (should_continue is None or should_continue()):
         total_identified_kef += 1
         candidates_by_ip[seed_identity.ip] = seed_identity
         if seed_identity.mac == normalized_known_mac:
@@ -309,8 +336,15 @@ def discover_kef_device_blind(known_mac: str, seed_ip: Optional[str], config: Ap
     probe_started = time.monotonic()
     total_hosts = 0
     for index, network in enumerate(networks, start=1):
+        if should_continue is not None and not should_continue():
+            break
         network_started = time.monotonic()
-        hosts, reachable_hosts, identities = _scan_candidate_hosts([network], seed_ip, config)
+        hosts, reachable_hosts, identities = _scan_candidate_hosts(
+            [network],
+            seed_ip,
+            config,
+            should_continue=should_continue,
+        )
         total_hosts += len(hosts)
         total_reachable_hosts += len(reachable_hosts)
         total_identified_kef += len(identities)
@@ -326,7 +360,11 @@ def discover_kef_device_blind(known_mac: str, seed_ip: Optional[str], config: Ap
             started_mono=network_started,
         )
 
+        if should_continue is not None and not should_continue():
+            break
         for identity in identities:
+            if should_continue is not None and not should_continue():
+                break
             candidates_by_ip[identity.ip] = identity
             if normalized_known_mac and identity.mac == normalized_known_mac:
                 log.info(
@@ -345,7 +383,7 @@ def discover_kef_device_blind(known_mac: str, seed_ip: Optional[str], config: Ap
         f"duration_ms={int((time.monotonic() - probe_started) * 1000)}"
     )
 
-    if seed_ip and seed_ip not in candidates_by_ip:
+    if seed_ip and seed_ip not in candidates_by_ip and (should_continue is None or should_continue()):
         seed_identity = _probe_seed_identity(
             seed_ip,
             config,
@@ -375,30 +413,12 @@ def discover_kef_device_blind(known_mac: str, seed_ip: Optional[str], config: Ap
         )
         return None
 
-    if len(candidates) == 1:
-        candidate = candidates[0]
-        if candidate.mac != normalized_known_mac:
-            log.info(
-                f"Full scan found one KEF device, but its MAC did not match the target | "
-                f"ip={candidate.ip} | target_mac={known_mac or '<empty>'} | "
-                f"actual_mac={candidate.mac_display or candidate.mac or '<no-mac>'} "
-                f"reachable_hosts_count={total_reachable_hosts} identified_kef_count={total_identified_kef} "
-                f"duration_ms={int((time.monotonic() - scan_started) * 1000)}"
-            )
-            return None
-
-        log.info(
-            f"Full scan found exactly one supported KEF device | ip={candidate.ip} | "
-            f"mac={candidate.mac_display or candidate.mac} | model={candidate.speaker_model} | "
-            f"name={candidate.speaker_name or '<unnamed>'} "
-            f"reachable_hosts_count={total_reachable_hosts} identified_kef_count={total_identified_kef} "
-            f"duration_ms={int((time.monotonic() - scan_started) * 1000)}"
-        )
-        return candidate.with_match("target_mac")
-
+    # Every MAC-matching candidate already returned above, so whatever is left
+    # does not match the target and is only useful as a diagnostic summary.
     summary = ", ".join(_candidate_summary(candidate) for candidate in candidates)
     log.info(
-        f"Full scan found multiple KEF devices and could not pick one safely | "
+        f"Full scan found KEF devices, but none matched the Target Speaker MAC | "
+        f"count={len(candidates)} target_mac={known_mac or '<empty>'} "
         f"reachable_hosts_count={total_reachable_hosts} identified_kef_count={total_identified_kef} "
         f"duration_ms={int((time.monotonic() - scan_started) * 1000)} | candidates=[{summary}]"
     )
