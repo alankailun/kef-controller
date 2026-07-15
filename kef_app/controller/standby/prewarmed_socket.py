@@ -140,6 +140,7 @@ class PrewarmedStandbySocketMonitorMixin:
             self._prewarmed_standby_running = True
             self._prewarmed_standby_restart_reason = None
             self._prewarmed_standby_failures = 0
+            self._prewarmed_standby_last_error = ""
             self._prewarmed_standby_stop.clear()
 
         for holder in stale_holders:
@@ -245,6 +246,7 @@ class PrewarmedStandbySocketMonitorMixin:
             self._close_prewarmed_socket_holders()
             with self._prewarmed_standby_lock:
                 self._prewarmed_standby_failures = 0
+                self._prewarmed_standby_last_error = ""
                 self._prewarmed_standby_ready_logged = False
                 self._prewarmed_standby_last_ok_mono = 0.0
 
@@ -326,6 +328,7 @@ class PrewarmedStandbySocketMonitorMixin:
             previous_failures = self._prewarmed_standby_failures
             ready_logged = self._prewarmed_standby_ready_logged and self._prewarmed_standby_last_ip == target_ip
             self._prewarmed_standby_failures = 0
+            self._prewarmed_standby_last_error = ""
             self._prewarmed_standby_last_ip = target_ip
             self._prewarmed_standby_last_ok_mono = self.mono()
             self._prewarmed_standby_ready_logged = True
@@ -359,6 +362,7 @@ class PrewarmedStandbySocketMonitorMixin:
         with self._prewarmed_standby_lock:
             self._prewarmed_standby_failures += 1
             failures = self._prewarmed_standby_failures
+            self._prewarmed_standby_last_error = repr(exc)
             self._prewarmed_standby_ready_logged = False
         next_delay_s = self._prewarmed_keepalive_failure_delay(failures)
 
@@ -389,6 +393,18 @@ class PrewarmedStandbySocketMonitorMixin:
             return False
         max_age_s = max(5.0, float(self.config.prewarmed_keepalive_interval_s) * 2.5)
         return (self.mono() - last_ok_mono) <= max_age_s
+
+    def get_prewarmed_standby_health(self) -> dict[str, object]:
+        """Return a small, lock-safe snapshot for the optional UI diagnostics."""
+        with self._prewarmed_standby_lock:
+            last_ok_mono = float(self._prewarmed_standby_last_ok_mono or 0.0)
+            failures = int(self._prewarmed_standby_failures)
+            last_error = str(self._prewarmed_standby_last_error or "")
+        return {
+            "last_heartbeat_age_s": round(max(0.0, self.mono() - last_ok_mono), 1) if last_ok_mono else None,
+            "failures": failures,
+            "last_error": last_error,
+        }
 
     def _send_standby_over_socket(
         self,

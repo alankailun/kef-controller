@@ -77,6 +77,7 @@ class WebControllerBridge(QObject):
     log_line = Signal(str)
     _api_requested = Signal(str, object, object)
     _polled_state = Signal(object, object, object)
+    _poll_failed = Signal(str)
 
     def __init__(
         self,
@@ -99,14 +100,18 @@ class WebControllerBridge(QObject):
         self._startup_registered = is_startup_registered("KEF Controller")
         self._poll_lock = threading.Lock()
         self._last_action_started = 0.0
+        self._last_action: dict[str, object] | None = None
+        self._last_failure: tuple[str, float] | None = None
+        self._last_poll_success_mono = 0.0
         self._awaiting_wake_confirmation = False
+        self._ui_visible = False
 
         self._poll_timer = QTimer(self)
         self._poll_timer.timeout.connect(self._poll_speaker_state)
         self._polled_state.connect(self._on_polled_state)
+        self._poll_failed.connect(self._on_poll_failed)
         self._api_requested.connect(self._handle_api_request)
         self._apply_poll_interval()
-        self._poll_timer.start()
 
         controller_bridge.identity_changed.connect(lambda _identity: self.publish_state())
         controller_bridge.speaker_state_changed.connect(self._on_speaker_state_changed)
@@ -123,6 +128,19 @@ class WebControllerBridge(QObject):
     def refresh(self) -> None:
         self._poll_speaker_state(force=True)
         self.publish_state()
+
+    @Slot(bool)
+    def set_ui_visible(self, visible: bool) -> None:
+        """Only poll the speaker while the controller window is visible."""
+        visible = bool(visible)
+        if visible == self._ui_visible:
+            return
+        self._ui_visible = visible
+        if visible:
+            self._poll_timer.start()
+            self._poll_speaker_state(force=True)
+            return
+        self._poll_timer.stop()
 
     @Slot()
     def togglePower(self) -> None:
@@ -440,6 +458,7 @@ class WebControllerBridge(QObject):
     def _state(self) -> dict[str, Any]:
         identity = self._controller.get_current_identity()
         speaker_on = self._speaker_on if self._speaker_on is not None else bool(identity.available)
+        prewarmed_health = self._controller.get_prewarmed_standby_health()
         return {
             "speaker": {
                 "name": identity.speaker_name or "No device found",
@@ -456,6 +475,18 @@ class WebControllerBridge(QObject):
             "inputs": [{"label": label, "value": value} for label, value in INPUT_SOURCE_OPTIONS],
             "settings": asdict(self._config.user),
             "startup": {"registered": self._startup_registered},
+            "health": {
+                "last_heartbeat_age_s": prewarmed_health["last_heartbeat_age_s"],
+                "heartbeat_failures": prewarmed_health["failures"],
+                "heartbeat_error": prewarmed_health["last_error"],
+                "last_poll_age_s": (
+                    round(max(0.0, time.monotonic() - self._last_poll_success_mono), 1)
+                    if self._last_poll_success_mono
+                    else None
+                ),
+                "last_action": self._last_action,
+                "last_failure": self._recent_failure(),
+            },
             "events": [
                 {"key": key, "label": label, "setting": setting, "description": description,
                  "enabled": bool(getattr(self._config, setting))}
@@ -472,10 +503,17 @@ class WebControllerBridge(QObject):
         def work():
             return self._controller.poll_external_ui_state("web_ui_poll", "web_ui_poll")
 
-        start_background_task("WebPollState", work, on_success=lambda result: self._polled_state.emit(*result),
-                              lock=self._poll_lock, log=self._controller.log)
+        start_background_task(
+            "WebPollState",
+            work,
+            on_success=lambda result: self._polled_state.emit(*result),
+            on_error=lambda exc: self._poll_failed.emit(str(exc)),
+            lock=self._poll_lock,
+            log=self._controller.log,
+        )
 
     def _on_polled_state(self, input_source: object, volume: object, speaker_on: object) -> None:
+        self._last_poll_success_mono = time.monotonic()
         normalized_input = normalize_input_source(str(input_source)) if input_source else None
         wake_confirmed = _wake_is_confirmed(speaker_on, normalized_input)
         if self._awaiting_wake_confirmation:
@@ -493,6 +531,10 @@ class WebControllerBridge(QObject):
             self._speaker_on = bool(speaker_on)
         self.publish_state()
 
+    def _on_poll_failed(self, detail: str) -> None:
+        self._last_failure = (detail or "Speaker state check failed", time.monotonic())
+        self.publish_state()
+
     def _on_speaker_state_changed(self, input_source: object, volume: object, speaker_on: object) -> None:
         self._on_polled_state(input_source, volume, speaker_on)
 
@@ -505,6 +547,13 @@ class WebControllerBridge(QObject):
     def _on_power_action_finished(self, action: str, _reason: str, success: bool, outcome: str) -> None:
         elapsed = int((time.monotonic() - self._last_action_started) * 1000) if self._last_action_started else 0
         normalized_action = str(action or "").upper()
+        self._last_action = {
+            "name": normalized_action,
+            "elapsed_ms": elapsed,
+            "success": bool(success),
+        }
+        if not success:
+            self._last_failure = (outcome or f"{normalized_action.title()} failed", time.monotonic())
         if normalized_action == "WAKE":
             if not success:
                 self._awaiting_wake_confirmation = False
@@ -524,6 +573,15 @@ class WebControllerBridge(QObject):
 
     def _apply_poll_interval(self) -> None:
         self._poll_timer.setInterval(max(1000, int(self._config.home_external_poll_interval * 1000)))
+
+    def _recent_failure(self) -> dict[str, object] | None:
+        if self._last_failure is None:
+            return None
+        detail, occurred_mono = self._last_failure
+        age_s = max(0.0, time.monotonic() - occurred_mono)
+        if age_s > 300.0:
+            return None
+        return {"detail": detail, "age_s": round(age_s, 1)}
 
     def _start_action(self, name: str, work: Callable[[], object], message: str) -> None:
         self._notify("info", "Speaker action", message)

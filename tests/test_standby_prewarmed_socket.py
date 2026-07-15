@@ -238,6 +238,19 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         with controller._prewarmed_standby_lock:
             self.assertEqual(controller._prewarmed_standby_failures, 0)
 
+    def test_health_snapshot_reports_latest_heartbeat_and_retry_error(self):
+        controller = self.make_controller(80, prewarmed_persist_socket=True)
+        with controller._prewarmed_standby_lock:
+            controller._prewarmed_standby_last_ok_mono = controller.mono() - 2.0
+            controller._prewarmed_standby_failures = 1
+            controller._prewarmed_standby_last_error = "TimeoutError('timed out')"
+
+        health = controller.get_prewarmed_standby_health()
+
+        self.assertGreaterEqual(health["last_heartbeat_age_s"], 2.0)
+        self.assertEqual(health["failures"], 1)
+        self.assertEqual(health["last_error"], "TimeoutError('timed out')")
+
     def test_cached_prewarmed_send_uses_snapshot_bytes_and_matching_socket(self):
         with _LoopbackHttpSpeaker() as speaker:
             controller = self.make_controller(speaker.port, prewarmed_persist_socket=True)

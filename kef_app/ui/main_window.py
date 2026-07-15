@@ -38,6 +38,7 @@ class KefMainWindow(QObject):
         self._bridge = WebControllerBridge(
             config, controller, config_store, controller_bridge, log_handler, self
         )
+        self.visibility_changed.connect(self._bridge.set_ui_visible)
         self._server = WebApiServer(self._web_root(), self._bridge)
         self._server.start()
         self._bridge.state_changed.connect(lambda payload: self._server.publish("state", payload))
@@ -66,7 +67,6 @@ class KefMainWindow(QObject):
             win32gui.ShowWindow(self._host_hwnd, win32con.SW_RESTORE)
             win32gui.SetForegroundWindow(self._host_hwnd)
             self.visibility_changed.emit(True)
-            self._bridge.refresh()
             return
 
         # Creating an Edge WebView2 window takes a moment.  Until its HWND is

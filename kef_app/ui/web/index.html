@@ -60,11 +60,14 @@
       border: 1px solid var(--line); border-right: 0; border-bottom: 0; border-top-left-radius: 8px;
     }
     .page {
-      width: 100%; min-height: 100%; padding: clamp(22px, 2.6vw, 36px) clamp(24px, 3.2vw, 48px) 36px;
+      width: 100%; max-width: 860px; min-height: 100%; margin-inline: auto;
+      padding: clamp(22px, 2.6vw, 36px) clamp(24px, 3.2vw, 48px) 36px;
     }
+    #page-log { max-width: 1100px; }
     .page.hidden { display: none; }
-    h1 { margin: 0; font-size: 24px; font-weight: 600; flex: 1; }
-    .page-head { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+    h1 { margin: 0; font-size: 24px; font-weight: 600; flex: 1; min-width: max-content; }
+    .page-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
+    .page-head h1 { margin-right: auto; }
 
     /* ── 状态条 ── */
     .status-bar {
@@ -87,6 +90,8 @@
       color: #475569; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 12.5px;
     }
     .standby-note.hidden { display: none; }
+    .setup-note { color: #0f766e; background: #f0fdfa; border-color: #99f6e4; }
+    .setup-note button { margin-left: auto; white-space: nowrap; }
     @media (prefers-color-scheme: dark) {
       .standby-note { color: #cbd5e1; background: #27313b; border-color: #3b4754; }
     }
@@ -169,6 +174,7 @@
     .info-row { display: flex; padding: 5px 0; border-top: 1px solid var(--line-soft); }
     .info-row dt { width: 96px; font-size: 12.5px; color: var(--faint); margin: 0; flex-shrink: 0; }
     .info-row dd { font-size: 12.5px; margin: 0; font-family: ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+    .info-row.health dd { font-family: inherit; }
 
     /* ── 日志 ── */
     .ghost-btn {
@@ -503,11 +509,12 @@
     volume_down: ["音量 −1", "Volume −1"], volume_up: ["音量 +1", "Volume +1"],
     mute: ["静音", "Mute"], unmute: ["恢复音量", "Restore volume"], mute_note: ["已静音，点击喇叭图标恢复", "Muted — click the speaker icon to restore"],
     input_source: ["输入源", "Input Source"], device_info: ["设备信息", "Device Info"],
-    ip_address: ["IP 地址", "IP Address"], mac_address: ["MAC 地址", "MAC Address"], model: ["型号", "Model"], firmware: ["固件", "Firmware"],
+    ip_address: ["IP 地址", "IP Address"], mac_address: ["MAC 地址", "MAC Address"], model: ["型号", "Model"], firmware: ["固件", "Firmware"], health_last_check: ["最近心跳", "Last heartbeat"], health_last_action: ["最近动作", "Last action"], health_last_issue: ["最近异常", "Last issue"], health_none: ["暂无", "None yet"], health_now: ["刚刚", "Just now"], health_seconds_ago: ["$ 秒前", "$s ago"], failed: ["失败", "Failed"],
     connected_on: ["已连接 · 开机", "Connected · On"], connected_standby: ["已连接 · 待机", "Connected · Standby"], disconnected: ["未连接", "Disconnected"],
     no_device: ["未找到设备", "No device found"], power_on: ["开机", "On"], power_standby: ["待机", "Standby"], switching: ["切换中", "Switching"],
-    waking: ["正在唤醒", "Waking"], entering_standby: ["正在待机", "Entering standby"],
+    waking: ["正在唤醒", "Waking"], waiting_confirmation: ["等待音箱确认…", "Waiting for speaker confirmation…"], entering_standby: ["正在待机", "Entering standby"],
     standby_help: ["扬声器处于待机状态。唤醒后即可调节音量和输入源。", "The speaker is in standby. Wake it to control volume and input."],
+    configure_speaker_help: ["未找到扬声器——去设置选择扬声器并扫描一下。", "No speaker found — choose and scan for a speaker in Settings."], configure_speaker: ["去设置扫描", "Set up speaker"],
     app_log: ["应用日志", "Application Log"], refresh: ["刷新", "Reload"], open_folder: ["打开文件夹", "Open Folder"], log_file: ["日志文件", "Log file"], today_log: ["今天", "Today"],
     search_log: ["搜索日志…", "Search logs…"], clear_search: ["清除搜索", "Clear search"], min_level: ["最低级别", "Min level"],
     reset_filters: ["重置筛选", "Reset filters"], no_match: ["没有匹配「$」的日志行", "No lines matching \"$\""], no_level: ["该级别下没有日志", "No logs at this level"],
@@ -700,12 +707,13 @@
   let page = "home";
   let muted = false, lastAudible = 40, volumeTimer = null, editingVol = false, draggingVol = false;
   let volumeHoldUntil = 0; // 用户刚改过音量时，短暂忽略远端快照，避免被旧值覆盖
-  let powerPending = false, powerPendingTarget = null, powerPendingTimer = null;
+  let powerPending = false, powerPendingTarget = null, powerPendingStage = "", powerPendingTimer = null;
   let infoOpen = false;
   let testMode = false, runningTest = null;
   let dlg = null; // 选择扬声器弹窗：{ phase: "scanning"|"done", found: [], checked: 0, failed: "" }
   let inputHoldUntil = 0, localInput = null; // 与音量同理：刚点过的输入源短暂优先于远端快照
   let logItems = [], logQuery = "", logSearchTimer = null, logFiles = [], selectedLogFile = "";
+  let pendingLogItems = [], logFlushFrame = 0;
   const SEVERITY = ["INFO", "STEP", "STATE", "EVENT", "WARN", "ERROR"];
   const LEVEL_TEXT_KEYS = { INFO: "level_info", STEP: "level_step", STATE: "level_state", EVENT: "level_event", WARN: "level_warn", ERROR: "level_error" };
   let minLogLevel = "INFO";
@@ -721,11 +729,27 @@
     return false;
   };
 
+  function clearPowerPending() {
+    powerPending = false;
+    powerPendingTarget = null;
+    powerPendingStage = "";
+    clearTimeout(powerPendingTimer);
+  }
+  function armPowerPendingTimeout(delay) {
+    clearTimeout(powerPendingTimer);
+    powerPendingTimer = setTimeout(() => { clearPowerPending(); syncHome(); }, delay);
+  }
+
   // ═════════════════════════════════════════════════════════
   // Toast
   // ═════════════════════════════════════════════════════════
   const localTitle = title => uiLanguage === "zh" ? zhTitle(title) : String(title || "");
-  const localDetail = detail => uiLanguage === "zh" ? zhDetail(String(detail || "")) : String(detail || "");
+  const localDetail = detail => {
+    const raw = String(detail || "");
+    const switchedInput = raw.match(/^Switched to (\S+)\.$/);
+    if (switchedInput) return t("input_changed", inputLabel(switchedInput[1]));
+    return uiLanguage === "zh" ? zhDetail(raw) : raw;
+  };
   const toastChannel = title => ({
     "Volume updated": "volume", "Volume update failed": "volume", "Input changed": "input", "Input change failed": "input",
     "Settings saved": "save", "Settings updated for this session": "save", "Startup settings saved": "save",
@@ -762,7 +786,7 @@
       }
       el = document.createElement("div");
       el.dataset.channel = channel;
-      el.innerHTML = `<span class="toast-icon"></span><div class="toast-body"><b></b><small></small></div><button class="toast-close" title="×">×</button>`;
+      el.innerHTML = `<span class="toast-icon"></span><div class="toast-body"><b></b><small></small></div><button class="toast-close" title="${t("close")}">×</button>`;
       el.querySelector(".toast-close").addEventListener("click", () => dismissToast(channel));
       area.append(el);
       toastNodes.set(channel, el);
@@ -819,6 +843,7 @@
       </div>
 
       <div id="standby-note" class="standby-note hidden">${icon("monitorOff", 15)}<span>${t("standby_help")}</span></div>
+      <div id="setup-note" class="standby-note setup-note hidden">${icon("info", 15)}<span>${t("configure_speaker_help")}</span><button id="setup-speaker" class="ghost-btn">${t("configure_speaker")}</button></div>
 
       <section id="vol-card" class="card">
         <div class="vol-head">
@@ -857,6 +882,9 @@
         <dl id="info-grid" class="info-grid hidden">
           ${["ip_address", "mac_address", "model", "firmware"].map((k, i) => `
             <div class="info-row"><dt>${t(k)}</dt><dd id="info-v${i}">—</dd></div>`).join("")}
+          <div class="info-row health"><dt>${t("health_last_check")}</dt><dd id="health-poll">—</dd></div>
+          <div class="info-row health"><dt>${t("health_last_action")}</dt><dd id="health-action">—</dd></div>
+          <div class="info-row health"><dt>${t("health_last_issue")}</dt><dd id="health-failure">—</dd></div>
         </dl>
       </section>`;
   }
@@ -866,10 +894,10 @@
       if (powerPending) return;
       powerPending = true;
       powerPendingTarget = !Boolean(state?.speaker?.on);
-      clearTimeout(powerPendingTimer);
-      powerPendingTimer = setTimeout(() => { powerPending = false; powerPendingTarget = null; syncHome(); }, 12000);
+      powerPendingStage = "sending";
+      armPowerPendingTimeout(12000);
       syncHome();
-      bridge.togglePower().catch(() => { powerPending = false; powerPendingTarget = null; syncHome(); });
+      bridge.togglePower().catch(() => { clearPowerPending(); syncHome(); });
     });
 
     const slider = $("#vol-slider");
@@ -923,6 +951,11 @@
       inputHoldUntil = Date.now() + 2500;
       bridge.changeInput(localInput).catch(() => {});
       if (state && state.speaker) { state.speaker.input = localInput; syncHome(); }
+    });
+
+    $("#setup-speaker").addEventListener("click", () => {
+      setPage("settings");
+      openSpeakerDialog();
     });
 
     $("#info-head").addEventListener("click", () => {
@@ -982,10 +1015,20 @@
     sendVolume(currentVolume() + delta);
   }
 
+  const healthAge = seconds => {
+    if (seconds == null) return t("health_none");
+    const rounded = Math.max(0, Math.round(Number(seconds) || 0));
+    return rounded < 5 ? t("health_now") : t("health_seconds_ago", rounded);
+  };
+  const healthActionLabel = action => ({
+    WAKE: t("wake"), STANDBY: t("standby"), EARLY_STANDBY: t("standby"), ENDSESSION_STANDBY: t("standby"),
+  }[action] || String(action || ""));
+
   function syncHome() {
     if (!state) return;
     const s = state.speaker || {};
     const on = !!s.on;
+    const configured = Boolean(s.ip || state?.settings?.device?.kef_ip || state?.settings?.device?.kef_mac);
     $("#dot").className = `dot ${on ? "on" : ""}`;
     $("#dev-name").textContent = s.name || t("no_device");
     const link = s.ip ? (on ? t("connected_on") : t("connected_standby")) : t("disconnected");
@@ -993,13 +1036,14 @@
 
     const pb = $("#power-btn");
     pb.className = `power-switch ${on ? "on" : ""} ${powerPending ? "pending" : ""}`;
-    pb.disabled = powerPending;
+    pb.disabled = powerPending || !configured;
     pb.setAttribute("aria-checked", String(on));
     pb.innerHTML = powerPending
-      ? `${icon("loader", 14, "spin")}<span>${t(powerPendingTarget ? "waking" : "entering_standby")}</span>`
+      ? `${icon("loader", 14, "spin")}<span>${t(powerPendingTarget ? (powerPendingStage === "confirming" ? "waiting_confirmation" : "waking") : "entering_standby")}</span>`
       : `${icon("power", 14)}<span>${on ? t("power_on") : t("power_standby")}</span>`;
 
-    $("#standby-note").classList.toggle("hidden", on || powerPendingTarget === true);
+    $("#setup-note").classList.toggle("hidden", configured);
+    $("#standby-note").classList.toggle("hidden", !configured || on || powerPendingTarget === true);
 
     if (!editingVol && !draggingVol && s.volume != null && Date.now() > volumeHoldUntil) {
       if (muted && Number(s.volume) > 0) muted = false;
@@ -1019,6 +1063,19 @@
     $("#info-summary").textContent = [s.model, s.firmware].filter(Boolean).join(" · ") || "—";
     const vals = [s.ip, s.mac, s.model, s.firmware];
     vals.forEach((v, i) => { $(`#info-v${i}`).textContent = v || "—"; });
+    const health = state.health || {};
+    $("#health-poll").textContent = healthAge(health.last_heartbeat_age_s ?? health.last_poll_age_s);
+    const action = health.last_action;
+    $("#health-action").textContent = action
+      ? `${healthActionLabel(action.name)} · ${action.elapsed_ms || 0} ms${action.success ? "" : ` · ${t("failed")}`}`
+      : t("health_none");
+    const failure = health.last_failure;
+    const heartbeatFailure = health.heartbeat_error;
+    $("#health-failure").textContent = failure
+      ? `${localDetail(failure.detail)} · ${healthAge(failure.age_s)}`
+      : heartbeatFailure
+        ? `${localDetail(heartbeatFailure)} · ${t("level_warn")} ${health.heartbeat_failures || 1}`
+        : t("health_none");
     $("#info-grid").classList.toggle("hidden", !infoOpen);
     $("#info-chevron").innerHTML = icon(infoOpen ? "chevronDown" : "chevronRight", 15);
   }
@@ -1055,7 +1112,7 @@
 
   function bindLog() {
     $("#log-refresh").addEventListener("click", () => {
-      bridge.refresh().catch(() => {});
+      if (!selectedLogFile) bridge.refresh().catch(() => {});
       loadLogs();
     });
     $("#log-file").addEventListener("change", e => {
@@ -1124,7 +1181,6 @@
     return { raw, time: stamp.includes(" ") ? stamp.split(" ").pop() : stamp, source, message, lvl };
   }
 
-  const countAtOrAbove = level => logItems.filter(item => SEVERITY.indexOf(item.lvl) >= SEVERITY.indexOf(level)).length;
   const logMatches = item =>
     SEVERITY.indexOf(item.lvl) >= SEVERITY.indexOf(minLogLevel) &&
     (!logQuery.trim() || item.raw.toLowerCase().includes(logQuery.trim().toLowerCase()));
@@ -1162,15 +1218,18 @@
   }
 
   function syncLogMeta(visibleCount) {
+    const counts = Object.fromEntries(SEVERITY.map(level => [level, 0]));
+    for (const item of logItems) counts[item.lvl] = (counts[item.lvl] || 0) + 1;
     for (const level of SEVERITY) {
-      const count = level === "INFO" ? logItems.length : logItems.filter(item => item.lvl === level).length;
+      const count = level === "INFO" ? logItems.length : counts[level];
+      const atOrAbove = SEVERITY.slice(SEVERITY.indexOf(level)).reduce((total, itemLevel) => total + counts[itemLevel], 0);
       const button = $(`[data-min-level="${level}"]`);
       const el = $(`[data-count="${level}"]`);
       if (el) el.textContent = String(count);
       if (button) {
         button.classList.toggle("active", minLogLevel === level);
         button.disabled = count === 0 && level !== "ERROR";
-        button.title = t("severity_tip", t(LEVEL_TEXT_KEYS[level]), countAtOrAbove(level));
+        button.title = t("severity_tip", t(LEVEL_TEXT_KEYS[level]), atOrAbove);
       }
     }
     const foot = $("#log-foot");
@@ -1186,16 +1245,24 @@
 
   function appendLogLine(line) {
     if (selectedLogFile) return;
-    const item = parseLog(line);
-    logItems.push(item);
+    pendingLogItems.push(parseLog(line));
+    if (!logFlushFrame) logFlushFrame = requestAnimationFrame(flushLogLines);
+  }
+
+  function flushLogLines() {
+    logFlushFrame = 0;
+    const pending = pendingLogItems.splice(0);
+    if (!pending.length || selectedLogFile) return;
+    logItems.push(...pending);
     if (logItems.length > 800) logItems.splice(0, logItems.length - 800);
     const box = $("#log-box");
-    if (!box) return;
-    if (logMatches(item)) {
+    if (!box || page !== "log") return;
+    const visible = pending.filter(logMatches);
+    if (visible.length) {
       const keep = isNearBottom(box);
       const empty = box.querySelector(".log-empty");
       if (empty) empty.remove();
-      box.insertAdjacentHTML("beforeend", logRowHtml(item));
+      box.insertAdjacentHTML("beforeend", visible.map(logRowHtml).join(""));
       while (box.children.length > 800) box.firstElementChild.remove();
       if (keep) box.scrollTop = box.scrollHeight;
     }
@@ -1212,6 +1279,7 @@
   function syncLogFileSelector() {
     const select = $("#log-file");
     if (!select) return;
+    if (selectedLogFile && !logFiles.includes(selectedLogFile)) selectedLogFile = "";
     const currentName = logFiles[0] || "";
     select.innerHTML = `<option value="">${t("today_log")}${currentName ? ` · ${esc(currentName)}` : ""}</option>`
       + logFiles.slice(1).map(name => `<option value="${esc(name)}">${esc(name.replace(/^.*\.(\d{4}-\d{2}-\d{2})$/, "$1"))}</option>`).join("");
@@ -1374,11 +1442,6 @@
       buildShell();
       syncHome();
       syncSettings();
-      if (page === "log") {
-        $("#log-search").value = logQuery;
-        $("#log-search-clear").classList.toggle("show", !!logQuery);
-        renderLogList({ stickBottom: true });
-      }
       setPage(page);
       bridge.updateSettings(JSON.stringify({ ui_language: next })).then(flashSaved).catch(() => {});
     });
@@ -1656,7 +1719,6 @@
   // 导航与状态应用
   // ═════════════════════════════════════════════════════════
   function setPage(next) {
-    const changedPage = page !== next;
     if (page === "log" && next !== "log") selectedLogFile = "";
     page = next;
     for (const btn of $$(".nav-btn")) btn.classList.toggle("active", btn.dataset.nav === next);
@@ -1664,7 +1726,6 @@
       $(`#page-${id}`).classList.toggle("hidden", id !== next);
     }
     if (next === "log") {
-      if (changedPage) selectedLogFile = "";
       loadLogFiles().finally(loadLogs);
     }
     if (next === "home") syncHome();
@@ -1678,9 +1739,7 @@
     const prevOn = state?.speaker?.on;
     state = next;
     if (powerPending && prevOn !== undefined && state.speaker && state.speaker.on !== prevOn) {
-      powerPending = false;
-      powerPendingTarget = null;
-      clearTimeout(powerPendingTimer);
+      clearPowerPending();
     }
     syncHome();
     syncSettings();
@@ -1705,11 +1764,19 @@
       syncDialog();
       return;
     }
+    const wakeStarted = msg.title === "Speaker action" && /^Wake is running\.$/.test(msg.detail || "");
     const wakeNeedsLiveState = msg.title === "Wake" && msg.level === "success";
+    if (powerPending && powerPendingTarget && wakeStarted) {
+      powerPendingStage = "confirming";
+      syncHome();
+    }
+    if (powerPending && powerPendingTarget && wakeNeedsLiveState) {
+      powerPendingStage = "confirming";
+      armPowerPendingTimeout(3000);
+      syncHome();
+    }
     if (msg.kind === "toast" && POWER_ACTION_TITLES.has(msg.title) && powerPending && !wakeNeedsLiveState) {
-      powerPending = false;
-      powerPendingTarget = null;
-      clearTimeout(powerPendingTimer);
+      clearPowerPending();
       syncHome();
     }
     toast(msg.level, msg.title, msg.detail);
@@ -1723,7 +1790,7 @@
     if (btn) setPage(btn.dataset.nav);
   });
 
-  let updateCursor = 0, polling = false;
+  let updateCursor = 0, polling = false, updatePollTimer = null;
   async function pollUpdates() {
     if (polling) return;
     polling = true;
@@ -1738,6 +1805,12 @@
     } catch (_error) { /* 下一轮重试 */ }
     finally { polling = false; }
   }
+  function scheduleUpdatePolling() {
+    clearInterval(updatePollTimer);
+    const interval = document.hidden ? 2000 : 400;
+    updatePollTimer = setInterval(pollUpdates, interval);
+    pollUpdates();
+  }
 
   bridge.initialState().then(value => {
     state = value;
@@ -1750,7 +1823,8 @@
     document.addEventListener("keydown", e => {
       if (e.key === "Escape" && dlg) closeSpeakerDialog();
     });
-    setInterval(pollUpdates, 400);
+    document.addEventListener("visibilitychange", scheduleUpdatePolling);
+    scheduleUpdatePolling();
   }).catch(() => {
     $("#main").innerHTML = `<div class="boot-error"><h1>${t("controller_unavailable")}</h1><p>${t("controller_unavailable_desc")}</p></div>`;
   });

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import Mock, patch
 
-from kef_app.ui.web_bridge import _EVENTS, _wake_is_confirmed
+from kef_app.ui.web_bridge import WebControllerBridge, _EVENTS, _wake_is_confirmed
 
 
 class WebBridgeTests(unittest.TestCase):
@@ -17,6 +18,34 @@ class WebBridgeTests(unittest.TestCase):
 
         self.assertEqual(label, "Lid Close")
         self.assertEqual(setting, "standby_on_lid_close")
+
+    def test_ui_visibility_stops_background_speaker_polling(self) -> None:
+        bridge = WebControllerBridge.__new__(WebControllerBridge)
+        bridge._ui_visible = False
+        bridge._poll_timer = Mock()
+        bridge._poll_speaker_state = Mock()
+
+        bridge.set_ui_visible(False)
+        bridge._poll_timer.stop.assert_not_called()
+
+        bridge.set_ui_visible(True)
+        bridge._poll_timer.start.assert_called_once_with()
+        bridge._poll_speaker_state.assert_called_once_with(force=True)
+
+        bridge.set_ui_visible(False)
+        bridge._poll_timer.stop.assert_called_once_with()
+
+    def test_health_exposes_recent_failure_without_retaining_stale_errors(self) -> None:
+        bridge = WebControllerBridge.__new__(WebControllerBridge)
+        bridge._last_failure = ("timed out", 100.0)
+
+        with patch("kef_app.ui.web_bridge.time.monotonic", return_value=160.0):
+            self.assertEqual(
+                bridge._recent_failure(),
+                {"detail": "timed out", "age_s": 60.0},
+            )
+        with patch("kef_app.ui.web_bridge.time.monotonic", return_value=401.0):
+            self.assertIsNone(bridge._recent_failure())
 
 
 if __name__ == "__main__":

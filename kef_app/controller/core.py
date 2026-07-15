@@ -90,6 +90,7 @@ class KefPowerController(
         self._prewarmed_standby_last_ip = ""
         self._prewarmed_standby_last_ok_mono = 0.0
         self._prewarmed_standby_failures = 0
+        self._prewarmed_standby_last_error = ""
         self._prewarmed_standby_ready_logged = False
         self._speaker_event_poll_failures = 0
         # UI polling retries quickly so a speaker that just came back online
