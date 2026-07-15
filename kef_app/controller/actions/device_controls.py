@@ -276,6 +276,14 @@ class ControllerDeviceControlsMixin:
             step="input_source",
             reader=lambda speaker: normalize_input_source(speaker.source),
         )
+        # Some KEF firmware briefly keeps reporting status=powerOn after a
+        # successful shutdown request while source has already become standby.
+        # Treat the source as authoritative during that transition so the UI
+        # does not remain in a stale "On" state until a later poll.
+        if input_source == "standby":
+            speaker_on = False
+        elif speaker_on is None and input_ok and input_source:
+            speaker_on = True
         volume, volume_ok = self._read_ui_value(
             reason,
             trigger,

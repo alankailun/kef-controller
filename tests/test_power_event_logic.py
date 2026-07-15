@@ -1898,6 +1898,30 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertEqual(result, ("wifi", 31, True))
         speaker.poll_speaker.assert_called_once_with(timeout=7)
 
+    def test_external_ui_poll_treats_standby_source_as_powered_off(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        controller._read_ui_value = Mock(
+            side_effect=[(True, True), ("standby", True), (None, False)]
+        )
+        controller._mark_identity_probe_success = Mock(return_value=False)
+
+        result = controller.poll_external_ui_state("unit_test", "unit_test")
+
+        self.assertEqual(result, ("standby", None, False))
+        self.assertFalse(controller._speaker_runtime_power_on)
+
+    def test_external_ui_poll_infers_on_from_live_input_when_status_is_unknown(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        controller._read_ui_value = Mock(
+            side_effect=[(None, False), ("wifi", True), (31, True)]
+        )
+        controller._mark_identity_probe_success = Mock(return_value=False)
+
+        result = controller.poll_external_ui_state("unit_test", "unit_test")
+
+        self.assertEqual(result, ("wifi", 31, True))
+        self.assertTrue(controller._speaker_runtime_power_on)
+
     def test_speaker_event_poll_ignores_non_ui_events(self):
         controller = self.make_controller(kef_ip="192.168.1.10")
         speaker = Mock()

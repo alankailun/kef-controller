@@ -36,6 +36,18 @@ class UserConfigStoreTests(unittest.TestCase):
         ]
         self.assertEqual(missing, [])
 
+    def test_ui_language_round_trips_through_user_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_config = self.make_config(temp_dir)
+            data = UserConfigStore(base_config)._to_user_dict(base_config)
+            data["general"]["ui_language"] = "en"
+            with open(base_config.config_file, "w", encoding="utf-8") as handle:
+                json.dump(data, handle)
+
+            loaded = UserConfigStore(base_config).load_or_create()
+
+            self.assertEqual(loaded.ui_language, "en")
+
     def test_discovery_tuning_fields_round_trip_through_user_config(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base_config = self.make_config(temp_dir)

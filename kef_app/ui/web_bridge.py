@@ -328,14 +328,21 @@ class WebControllerBridge(QObject):
 
     @Slot(result=str)
     def logs(self) -> str:
-        # The log file is dominated by hidden polling lines; read a deeper tail
-        # so the visible history stays useful after filtering.
+        # v1.6.3 merged the file tail with the in-memory UI ring. Keep that
+        # model, but filter hidden poll noise *before* applying the display cap;
+        # otherwise thousands of web_ui_poll lines displace PROCESS_START and
+        # the startup configuration banner before the UI ever sees them.
+        file_lines = [
+            line
+            for line in read_log_tail_lines(self._config.log_file, max_lines=8000)
+            if not should_hide_from_ui_log(line)
+        ]
         lines = merge_recent_lines(
-            read_log_tail_lines(self._config.log_file, max_lines=1200),
+            file_lines,
             self._log_handler.snapshot_lines(),
-            max_lines=500,
+            max_lines=800,
         )
-        return self._encode([line for line in lines if not should_hide_from_ui_log(line)])
+        return self._encode(lines)
 
     @Slot()
     def openLogFolder(self) -> None:
@@ -461,10 +468,19 @@ class WebControllerBridge(QObject):
 
     def _on_power_action_finished(self, action: str, _reason: str, success: bool, outcome: str) -> None:
         elapsed = int((time.monotonic() - self._last_action_started) * 1000) if self._last_action_started else 0
+        normalized_action = str(action or "").upper()
+        if success and normalized_action == "WAKE":
+            self._speaker_on = True
+            self._input = normalize_input_source(self._config.kef_input)
+        elif success and normalized_action.endswith("STANDBY"):
+            self._speaker_on = False
+            self._input = "standby"
+        # Publish the confirmed action result before the slower live poll. The
+        # poll still reconciles later external changes from the speaker.
+        self.publish_state()
         self._notify("success" if success else "error", action.replace("_", " ").title(),
                      f"{outcome or ('Completed' if success else 'Failed')} · {elapsed} ms")
         self._poll_speaker_state(force=True)
-        self.publish_state()
 
     def _on_log_line(self, line: str) -> None:
         self.log_line.emit(line)

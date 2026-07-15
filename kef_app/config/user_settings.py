@@ -5,6 +5,11 @@ from typing import Any
 
 
 @dataclass(slots=True)
+class GeneralSettings:
+    ui_language: str = "zh"
+
+
+@dataclass(slots=True)
 class DeviceSettings:
     backend_name: str = "w2"
     kef_ip: str = ""
@@ -101,6 +106,7 @@ def _section_field_paths(section_name: str, section_type: type) -> dict[str, tup
 
 
 USER_SETTINGS_FIELD_PATHS: dict[str, tuple[str, str]] = {
+    **_section_field_paths("general", GeneralSettings),
     **_section_field_paths("device", DeviceSettings),
     **_section_field_paths("discovery", DiscoverySettings),
     **_section_field_paths("startup", StartupSettings),
@@ -113,6 +119,7 @@ USER_SETTINGS_FIELD_PATHS: dict[str, tuple[str, str]] = {
 }
 USER_SETTINGS_FLAT_FIELD_NAMES = tuple(USER_SETTINGS_FIELD_PATHS)
 USER_SETTINGS_SECTION_NAMES = (
+    "general",
     "device",
     "discovery",
     "startup",
@@ -128,6 +135,7 @@ USER_SETTINGS_FIELD_NAMES = USER_SETTINGS_SECTION_NAMES + USER_SETTINGS_FLAT_FIE
 
 @dataclass(slots=True)
 class UserSettings:
+    general: GeneralSettings = field(default_factory=GeneralSettings)
     device: DeviceSettings = field(default_factory=DeviceSettings)
     discovery: DiscoverySettings = field(default_factory=DiscoverySettings)
     startup: StartupSettings = field(default_factory=StartupSettings)

@@ -49,6 +49,13 @@ def _coerce_startup_mode(value: Any) -> str:
     return mode
 
 
+def _coerce_ui_language(value: Any) -> str:
+    language = str(value or "zh").strip().lower()
+    if language not in {"zh", "en"}:
+        raise ValueError(f"unsupported UI language: {language!r}")
+    return language
+
+
 def _coerce_string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         raise TypeError("expected a list")
@@ -119,6 +126,7 @@ def _coerce_input_source(value: Any) -> str:
 class UserConfigStore:
     USER_EDITABLE_FIELDS = _USER_SETTINGS_FIELD_NAMES
     FIELD_COERCERS: dict[str, Callable[[Any], Any]] = {
+        "ui_language": _coerce_ui_language,
         "backend_name": _coerce_string,
         "kef_ip": _coerce_string,
         "kef_mac": lambda value: normalize_mac(_coerce_string(value)),

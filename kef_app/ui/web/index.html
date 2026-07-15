@@ -59,7 +59,9 @@
       flex: 1; min-width: 0; background: var(--panel); overflow-y: auto;
       border: 1px solid var(--line); border-right: 0; border-bottom: 0; border-top-left-radius: 8px;
     }
-    .page { padding: 24px 28px 32px; max-width: 720px; }
+    .page {
+      width: 100%; min-height: 100%; padding: clamp(22px, 2.6vw, 36px) clamp(24px, 3.2vw, 48px) 36px;
+    }
     .page.hidden { display: none; }
     h1 { margin: 0; font-size: 24px; font-weight: 600; flex: 1; }
     .page-head { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
@@ -80,10 +82,20 @@
     }
     .power-switch.on { background: var(--teal); border-color: var(--teal); color: #fff; }
     .power-switch.pending { opacity: .65; cursor: wait; }
+    .standby-note {
+      display: flex; align-items: center; gap: 8px; margin: -2px 0 12px; padding: 9px 12px;
+      color: #475569; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 12.5px;
+    }
+    .standby-note.hidden { display: none; }
+    @media (prefers-color-scheme: dark) {
+      .standby-note { color: #cbd5e1; background: #27313b; border-color: #3b4754; }
+    }
 
     /* ── 卡片 ── */
     .card { padding: 16px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 12px; }
-    .card.dim { opacity: .45; pointer-events: none; }
+    .card.dim { background: var(--panel-flat); }
+    .card.dim .vol-row, .card.dim .input-grid { opacity: .52; }
+    .card.dim .card-label, .card.dim .vol-display { opacity: .78; }
     .card-label { font-size: 12px; font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; }
 
     /* ── 音量 ── */
@@ -106,6 +118,7 @@
       border-radius: 7px; color: var(--muted); display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
     .nudge-btn:hover:not(:disabled), .vol-icon-btn:hover:not(:disabled) { border-color: var(--teal); }
+    .nudge-btn:disabled, .vol-icon-btn:disabled, .vol-display:disabled, .slider:disabled { cursor: default; }
     .slider-wrap { flex: 1; min-width: 0; }
     .slider { --volume: 0%; appearance: none; width: 100%; height: 26px; margin: 0; background: transparent; cursor: pointer; }
     .slider::-webkit-slider-runnable-track {
@@ -132,7 +145,7 @@
     .mute-note.hidden { display: none; }
 
     /* ── 输入源 ── */
-    .input-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 10px; }
+    .input-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 10px; }
     .input-btn {
       display: flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 8px;
       border: 1px solid var(--btn-line-soft); background: var(--panel); border-radius: 8px; font-size: 13px;
@@ -169,19 +182,24 @@
     }
     .search-box:focus-within { border-color: var(--teal); }
     .search-box input { flex: 1; border: 0; outline: none; font-size: 13.5px; background: transparent; color: var(--ink); }
-    .lvl-filters { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 10px; }
-    .lvl-btn {
-      padding: 4px 10px; border: 1px solid var(--btn-line-soft); background: var(--panel); border-radius: 999px;
+    .log-toolbar { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+    .severity-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .severity-hint { font-size: 12px; color: var(--faint); }
+    .severity-track { display: flex; gap: 5px; flex-wrap: wrap; }
+    .severity-btn {
+      padding: 4px 9px; border: 1px solid var(--btn-line-soft); background: var(--panel); border-radius: 999px;
       font: 600 11.5px ui-monospace, Consolas, monospace; color: var(--ghost);
     }
-    .lvl-btn.active.ERROR { color: #fca5a5; border-color: #7f1d1d; background: #450a0a; }
-    .lvl-btn.active.WARN  { color: #fcd34d; border-color: #78350f; background: #451a03; }
-    .lvl-btn.active.EVENT { color: #c4b5fd; border-color: #4c1d95; background: #2e1065; }
-    .lvl-btn.active.STATE { color: #67e8f9; border-color: #155e75; background: #083344; }
-    .lvl-btn.active.STEP  { color: #86efac; border-color: #14532d; background: #052e16; }
-    .lvl-btn.active.INFO  { color: #cbd5e1; border-color: #334155; background: #1e293b; }
+    .severity-btn:hover:not(:disabled) { border-color: var(--teal); color: var(--ink); }
+    .severity-btn:disabled { opacity: .38; cursor: default; }
+    .severity-btn.active.ERROR { color: #fca5a5; border-color: #7f1d1d; background: #450a0a; }
+    .severity-btn.active.WARN  { color: #fcd34d; border-color: #78350f; background: #451a03; }
+    .severity-btn.active.EVENT { color: #c4b5fd; border-color: #4c1d95; background: #2e1065; }
+    .severity-btn.active.STATE { color: #67e8f9; border-color: #155e75; background: #083344; }
+    .severity-btn.active.STEP  { color: #86efac; border-color: #14532d; background: #052e16; }
+    .severity-btn.active.INFO  { color: #cbd5e1; border-color: #334155; background: #1e293b; }
     .log-box {
-      background: #0f172a; border-radius: 10px; padding: 12px; height: calc(100vh - 262px); min-height: 320px;
+      background: #0f172a; border-radius: 10px; padding: 12px; height: calc(100vh - 286px); min-height: 320px;
       overflow-y: auto; font: 12px/1.65 ui-monospace, "Cascadia Mono", Consolas, monospace;
       overscroll-behavior: contain; scrollbar-color: #475569 transparent;
     }
@@ -200,6 +218,7 @@
     .log-lvl.STEP  { color: #86efac; border-color: #14532d; background: #052e16; }
     .log-lvl.INFO  { color: #cbd5e1; border-color: #334155; background: #1e293b; }
     .log-txt { color: #cbd5e1; word-break: break-all; white-space: pre-wrap; }
+    .log-txt mark { color: #fef3c7; background: #854d0e; border-radius: 2px; padding: 0 1px; }
     .log-empty { padding: 30px; text-align: center; color: #475569; }
     .log-foot { margin: 8px 2px 0; font-size: 12px; color: var(--ghost); }
 
@@ -229,6 +248,9 @@
     }
     .primary-btn:hover:not(:disabled) { background: #0b7f74; }
     .primary-btn:disabled { opacity: .6; }
+    .lang-switch { display: flex; padding: 3px; border: 1px solid var(--btn-line); border-radius: 7px; background: var(--panel-flat); }
+    .lang-btn { border: 0; background: transparent; border-radius: 5px; padding: 5px 10px; font-size: 12.5px; color: var(--muted); }
+    .lang-btn.active { background: var(--panel); color: var(--teal-ink); box-shadow: 0 1px 3px rgba(0,0,0,.12); font-weight: 600; }
     /* ── 选择扬声器弹窗 ── */
     @keyframes fade-in { from { opacity: 0; } }
     @keyframes pop-in { from { opacity: 0; transform: scale(.97) translateY(6px); } }
@@ -408,18 +430,47 @@
     .switch::before { content: ""; width: 16px; height: 16px; border-radius: 50%; background: #fff; position: absolute; left: 3px; top: 3px; transition: .18s; }
     .switch:checked::before { left: 19px; }
 
-    /* ── Toast ── */
-    .toast-area { position: fixed; z-index: 9; top: 18px; right: 22px; display: grid; gap: 8px; width: min(340px, calc(100vw - 44px)); }
-    .toast {
-      padding: 11px 14px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line);
-      box-shadow: 0 12px 34px rgba(0,0,0,.16); font-size: 12.5px;
+    /* ── Toast：与参考稿一致固定在右下角，同频道只保留最新一条 ── */
+    .toast-area {
+      position: fixed; z-index: 200; right: 20px; bottom: 20px; display: flex; flex-direction: column;
+      align-items: flex-end; gap: 8px; width: min(340px, calc(100vw - 40px)); pointer-events: none;
     }
-    .toast b { display: block; margin-bottom: 2px; font-size: 13px; }
-    .toast small { color: var(--faint); }
-    .toast.success { border-left: 3px solid #10b981; }
-    .toast.error { border-left: 3px solid var(--danger); }
-    .toast.warning { border-left: 3px solid #d97706; }
-    .toast.info { border-left: 3px solid var(--teal); }
+    .toast {
+      width: fit-content; min-width: 220px; max-width: 320px; display: flex; align-items: flex-start; gap: 10px;
+      padding: 11px 12px 11px 13px; border-radius: 9px; background: var(--panel); border: 1px solid var(--line);
+      box-shadow: 0 8px 28px rgba(15,23,42,.16); font-size: 12.5px; pointer-events: auto;
+      animation: toast-in .2s cubic-bezier(.2,.8,.2,1);
+    }
+    .toast-icon { width: 18px; height: 18px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+    .toast-body { flex: 1; min-width: 0; }
+    .toast b { display: block; margin-bottom: 2px; font-size: 13.5px; }
+    .toast small { color: var(--faint); font-size: 12px; }
+    .toast-close { border: 0; background: transparent; color: var(--ghost); padding: 0 2px; font-size: 13px; line-height: 1; }
+    .toast-close:hover { color: var(--ink); }
+    .toast.kind-success { border-left: 3px solid var(--teal); }
+    .toast.kind-success .toast-icon { color: var(--teal); }
+    .toast.kind-standby { border-left: 3px solid #64748b; }
+    .toast.kind-standby .toast-icon { color: #64748b; }
+    .toast.kind-volume { border-left: 3px solid var(--teal); }
+    .toast.kind-volume .toast-icon { color: var(--teal); }
+    .toast.kind-mute, .toast.kind-error { border-left: 3px solid var(--danger); }
+    .toast.kind-mute .toast-icon, .toast.kind-error .toast-icon { color: var(--danger); }
+    .toast.kind-warning { border-left: 3px solid #d97706; }
+    .toast.kind-warning .toast-icon { color: #d97706; }
+    .toast.kind-info { border-left: 3px solid #94a3b8; }
+    .toast.kind-info .toast-icon { color: #64748b; }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+
+    @media (max-width: 980px) {
+      nav { width: 132px; }
+      .page { padding: 22px 24px 32px; }
+      .input-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .matrix { overflow-x: auto; }
+      .mx-head, .mx-row { min-width: 650px; }
+    }
+    @media (max-height: 700px) {
+      .log-box { height: calc(100vh - 260px); min-height: 280px; }
+    }
 
     .boot-error { padding: 40px; color: var(--muted); }
   </style>
@@ -444,6 +495,45 @@
   const $ = (sel, root) => (root || document).querySelector(sel);
   const $$ = (sel, root) => [...(root || document).querySelectorAll(sel)];
   const esc = s => String(s ?? "").replace(/[&<>'"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c]));
+
+  // UI 文案与 JSX 保持同一套中英文语义；语言本身由 config.json 持久化。
+  const TEXT = {
+    nav_home: ["主页", "Home"], nav_log: ["日志", "Log"], nav_settings: ["设置", "Settings"],
+    volume: ["音量", "Volume"], direct_volume: ["点击直接输入音量", "Click to enter volume"],
+    mute: ["静音", "Mute"], unmute: ["恢复音量", "Restore volume"], mute_note: ["已静音，点击喇叭图标恢复", "Muted — click the speaker icon to restore"],
+    input_source: ["输入源", "Input Source"], device_info: ["设备信息", "Device Info"],
+    ip_address: ["IP 地址", "IP Address"], mac_address: ["MAC 地址", "MAC Address"], model: ["型号", "Model"], firmware: ["固件", "Firmware"],
+    connected_on: ["已连接 · 开机", "Connected · On"], connected_standby: ["已连接 · 待机", "Connected · Standby"], disconnected: ["未连接", "Disconnected"],
+    no_device: ["未找到设备", "No device found"], power_on: ["开机", "On"], power_standby: ["待机", "Standby"], switching: ["切换中", "Switching"],
+    waking: ["正在唤醒", "Waking"], entering_standby: ["正在待机", "Entering standby"],
+    standby_help: ["扬声器处于待机状态。唤醒后即可调节音量和输入源。", "The speaker is in standby. Wake it to control volume and input."],
+    app_log: ["应用日志", "Application Log"], refresh: ["刷新", "Reload"], open_folder: ["打开文件夹", "Open Folder"],
+    search_log: ["搜索日志…", "Search logs…"], clear_search: ["清除搜索", "Clear search"], min_level: ["最低级别", "Min level"],
+    reset_filters: ["重置筛选", "Reset filters"], no_match: ["没有匹配「$」的日志行", "No lines matching \"$\""], no_level: ["该级别下没有日志", "No logs at this level"],
+    showing: ["显示", "Showing"], lines: ["行", "lines"], hidden_below: ["已隐藏 $ 以下", "hiding below $"], back_to_bottom: ["回到底部", "Back to bottom"],
+    level_info: ["全部", "All"], level_step: ["步骤", "Step"], level_state: ["状态", "State"], level_event: ["事件", "Event"], level_warn: ["警告", "Warn"], level_error: ["错误", "Error"],
+    severity_tip: ["$ 及以上，共 $ 行", "$ and above · $ lines"],
+    saved: ["已保存", "Saved"], general: ["通用", "General"], language: ["语言", "Language"], language_desc: ["界面显示语言", "Interface display language"],
+    speaker: ["扬声器", "Speaker"], default_input: ["默认输入源", "Default Input Source"], default_input_desc: ["App 唤醒扬声器时自动切到这个输入", "Selected whenever the app wakes the speaker"],
+    target_speaker: ["目标扬声器", "Target Speaker"], target_desc: ["MAC 是身份标识，IP 只是当前地址", "The MAC is the identity; the IP is just the current address"], select_speaker: ["选择扬声器", "Select Speaker"],
+    power_behavior: ["电源行为", "Power Behavior"], power_behavior_desc: ["哪些电脑事件会唤醒扬声器、哪些会让它待机。", "Which PC events wake the speaker or put it in standby."],
+    enabled_rules: ["已启用 $ / $ 条规则。", "$ / $ rules enabled."], preset: ["预设", "Preset"], custom: ["自定义", "Custom"],
+    simulate_events: ["模拟事件", "Simulate"], exit_simulate: ["退出模拟", "Exit simulation"], restore_recommended: ["恢复推荐", "Restore recommended"],
+    test_banner: ["模拟模式已开启。点任意一行的模拟按钮，会按该行当前的规则执行一次真实动作。规则关着就不会有动作，这本身就是诊断结果。", "Simulation is on. Each button runs the current rule for that row. A disabled rule does nothing, which is itself a useful diagnostic."],
+    trigger_event: ["触发事件", "Trigger Event"], wake: ["唤醒", "Wake"], standby: ["待机", "Standby"], test: ["模拟", "Test"], run_once: ["触发一次", "Run once"], all_off: ["全部关闭", "Turn all off"], all_on: ["全部开启", "Turn all on"], not_applicable: ["不适用", "N/A"],
+    screen_warning: ["屏幕熄灭会让扬声器待机，但屏幕点亮不会唤醒它。你需要手动开机，或同时勾上「屏幕开关 · 唤醒」。", "Display-off puts the speaker in standby, but display-on will not wake it. Turn it on manually, or also enable Display Power · Wake."],
+    table_foot: ["点击列标题可整列开关。改动即时生效。", "Click a column header to toggle the whole column. Changes save instantly."], table_foot_test: ["模拟会真实控制扬声器，当前状态见主页。", "Simulations control the real speaker; see current state on Home."],
+    windows_startup: ["Windows 启动", "Windows Startup"], start_on_login: ["登录时自动运行", "Run when I sign in"], start_on_login_desc: ["创建或移除所选的 Windows 开机自启注册", "Create or remove the selected Windows startup registration"], startup_method: ["注册方式", "Registration method"], startup_method_desc: ["任务计划可绕过 UAC 提示；注册表最简单", "Task Scheduler can avoid UAC prompts; Registry Run is simplest"], startup_off: ["关闭", "Off"], startup_task: ["任务计划程序", "Task Scheduler"], startup_registry: ["注册表 Run", "Registry Run"],
+    dlg_sub: ["选择这个 App 要控制的 KEF 扬声器。", "Choose the KEF speaker this app should control."], scanning: ["正在扫描局域网…", "Scanning your network…"], checked_devices: ["已检查 $ 台设备", "checked $ devices"], scan_complete: ["扫描完成，找到 $ 台。", "Scan complete, found $."], current_included: ["已包含你当前的扬声器。", "Your current speaker is included."], rescan: ["重新扫描", "Rescan"], no_speaker: ["没有扫描到扬声器", "No speakers found"], manual_link: ["没找到？手动输入 IP 地址", "Not listed? Enter an IP manually"], manual_entry: ["手动指定", "Manual entry"], ip_placeholder: ["IP 地址，如 10.0.0.222", "IP address, e.g. 10.0.0.222"], mac_placeholder: ["MAC（可选）", "MAC (optional)"], cancel: ["取消", "Cancel"], apply: ["应用", "Apply"], close: ["关闭", "Close"], in_use: ["使用中", "In use"], select: ["选择", "Select"], scan_failed: ["扫描请求失败，请重试。", "Scan request failed. Please retry."],
+    volume_updated: ["音量 $", "Volume $"], muted: ["已静音", "Muted"], input_changed: ["已切换到 $", "Switched to $"], settings_saved: ["设置已保存", "Settings saved"], controller_unavailable: ["控制器不可用", "Controller unavailable"], controller_unavailable_desc: ["本地控制接口未能启动，请重启应用。", "The local control interface could not start. Please restart the app."],
+  };
+  let uiLanguage = "zh";
+  const t = (key, ...args) => {
+    let value = (TEXT[key] || [key, key])[uiLanguage === "en" ? 1 : 0];
+    for (const arg of args) value = value.replace("$", String(arg));
+    return value;
+  };
+  const localized = value => Array.isArray(value) ? value[uiLanguage === "en" ? 1 : 0] : value;
 
   const ICONS = {
     home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.7V21h14V9.7"/>',
@@ -471,6 +561,7 @@
     folder: '<path d="M3 7.5h6l2 2h10v8.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 9.5V6a2 2 0 0 1 2-2h4l2 2h5"/>',
     rotateCcw: '<path d="M3 3v5h5"/><path d="M3.5 8A9 9 0 1 1 3 12"/>',
     alert: '<circle cx="12" cy="12" r="9"/><path d="M12 8v4.5m0 3.2v.1"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8v.1"/>',
     loader: '<path d="M12 3a9 9 0 1 1-9 9"/>',
     wifi: '<path d="M3.5 9a13 13 0 0 1 17 0"/><path d="M6.5 12.5a8.5 8.5 0 0 1 11 0"/><path d="M9.7 16a3.5 3.5 0 0 1 4.6 0"/><circle cx="12" cy="19" r=".7" fill="currentColor" stroke="none"/>',
     bluetooth: '<path d="m8 7 8 10V3L8 13l8 8V7z"/>',
@@ -484,40 +575,40 @@
     `<svg class="${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
 
   const INPUT_META = {
-    wifi: "Wi-Fi", bluetooth: "蓝牙", tv: "TV (HDMI)", optical: "光纤",
-    coaxial: "同轴", analog: "模拟", usb: "USB",
+    wifi: ["Wi-Fi", "Wi-Fi"], bluetooth: ["蓝牙", "Bluetooth"], tv: ["TV (HDMI)", "TV (HDMI)"], optical: ["光纤", "Optical"],
+    coaxial: ["同轴", "Coaxial"], analog: ["模拟", "Analog"], usb: ["USB", "USB"],
   };
   const INPUT_ORDER = ["wifi", "bluetooth", "tv", "optical", "coaxial", "analog", "usb"];
-  const inputLabel = v => INPUT_META[v] || v;
+  const inputLabel = v => localized(INPUT_META[v] || [v, v]);
 
   // 电源行为矩阵：每行对应后端 config 字段与可模拟的事件
   const EVENT_ROWS = [
-    { id: "app_start", label: "App 启动", desc: "打开 KEF Controller 时", icon: "play",
+    { id: "app_start", label: ["App 启动", "App Startup"], desc: ["打开 KEF Controller 时", "When KEF Controller opens"], icon: "play",
       wake: "wake_on_startup", standby: null,
-      tests: [{ key: "startup", label: "启动", col: "wake" }] },
-    { id: "screen", label: "屏幕开关", desc: "显示器点亮 / 熄灭时", icon: "monitor",
+      tests: [{ key: "startup", label: ["启动", "Start"], col: "wake" }] },
+    { id: "screen", label: ["屏幕开关", "Display Power"], desc: ["显示器点亮 / 熄灭时", "When the display turns on / off"], icon: "monitor",
       wake: "wake_on_display_on", standby: "standby_on_display_off",
-      tests: [{ key: "display-off", label: "熄屏", col: "standby" }, { key: "display-on", label: "亮屏", col: "wake" }] },
-    { id: "lock", label: "Windows 锁屏", desc: "锁定 / 解锁时", icon: "lock",
+      tests: [{ key: "display-off", label: ["熄屏", "Off"], col: "standby" }, { key: "display-on", label: ["亮屏", "On"], col: "wake" }] },
+    { id: "lock", label: ["Windows 锁屏", "Windows Lock"], desc: ["锁定 / 解锁时", "When Windows locks / unlocks"], icon: "lock",
       wake: "wake_on_unlock_only", standby: "standby_on_lock",
-      tests: [{ key: "lock", label: "锁定", col: "standby" }, { key: "unlock", label: "解锁", col: "wake" }] },
-    { id: "sleep", label: "Windows 睡眠", desc: "进入睡眠时", icon: "moon",
+      tests: [{ key: "lock", label: ["锁定", "Lock"], col: "standby" }, { key: "unlock", label: ["解锁", "Unlock"], col: "wake" }] },
+    { id: "sleep", label: ["Windows 睡眠", "Windows Sleep"], desc: ["进入睡眠时", "When Windows sleeps"], icon: "moon",
       wake: null, standby: "standby_on_sleep",
-      tests: [{ key: "sleep", label: "睡眠", col: "standby" }] },
-    { id: "lid", label: "笔记本合盖", desc: "合上笔记本盖子时", icon: "laptop",
+      tests: [{ key: "sleep", label: ["睡眠", "Sleep"], col: "standby" }] },
+    { id: "lid", label: ["笔记本合盖", "Laptop Lid Close"], desc: ["合上笔记本盖子时", "When the laptop lid closes"], icon: "laptop",
       wake: null, standby: "standby_on_lid_close", tests: [] },
-    { id: "shutdown", label: "Windows 关机", desc: "关机或注销时", icon: "power",
+    { id: "shutdown", label: ["Windows 关机", "Windows Shutdown"], desc: ["关机或注销时", "When Windows shuts down or signs out"], icon: "power",
       wake: null, standby: "endsession_standby_on_shutdown",
-      tests: [{ key: "shutdown", label: "关机", col: "standby" }] },
+      tests: [{ key: "shutdown", label: ["关机", "Shutdown"], col: "standby" }] },
   ];
   const RULE_KEYS = EVENT_ROWS.flatMap(r => [r.wake, r.standby]).filter(Boolean);
   const PRESETS = {
-    recommended: { label: "推荐", desc: "跟随电脑状态自动开关",
+    recommended: { label: ["推荐", "Recommended"], desc: ["跟随电脑状态自动开关", "Follow PC state automatically"],
       values: Object.fromEntries(RULE_KEYS.map(k => [k, true])) },
-    conservative: { label: "保守", desc: "只在睡眠、合盖和关机时待机",
+    conservative: { label: ["保守", "Conservative"], desc: ["只在睡眠、合盖和关机时待机", "Only standby for sleep, lid-close, and shutdown"],
       values: Object.fromEntries(RULE_KEYS.map(k =>
         [k, ["standby_on_sleep", "standby_on_lid_close", "endsession_standby_on_shutdown"].includes(k)])) },
-    manual: { label: "手动", desc: "全部关闭，只手动控制",
+    manual: { label: ["手动", "Manual"], desc: ["全部关闭，只手动控制", "Disable all rules and control manually"],
       values: Object.fromEntries(RULE_KEYS.map(k => [k, false])) },
   };
 
@@ -607,15 +698,17 @@
   let page = "home";
   let muted = false, lastAudible = 40, volumeTimer = null, editingVol = false, draggingVol = false;
   let volumeHoldUntil = 0; // 用户刚改过音量时，短暂忽略远端快照，避免被旧值覆盖
-  let powerPending = false, powerPendingTimer = null;
+  let powerPending = false, powerPendingTarget = null, powerPendingTimer = null;
   let infoOpen = false;
   let testMode = false, runningTest = null;
   let dlg = null; // 选择扬声器弹窗：{ phase: "scanning"|"done", found: [], checked: 0, failed: "" }
   let inputHoldUntil = 0, localInput = null; // 与音量同理：刚点过的输入源短暂优先于远端快照
   let logItems = [], logQuery = "", logSearchTimer = null;
-  const LOG_LEVELS = ["ERROR", "WARN", "EVENT", "STATE", "STEP", "INFO"];
-  const activeLevels = new Set(LOG_LEVELS);
-  let savedFlashTimer = null;
+  const SEVERITY = ["INFO", "STEP", "STATE", "EVENT", "WARN", "ERROR"];
+  const LEVEL_TEXT_KEYS = { INFO: "level_info", STEP: "level_step", STATE: "level_state", EVENT: "level_event", WARN: "level_warn", ERROR: "level_error" };
+  let minLogLevel = "INFO";
+  let savedFlashTimer = null, volumeToastTimer = null;
+  const toastTimers = new Map(), toastNodes = new Map();
 
   const ruleOn = key => {
     if (!state || !key) return false;
@@ -629,12 +722,61 @@
   // ═════════════════════════════════════════════════════════
   // Toast
   // ═════════════════════════════════════════════════════════
-  function toast(level, title, detail) {
-    const el = document.createElement("div");
-    el.className = `toast ${level || "info"}`;
-    el.innerHTML = `<b>${esc(zhTitle(title))}</b><small>${esc(zhDetail(String(detail || "")))}</small>`;
-    $("#toasts").append(el);
-    setTimeout(() => el.remove(), 5200);
+  const localTitle = title => uiLanguage === "zh" ? zhTitle(title) : String(title || "");
+  const localDetail = detail => uiLanguage === "zh" ? zhDetail(String(detail || "")) : String(detail || "");
+  const toastChannel = title => ({
+    "Volume updated": "volume", "Volume update failed": "volume", "Input changed": "input", "Input change failed": "input",
+    "Settings saved": "save", "Settings updated for this session": "save", "Startup settings saved": "save",
+    "Wake": "power", "Standby": "power", "Early Standby": "power", "Endsession Standby": "power",
+  }[title] || "general");
+  const toastKind = (level, title, detail, channel) => {
+    const value = `${title || ""} ${detail || ""}`;
+    if (level === "error") return "error";
+    if (channel === "volume") {
+      const isMute = muted || value.toLowerCase().includes("mute") || value.includes("静音") || /(?:^|\D)0(?:\D|$)/.test(value);
+      return isMute ? "mute" : "volume";
+    }
+    if (channel === "power") return value.toLowerCase().includes("standby") || value.includes("待机") ? "standby" : "success";
+    if (channel === "save" || level === "success") return "success";
+    if (level === "warning") return "warning";
+    return "info";
+  };
+  const toastIcon = kind => ({
+    success: "check", standby: "monitorOff", volume: "volume", mute: "volumeX",
+    error: "alert", warning: "alert", info: "info",
+  }[kind] || "info");
+  function dismissToast(channel) {
+    clearTimeout(toastTimers.get(channel));
+    toastTimers.delete(channel);
+    const node = toastNodes.get(channel);
+    if (node) node.remove();
+    toastNodes.delete(channel);
+  }
+  function toast(level, title, detail = "", channel = toastChannel(title), ttl = 3600) {
+    let el = toastNodes.get(channel);
+    if (!el) {
+      const area = $("#toasts");
+      while (area.children.length >= 3) {
+        const oldest = area.firstElementChild;
+        const oldestChannel = oldest?.dataset.channel;
+        if (oldestChannel) dismissToast(oldestChannel); else oldest?.remove();
+      }
+      el = document.createElement("div");
+      el.dataset.channel = channel;
+      el.innerHTML = `<span class="toast-icon"></span><div class="toast-body"><b></b><small></small></div><button class="toast-close" title="×">×</button>`;
+      el.querySelector(".toast-close").addEventListener("click", () => dismissToast(channel));
+      area.append(el);
+      toastNodes.set(channel, el);
+    }
+    const kind = toastKind(level, title, detail, channel);
+    el.className = `toast ${level || "info"} kind-${kind}`;
+    $(".toast-icon", el).innerHTML = icon(toastIcon(kind), 17);
+    $("b", el).textContent = localTitle(title);
+    const small = $("small", el);
+    small.textContent = localDetail(detail);
+    small.style.display = detail ? "" : "none";
+    clearTimeout(toastTimers.get(channel));
+    toastTimers.set(channel, setTimeout(() => dismissToast(channel), ttl));
   }
   function flashSaved() {
     const el = $("#saved-flash");
@@ -642,13 +784,14 @@
     el.classList.remove("hidden");
     clearTimeout(savedFlashTimer);
     savedFlashTimer = setTimeout(() => el.classList.add("hidden"), 1600);
+    toast("success", t("settings_saved"), "", "save", 2400);
   }
 
   // ═════════════════════════════════════════════════════════
   // 页面骨架（只构建一次，之后定点更新，避免打断滚动/点击）
   // ═════════════════════════════════════════════════════════
   function buildShell() {
-    const navMeta = { home: ["home", "主页"], log: ["log", "日志"], settings: ["settings", "设置"] };
+    const navMeta = { home: ["home", t("nav_home")], log: ["log", t("nav_log")], settings: ["settings", t("nav_settings")] };
     for (const btn of $$(".nav-btn")) {
       const [ic, label] = navMeta[btn.dataset.nav];
       btn.innerHTML = `${icon(ic, 17)}<span>${label}</span>`;
@@ -676,14 +819,16 @@
         <button id="power-btn" class="power-switch" role="switch">${icon("power", 14)}<span>—</span></button>
       </div>
 
+      <div id="standby-note" class="standby-note hidden">${icon("monitorOff", 15)}<span>${t("standby_help")}</span></div>
+
       <section id="vol-card" class="card">
         <div class="vol-head">
-          <span class="card-label">音量</span>
-          <button id="vol-display" class="vol-display" title="点击直接输入音量">—</button>
+          <span class="card-label">${t("volume")}</span>
+          <button id="vol-display" class="vol-display" title="${t("direct_volume")}">—</button>
           <input id="vol-edit" class="vol-edit" style="display:none" inputmode="numeric">
         </div>
         <div class="vol-row">
-          <button id="mute-btn" class="vol-icon-btn" title="静音">${icon("volume", 19)}</button>
+          <button id="mute-btn" class="vol-icon-btn" title="${t("mute")}">${icon("volume", 19)}</button>
           <button id="vol-down" class="nudge-btn" title="音量 −1">${icon("minus", 15)}</button>
           <div class="slider-wrap">
             <input id="vol-slider" class="slider" type="range" min="0" max="100" step="1" value="0">
@@ -691,11 +836,11 @@
           </div>
           <button id="vol-up" class="nudge-btn" title="音量 +1">${icon("plus", 15)}</button>
         </div>
-        <div id="mute-note" class="mute-note hidden">${icon("volumeX", 12)} 已静音，点击喇叭图标恢复</div>
+        <div id="mute-note" class="mute-note hidden">${icon("volumeX", 12)} ${t("mute_note")}</div>
       </section>
 
       <section id="input-card" class="card">
-        <span class="card-label">输入源</span>
+        <span class="card-label">${t("input_source")}</span>
         <div class="input-grid">
           ${inputs.map(x => `
             <button class="input-btn" data-input="${esc(x.value)}">
@@ -707,12 +852,12 @@
       <section class="card-flat">
         <button id="info-head" class="info-head">
           <span id="info-chevron">${icon("chevronRight", 15)}</span>
-          <span class="info-title">设备信息</span>
+          <span class="info-title">${t("device_info")}</span>
           <span id="info-summary" class="info-summary">—</span>
         </button>
         <dl id="info-grid" class="info-grid hidden">
-          ${["IP 地址", "MAC 地址", "型号", "固件"].map((k, i) => `
-            <div class="info-row"><dt>${k}</dt><dd id="info-v${i}">—</dd></div>`).join("")}
+          ${["ip_address", "mac_address", "model", "firmware"].map((k, i) => `
+            <div class="info-row"><dt>${t(k)}</dt><dd id="info-v${i}">—</dd></div>`).join("")}
         </dl>
       </section>`;
   }
@@ -721,10 +866,11 @@
     $("#power-btn").addEventListener("click", () => {
       if (powerPending) return;
       powerPending = true;
+      powerPendingTarget = !Boolean(state?.speaker?.on);
       clearTimeout(powerPendingTimer);
-      powerPendingTimer = setTimeout(() => { powerPending = false; syncHome(); }, 12000);
+      powerPendingTimer = setTimeout(() => { powerPending = false; powerPendingTarget = null; syncHome(); }, 12000);
       syncHome();
-      bridge.togglePower().catch(() => { powerPending = false; syncHome(); });
+      bridge.togglePower().catch(() => { powerPending = false; powerPendingTarget = null; syncHome(); });
     });
 
     const slider = $("#vol-slider");
@@ -798,7 +944,7 @@
     slider.style.setProperty("--volume", `${value}%`);
     $("#vol-display").textContent = String(value);
     $("#mute-btn").innerHTML = icon(value <= 0 ? "volumeX" : "volume", 19);
-    $("#mute-btn").title = value <= 0 ? "恢复音量" : "静音";
+    $("#mute-btn").title = value <= 0 ? t("unmute") : t("mute");
     $("#mute-btn").querySelector("svg").style.color = value <= 0 ? "var(--danger)" : "";
     $("#mute-note").classList.toggle("hidden", !(muted && value <= 0));
     if (value > 0) lastAudible = value;
@@ -810,6 +956,8 @@
     volumeHoldUntil = Date.now() + 2500;
     clearTimeout(volumeTimer);
     volumeTimer = setTimeout(() => bridge.setVolume(value).catch(() => {}), 180);
+    clearTimeout(volumeToastTimer);
+    volumeToastTimer = setTimeout(() => toast("info", t("volume_updated", value), "", "volume", 2600), 350);
   }
   function sendVolume(v) {
     clearTimeout(volumeTimer);
@@ -817,6 +965,8 @@
     if (state && state.speaker) state.speaker.volume = value;
     volumeHoldUntil = Date.now() + 2500;
     bridge.setVolume(value).catch(() => {});
+    clearTimeout(volumeToastTimer);
+    toast(value <= 0 ? "warning" : "info", value <= 0 ? t("muted") : t("volume_updated", value), "", "volume", 2600);
   }
   function nudge(delta) {
     muted = false;
@@ -828,8 +978,8 @@
     const s = state.speaker || {};
     const on = !!s.on;
     $("#dot").className = `dot ${on ? "on" : ""}`;
-    $("#dev-name").textContent = s.name || "未找到设备";
-    const link = s.ip ? (on ? "已连接 · 开机" : "已连接 · 待机") : "未连接";
+    $("#dev-name").textContent = s.name || t("no_device");
+    const link = s.ip ? (on ? t("connected_on") : t("connected_standby")) : t("disconnected");
     $("#dev-sub").textContent = `${link}${s.ip ? " · " + s.ip : ""}`;
 
     const pb = $("#power-btn");
@@ -837,8 +987,10 @@
     pb.disabled = powerPending;
     pb.setAttribute("aria-checked", String(on));
     pb.innerHTML = powerPending
-      ? `${icon("loader", 14, "spin")}<span>切换中</span>`
-      : `${icon("power", 14)}<span>${on ? "开机" : "待机"}</span>`;
+      ? `${icon("loader", 14, "spin")}<span>${t(powerPendingTarget ? "waking" : "entering_standby")}</span>`
+      : `${icon("power", 14)}<span>${on ? t("power_on") : t("power_standby")}</span>`;
+
+    $("#standby-note").classList.toggle("hidden", on || powerPendingTarget === true);
 
     if (!editingVol && !draggingVol && s.volume != null && Date.now() > volumeHoldUntil) {
       if (muted && Number(s.volume) > 0) muted = false;
@@ -846,6 +998,9 @@
     }
     $("#vol-card").classList.toggle("dim", !on);
     $("#input-card").classList.toggle("dim", !on);
+    for (const control of [$("#mute-btn"), $("#vol-down"), $("#vol-slider"), $("#vol-up"), $("#vol-display"), $("#vol-edit")]) {
+      control.disabled = !on;
+    }
     const shownInput = (Date.now() < inputHoldUntil && localInput) ? localInput : s.input;
     for (const btn of $$("[data-input]")) {
       btn.classList.toggle("active", btn.dataset.input === shownInput);
@@ -861,23 +1016,27 @@
   function logSkeleton() {
     return `
       <div class="page-head">
-        <h1>应用日志</h1>
-        <button id="log-refresh" class="ghost-btn">${icon("refresh", 14)} 刷新</button>
-        <button id="log-folder" class="ghost-btn">${icon("folder", 14)} 打开文件夹</button>
+        <h1>${t("app_log")}</h1>
+        <button id="log-refresh" class="ghost-btn">${icon("refresh", 14)} ${t("refresh")}</button>
+        <button id="log-folder" class="ghost-btn">${icon("folder", 14)} ${t("open_folder")}</button>
       </div>
-      <div class="search-box">
-        ${icon("search", 15)}
-        <input id="log-search" type="search" placeholder="搜索日志…">
-        <button id="log-search-clear" class="search-clear" title="清除搜索">${icon("x", 13)}</button>
-      </div>
-      <div class="lvl-filters">
-        ${LOG_LEVELS.map(l => `
-          <button class="lvl-btn active ${l}" data-level="${l}">${l} <span data-count="${l}">0</span></button>`).join("")}
-        <button id="lvl-all" class="lvl-link">清空</button>
+      <div class="log-toolbar">
+        <div class="search-box">
+          ${icon("search", 15)}
+          <input id="log-search" type="search" placeholder="${t("search_log")}">
+          <button id="log-search-clear" class="search-clear" title="${t("clear_search")}">${icon("x", 13)}</button>
+        </div>
+        <div class="severity-row">
+          <span class="severity-hint">${t("min_level")}</span>
+          <div id="severity-track" class="severity-track">
+            ${SEVERITY.map(level => `<button class="severity-btn ${level}" data-min-level="${level}">${t(LEVEL_TEXT_KEYS[level])} <span data-count="${level}">0</span></button>`).join("")}
+          </div>
+          <button id="log-filter-reset" class="lvl-link" style="display:none">${t("reset_filters")}</button>
+        </div>
       </div>
       <div class="log-wrap">
-        <div id="log-box" class="log-box"><div class="log-empty">正在加载日志…</div></div>
-        <button id="to-bottom" class="to-bottom">${icon("chevronDown", 13)} 回到底部</button>
+        <div id="log-box" class="log-box"><div class="log-empty">${t("app_log")}…</div></div>
+        <button id="to-bottom" class="to-bottom">${icon("chevronDown", 13)} ${t("back_to_bottom")}</button>
       </div>
       <p id="log-foot" class="log-foot"></p>`;
   }
@@ -901,21 +1060,20 @@
       renderLogList();
       input.focus();
     });
-    $(".lvl-filters").addEventListener("click", e => {
-      if (e.target.closest("#lvl-all")) {
-        const allOn = LOG_LEVELS.every(l => activeLevels.has(l));
-        activeLevels.clear();
-        if (!allOn) LOG_LEVELS.forEach(l => activeLevels.add(l));
-        for (const btn of $$("[data-level]")) btn.classList.toggle("active", activeLevels.has(btn.dataset.level));
-        renderLogList();
-        return;
-      }
-      const btn = e.target.closest("[data-level]");
+    $("#severity-track").addEventListener("click", e => {
+      const btn = e.target.closest("[data-min-level]");
       if (!btn) return;
-      const lvl = btn.dataset.level;
-      activeLevels.has(lvl) ? activeLevels.delete(lvl) : activeLevels.add(lvl);
-      btn.classList.toggle("active", activeLevels.has(lvl));
+      minLogLevel = btn.dataset.minLevel;
       renderLogList();
+    });
+    $("#log-filter-reset").addEventListener("click", () => {
+      logQuery = "";
+      minLogLevel = "INFO";
+      const input = $("#log-search");
+      input.value = "";
+      $("#log-search-clear").classList.remove("show");
+      renderLogList();
+      input.focus();
     });
     const box = $("#log-box");
     box.addEventListener("scroll", () => {
@@ -945,15 +1103,24 @@
     return { raw, time: stamp.includes(" ") ? stamp.split(" ").pop() : stamp, source, message, lvl };
   }
 
+  const countAtOrAbove = level => logItems.filter(item => SEVERITY.indexOf(item.lvl) >= SEVERITY.indexOf(level)).length;
   const logMatches = item =>
-    activeLevels.has(item.lvl) &&
+    SEVERITY.indexOf(item.lvl) >= SEVERITY.indexOf(minLogLevel) &&
     (!logQuery.trim() || item.raw.toLowerCase().includes(logQuery.trim().toLowerCase()));
 
-  function logRowHtml(item) {
+  function highlightLog(text) {
+    const query = logQuery.trim();
+    if (!query) return esc(text);
+    const safe = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return String(text).split(new RegExp(`(${safe})`, "gi")).map((part, index) =>
+      index % 2 ? `<mark>${esc(part)}</mark>` : esc(part)).join("");
+  }
+
+  function logRowHtml(item, previous) {
     return `<div class="log-line ${item.lvl}">
       <span class="log-time">${esc(item.time || "—")}</span>
       <span class="log-lvl ${item.lvl}">${item.lvl}</span>
-      <span class="log-txt">${item.source ? esc(item.source) + " · " : ""}${esc(item.message)}</span>
+      <span class="log-txt">${item.source ? esc(item.source) + " · " : ""}${highlightLog(item.message)}</span>
     </div>`;
   }
 
@@ -967,21 +1134,31 @@
     const keep = stickBottom || isNearBottom(box);
     const visible = logItems.filter(logMatches);
     box.innerHTML = visible.length
-      ? visible.map(logRowHtml).join("")
-      : `<div class="log-empty">没有匹配的日志行</div>`;
+      ? visible.map((item, index) => logRowHtml(item, visible[index - 1])).join("")
+      : `<div class="log-empty">${logQuery.trim() ? t("no_match", logQuery.trim()) : t("no_level")}</div>`;
     if (keep) box.scrollTop = box.scrollHeight;
     syncLogMeta(visible.length);
   }
 
   function syncLogMeta(visibleCount) {
-    for (const l of LOG_LEVELS) {
-      const el = $(`[data-count="${l}"]`);
-      if (el) el.textContent = String(logItems.filter(x => x.lvl === l).length);
+    for (const level of SEVERITY) {
+      const count = level === "INFO" ? logItems.length : logItems.filter(item => item.lvl === level).length;
+      const button = $(`[data-min-level="${level}"]`);
+      const el = $(`[data-count="${level}"]`);
+      if (el) el.textContent = String(count);
+      if (button) {
+        button.classList.toggle("active", minLogLevel === level);
+        button.disabled = count === 0 && level !== "ERROR";
+        button.title = t("severity_tip", t(LEVEL_TEXT_KEYS[level]), countAtOrAbove(level));
+      }
     }
     const foot = $("#log-foot");
-    if (foot) foot.textContent = `显示 ${visibleCount ?? logItems.filter(logMatches).length} / ${logItems.length} 行`;
-    const all = $("#lvl-all");
-    if (all) all.textContent = LOG_LEVELS.every(l => activeLevels.has(l)) ? "清空" : "全选";
+    if (foot) {
+      const visible = visibleCount ?? logItems.filter(logMatches).length;
+      foot.textContent = `${t("showing")} ${visible} / ${logItems.length} ${t("lines")}${minLogLevel !== "INFO" ? ` · ${t("hidden_below", t(LEVEL_TEXT_KEYS[minLogLevel]))}` : ""}`;
+    }
+    const reset = $("#log-filter-reset");
+    if (reset) reset.style.display = logQuery.trim() || minLogLevel !== "INFO" ? "" : "none";
     const box = $("#log-box"), toBottom = $("#to-bottom");
     if (box && toBottom) toBottom.classList.toggle("show", !isNearBottom(box));
   }
@@ -996,7 +1173,8 @@
       const keep = isNearBottom(box);
       const empty = box.querySelector(".log-empty");
       if (empty) empty.remove();
-      box.insertAdjacentHTML("beforeend", logRowHtml(item));
+      const previous = logItems.length > 1 ? logItems[logItems.length - 2] : null;
+      box.insertAdjacentHTML("beforeend", logRowHtml(item, previous));
       while (box.children.length > 800) box.firstElementChild.remove();
       if (keep) box.scrollTop = box.scrollHeight;
     }
@@ -1014,16 +1192,30 @@
   function settingsSkeleton() {
     return `
       <div class="page-head">
-        <h1>设置</h1>
-        <span id="saved-flash" class="saved-flash hidden">${icon("check", 13)} 已保存</span>
+        <h1>${t("nav_settings")}</h1>
+        <span id="saved-flash" class="saved-flash hidden">${icon("check", 13)} ${t("saved")}</span>
       </div>
 
-      <h3 class="sec-title">扬声器</h3>
+      <h3 class="sec-title">${t("general")}</h3>
       <section class="card">
         <div class="set-row">
           <div style="flex:1">
-            <div class="set-label">默认输入源</div>
-            <div class="set-desc">App 唤醒扬声器时自动切到这个输入</div>
+            <div class="set-label">${t("language")}</div>
+            <div class="set-desc">${t("language_desc")}</div>
+          </div>
+          <div class="lang-switch" role="group" aria-label="${t("language")}">
+            <button class="lang-btn" data-language="zh">中文</button>
+            <button class="lang-btn" data-language="en">English</button>
+          </div>
+        </div>
+      </section>
+
+      <h3 class="sec-title">${t("speaker")}</h3>
+      <section class="card">
+        <div class="set-row">
+          <div style="flex:1">
+            <div class="set-label">${t("default_input")}</div>
+            <div class="set-desc">${t("default_input_desc")}</div>
           </div>
           <select id="set-input">
             ${(state.inputs || []).map(x => `<option value="${esc(x.value)}">${esc(inputLabel(x.value))}</option>`).join("")}
@@ -1032,48 +1224,48 @@
         <div class="divider"></div>
         <div class="set-row">
           <div style="flex:1">
-            <div class="set-label">目标扬声器</div>
-            <div class="set-desc">MAC 是身份标识，IP 只是当前地址</div>
+            <div class="set-label">${t("target_speaker")}</div>
+            <div class="set-desc">${t("target_desc")}</div>
           </div>
           <div class="target-val">
             <div id="target-name">—</div>
             <div id="target-meta" class="target-ip">—</div>
           </div>
-          <button id="pick-btn" class="primary-btn">选择扬声器</button>
+          <button id="pick-btn" class="primary-btn">${t("select_speaker")}</button>
         </div>
       </section>
 
-      <h3 class="sec-title">电源行为</h3>
-      <p class="sec-desc">哪些电脑事件会唤醒扬声器、哪些会让它待机。<span id="enabled-count"></span></p>
+      <h3 class="sec-title">${t("power_behavior")}</h3>
+      <p class="sec-desc">${t("power_behavior_desc")} <span id="enabled-count"></span></p>
 
       <div class="preset-row">
-        <span class="preset-label">预设</span>
+        <span class="preset-label">${t("preset")}</span>
         ${Object.entries(PRESETS).map(([k, p]) => `
-          <button class="preset-btn" data-preset="${k}" title="${esc(p.desc)}">${p.label}</button>`).join("")}
-        <span id="custom-tag" class="custom-tag hidden">自定义</span>
-        <button id="test-toggle" class="test-toggle">${icon("flask", 13)}<span>模拟事件</span></button>
-        <button id="reset-btn" class="reset-btn" title="恢复推荐预设">${icon("rotateCcw", 13)}</button>
+          <button class="preset-btn" data-preset="${k}" title="${esc(localized(p.desc))}">${localized(p.label)}</button>`).join("")}
+        <span id="custom-tag" class="custom-tag hidden">${t("custom")}</span>
+        <button id="test-toggle" class="test-toggle">${icon("flask", 13)}<span>${t("simulate_events")}</span></button>
+        <button id="reset-btn" class="reset-btn" title="${t("restore_recommended")}">${icon("rotateCcw", 13)}</button>
       </div>
 
       <div id="test-banner" class="test-banner hidden">
         ${icon("flask", 14)}
-        <span>模拟模式已开启。点任意一行的模拟按钮，会按该行<strong>当前的规则</strong>执行一次真实动作。规则关着就不会有动作，这本身就是诊断结果。</span>
+        <span>${t("test_banner")}</span>
       </div>
 
       <div id="matrix" class="matrix">
         <div class="mx-head">
-          <div class="th-event">触发事件</div>
+          <div class="th-event">${t("trigger_event")}</div>
           <button class="th-col" data-col="wake">
-            <span class="th-col-title">${icon("unlock", 13)}<span style="color:var(--teal)">唤醒</span></span>
+            <span class="th-col-title">${icon("unlock", 13)}<span style="color:var(--teal)">${t("wake")}</span></span>
             <span class="th-col-hint" data-col-hint="wake"></span>
           </button>
           <button class="th-col" data-col="standby">
-            <span class="th-col-title">${icon("monitorOff", 13)}<span style="color:var(--faint)">待机</span></span>
+            <span class="th-col-title">${icon("monitorOff", 13)}<span style="color:var(--faint)">${t("standby")}</span></span>
             <span class="th-col-hint" data-col-hint="standby"></span>
           </button>
           <div class="th-col td-test" style="cursor:default">
-            <span class="th-col-title">模拟</span>
-            <span class="th-col-hint">触发一次</span>
+            <span class="th-col-title">${t("test")}</span>
+            <span class="th-col-hint">${t("run_once")}</span>
           </div>
         </div>
         ${EVENT_ROWS.map((row, i) => `
@@ -1081,20 +1273,20 @@
             <div class="td-event">
               <span class="ev-icon">${icon(row.icon, 15)}</span>
               <div style="min-width:0">
-                <div class="ev-label">${row.label}</div>
-                <div class="ev-desc">${row.desc}</div>
+                <div class="ev-label">${localized(row.label)}</div>
+                <div class="ev-desc">${localized(row.desc)}</div>
               </div>
             </div>
             ${["wake", "standby"].map(col => `
               <div class="td-cell">
                 ${row[col]
                   ? `<button class="check" data-rule="${row[col]}" data-checkcol="${col}" role="checkbox">${icon("check", 14)}</button>`
-                  : `<span class="na" title="不适用">${icon("minus", 13)}</span>`}
+                  : `<span class="na" title="${t("not_applicable")}">${icon("minus", 13)}</span>`}
               </div>`).join("")}
             <div class="td-test">
               ${row.tests.map(t => `
                 <button class="test-btn" data-test="${t.key}" data-testcol="${t.col === "wake" ? row.wake : row.standby}">
-                  ${icon("play", 11)}<span>${t.label}</span>
+                  ${icon("play", 11)}<span>${localized(t.label)}</span>
                 </button>`).join("") || `<span class="na">${icon("minus", 13)}</span>`}
             </div>
           </div>
@@ -1103,35 +1295,45 @@
 
       <div id="screen-warn" class="warn-note hidden">
         ${icon("alert", 14)}
-        <span>屏幕熄灭会让扬声器待机，但屏幕点亮不会唤醒它。你需要手动开机，或同时勾上「屏幕开关 · 唤醒」。</span>
+        <span>${t("screen_warning")}</span>
       </div>
-      <p class="table-foot">点击列标题可整列开关。改动即时生效。<span id="test-foot" style="display:none">模拟会真实控制扬声器，当前状态见主页。</span></p>
+      <p class="table-foot">${t("table_foot")}<span id="test-foot" style="display:none"> ${t("table_foot_test")}</span></p>
 
-      <h3 class="sec-title">Windows 启动</h3>
+      <h3 class="sec-title">${t("windows_startup")}</h3>
       <section class="card">
         <div class="set-row">
           <div style="flex:1">
-            <div class="set-label">登录时自动运行</div>
-            <div class="set-desc">创建或移除所选的 Windows 开机自启注册</div>
+            <div class="set-label">${t("start_on_login")}</div>
+            <div class="set-desc">${t("start_on_login_desc")}</div>
           </div>
           <input id="set-startup-enabled" class="switch" type="checkbox">
         </div>
         <div class="divider"></div>
         <div class="set-row">
           <div style="flex:1">
-            <div class="set-label">注册方式</div>
-            <div class="set-desc">任务计划可绕过 UAC 提示；注册表最简单</div>
+            <div class="set-label">${t("startup_method")}</div>
+            <div class="set-desc">${t("startup_method_desc")}</div>
           </div>
           <select id="set-startup-mode">
-            <option value="off">关闭</option>
-            <option value="task">任务计划程序</option>
-            <option value="registry">注册表 Run</option>
+            <option value="off">${t("startup_off")}</option>
+            <option value="task">${t("startup_task")}</option>
+            <option value="registry">${t("startup_registry")}</option>
           </select>
         </div>
       </section>`;
   }
 
   function bindSettings() {
+    $(".lang-switch").addEventListener("click", e => {
+      const button = e.target.closest("[data-language]");
+      if (!button || button.dataset.language === uiLanguage) return;
+      const next = button.dataset.language;
+      uiLanguage = next;
+      if (state?.settings?.general) state.settings.general.ui_language = next;
+      buildShell();
+      setPage(page);
+      bridge.updateSettings(JSON.stringify({ ui_language: next })).then(flashSaved).catch(() => {});
+    });
     $("#set-input").addEventListener("change", e => {
       bridge.updateSettings(JSON.stringify({ kef_input: e.target.value })).then(flashSaved).catch(() => {});
     });
@@ -1205,28 +1407,28 @@
     el.className = "dlg-backdrop";
     el.id = "dlg-backdrop";
     el.innerHTML = `
-      <div class="dlg" role="dialog" aria-modal="true" aria-label="选择扬声器">
+      <div class="dlg" role="dialog" aria-modal="true" aria-label="${t("select_speaker")}">
         <div class="dlg-head">
           <div class="dlg-head-icon">${icon("optical", 15)}</div>
-          <span class="dlg-title">选择扬声器</span>
-          <button class="dlg-x" data-dlg="close" title="关闭">${icon("x", 15)}</button>
+          <span class="dlg-title">${t("select_speaker")}</span>
+          <button class="dlg-x" data-dlg="close" title="${t("close")}">${icon("x", 15)}</button>
         </div>
-        <p class="dlg-sub">选择这个 App 要控制的 KEF 扬声器。</p>
+        <p class="dlg-sub">${t("dlg_sub")}</p>
         <div id="dlg-scan-bar" class="scan-bar"></div>
         <div id="dlg-list" class="dlg-list"></div>
-        <button id="dlg-manual-link" class="manual-link">没找到？手动输入 IP 地址</button>
+        <button id="dlg-manual-link" class="manual-link">${t("manual_link")}</button>
         <div id="dlg-manual" class="manual-box" style="display:none">
-          <div class="manual-title">手动指定</div>
+          <div class="manual-title">${t("manual_entry")}</div>
           <div class="manual-row">
-            <input id="dlg-ip" class="text-input" placeholder="IP 地址，如 10.0.0.222">
-            <input id="dlg-mac" class="text-input" placeholder="MAC（可选）">
+            <input id="dlg-ip" class="text-input" placeholder="${t("ip_placeholder")}">
+            <input id="dlg-mac" class="text-input" placeholder="${t("mac_placeholder")}">
           </div>
           <div class="manual-actions">
-            <button id="dlg-manual-cancel" class="ghost-btn">取消</button>
-            <button id="dlg-manual-apply" class="primary-btn" disabled>应用</button>
+            <button id="dlg-manual-cancel" class="ghost-btn">${t("cancel")}</button>
+            <button id="dlg-manual-apply" class="primary-btn" disabled>${t("apply")}</button>
           </div>
         </div>
-        <div class="dlg-foot"><button class="ghost-btn" data-dlg="close">关闭</button></div>
+        <div class="dlg-foot"><button class="ghost-btn" data-dlg="close">${t("close")}</button></div>
       </div>`;
     document.body.append(el);
 
@@ -1278,7 +1480,7 @@
     bridge.scanSpeakers().catch(() => {
       if (!dlg) return;
       dlg.phase = "done";
-      dlg.failed = "扫描请求失败，请重试。";
+      dlg.failed = t("scan_failed");
       syncDialog();
     });
   }
@@ -1290,20 +1492,20 @@
 
     bar.classList.toggle("failed", !!dlg.failed);
     if (dlg.phase === "scanning") {
-      bar.innerHTML = `${icon("loader", 15, "spin")}<span class="scan-text">正在扫描局域网…${dlg.checked ? ` 已检查 ${dlg.checked} 台设备` : ""}</span>`;
+      bar.innerHTML = `${icon("loader", 15, "spin")}<span class="scan-text">${t("scanning")}${dlg.checked ? ` · ${t("checked_devices", dlg.checked)}` : ""}</span>`;
     } else if (dlg.failed) {
       bar.innerHTML = `${icon("alert", 15)}<span class="scan-text">${esc(dlg.failed)}</span>
-        <button id="dlg-rescan" class="rescan-btn">${icon("refresh", 12)} 重新扫描</button>`;
+        <button id="dlg-rescan" class="rescan-btn">${icon("refresh", 12)} ${t("rescan")}</button>`;
     } else {
       const hasCurrent = dlg.found.some(d => normMac(d.mac) === currentTargetMac());
-      bar.innerHTML = `${icon("check", 15)}<span class="scan-text">扫描完成，找到 ${dlg.found.length} 台。${hasCurrent ? "已包含你当前的扬声器。" : ""}</span>
-        <button id="dlg-rescan" class="rescan-btn">${icon("refresh", 12)} 重新扫描</button>`;
+      bar.innerHTML = `${icon("check", 15)}<span class="scan-text">${t("scan_complete", dlg.found.length)}${hasCurrent ? t("current_included") : ""}</span>
+        <button id="dlg-rescan" class="rescan-btn">${icon("refresh", 12)} ${t("rescan")}</button>`;
     }
 
     if (dlg.phase === "scanning" && !dlg.found.length) {
       list.innerHTML = `<div class="skeleton"></div><div class="skeleton"></div>`;
     } else if (dlg.phase === "done" && !dlg.found.length) {
-      list.innerHTML = `<div class="dlg-empty">没有扫描到扬声器</div>`;
+      list.innerHTML = `<div class="dlg-empty">${t("no_speaker")}</div>`;
     } else {
       const cur = currentTargetMac();
       list.innerHTML = dlg.found.map(d => {
@@ -1312,10 +1514,10 @@
         <button class="sp-item ${isCur ? "current" : ""}" data-sp-ip="${esc(d.ip)}" data-sp-mac="${esc(d.mac || "")}">
           <span class="sp-icon">${icon(isCur ? "check" : "optical", 16)}</span>
           <div style="flex:1;min-width:0">
-            <div class="sp-name"><span>${esc(d.name || d.model || "KEF 扬声器")}</span>${isCur ? `<span class="cur-tag">使用中</span>` : ""}</div>
+            <div class="sp-name"><span>${esc(d.name || d.model || "KEF")}</span>${isCur ? `<span class="cur-tag">${t("in_use")}</span>` : ""}</div>
             <div class="sp-meta">IP ${esc(d.ip)}${d.mac ? ` · MAC ${esc(d.mac)}` : ""}</div>
           </div>
-          ${isCur ? "" : `<span class="sel-hint">选择</span>`}
+          ${isCur ? "" : `<span class="sel-hint">${t("select")}</span>`}
         </button>`;
       }).join("") + (dlg.phase === "scanning" ? `<div class="skeleton" style="height:34px"></div>` : "");
     }
@@ -1323,12 +1525,16 @@
 
   function syncSettings() {
     if (!state) return;
+    for (const button of $$("[data-language]")) {
+      button.classList.toggle("active", button.dataset.language === uiLanguage);
+      button.setAttribute("aria-pressed", String(button.dataset.language === uiLanguage));
+    }
     const dev = (state.settings || {}).device || {};
     const sel = $("#set-input");
     if (sel && document.activeElement !== sel) sel.value = dev.kef_input || "";
 
     const s = state.speaker || {};
-    $("#target-name").textContent = s.name || "未找到设备";
+    $("#target-name").textContent = s.name || t("no_device");
     $("#target-meta").textContent = [s.mac || dev.kef_mac, s.ip || dev.kef_ip].filter(Boolean).join(" · ") || "—";
 
     // 矩阵
@@ -1342,10 +1548,10 @@
       const keys = EVENT_ROWS.map(r => r[col]).filter(Boolean);
       const allOn = keys.every(ruleOn);
       const hint = $(`[data-col-hint="${col}"]`);
-      if (hint) hint.textContent = allOn ? "全部关闭" : "全部开启";
+      if (hint) hint.textContent = allOn ? t("all_off") : t("all_on");
     }
     const enabled = RULE_KEYS.filter(ruleOn).length;
-    $("#enabled-count").textContent = `已启用 ${enabled} / ${RULE_KEYS.length} 条规则。`;
+    $("#enabled-count").textContent = t("enabled_rules", enabled, RULE_KEYS.length);
 
     const active = Object.entries(PRESETS).find(([, p]) =>
       RULE_KEYS.every(k => p.values[k] === ruleOn(k)))?.[0];
@@ -1358,11 +1564,11 @@
     $("#test-foot").style.display = testMode ? "" : "none";
     const toggle = $("#test-toggle");
     toggle.classList.toggle("on", testMode);
-    toggle.innerHTML = `${icon("flask", 13)}<span>${testMode ? "退出模拟" : "模拟事件"}</span>`;
+    toggle.innerHTML = `${icon("flask", 13)}<span>${testMode ? t("exit_simulate") : t("simulate_events")}</span>`;
     for (const btn of $$("[data-test]")) {
       const on = ruleOn(btn.dataset.testcol);
       btn.classList.toggle("off", !on);
-      btn.title = on ? "按当前规则真实执行一次" : "规则已关闭，模拟不会有动作";
+      btn.title = on ? t("run_once") : t("not_applicable");
       btn.disabled = !!runningTest;
       const running = runningTest === btn.dataset.test;
       btn.firstElementChild.outerHTML = running ? icon("loader", 11, "spin") : icon("play", 11);
@@ -1393,7 +1599,7 @@
     box.innerHTML = `
       ${icon(iconName, 14, msg.state === "running" ? "spin" : "")}
       <div style="min-width:0">
-        <div><strong>${esc(test ? test.label : msg.key)}</strong> · ${esc(zhTitle(msg.title))} · ${esc(zhDetail(msg.detail || ""))}</div>
+        <div><strong>${esc(test ? localized(test.label) : msg.key)}</strong> · ${esc(localTitle(msg.title))} · ${esc(localDetail(msg.detail || ""))}</div>
       </div>
       <button class="close">✕</button>`;
   }
@@ -1420,6 +1626,7 @@
     state = next;
     if (powerPending && prevOn !== undefined && state.speaker && state.speaker.on !== prevOn) {
       powerPending = false;
+      powerPendingTarget = null;
       clearTimeout(powerPendingTimer);
     }
     syncHome();
@@ -1447,6 +1654,7 @@
     }
     if (msg.kind === "toast" && POWER_ACTION_TITLES.has(msg.title) && powerPending) {
       powerPending = false;
+      powerPendingTarget = null;
       clearTimeout(powerPendingTimer);
       syncHome();
     }
@@ -1479,6 +1687,7 @@
 
   bridge.initialState().then(value => {
     state = value;
+    uiLanguage = state?.settings?.general?.ui_language === "en" ? "en" : "zh";
     lastStateJson = JSON.stringify(value);
     buildShell();
     syncHome();
@@ -1488,7 +1697,7 @@
     });
     setInterval(pollUpdates, 400);
   }).catch(() => {
-    $("#main").innerHTML = `<div class="boot-error"><h1>控制器不可用</h1><p>本地控制接口未能启动，请重启应用。</p></div>`;
+    $("#main").innerHTML = `<div class="boot-error"><h1>${t("controller_unavailable")}</h1><p>${t("controller_unavailable_desc")}</p></div>`;
   });
   </script>
 </body>

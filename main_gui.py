@@ -19,9 +19,9 @@ def _run_webview_host(url: str) -> None:
     webview.create_window(
         "KEF Controller",
         url,
-        width=1080,
-        height=760,
-        min_size=(720, 560),
+        width=1280,
+        height=860,
+        min_size=(840, 620),
         background_color="#f4f5f6",
         text_select=True,
     )
