@@ -1,75 +1,1495 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>KEF Controller</title>
   <style>
-    :root { color-scheme: light dark; --accent:#0f8f83; --accent-ink:#075f57; --bg:#f4f5f6; --panel:rgba(255,255,255,.76); --line:rgba(33,45,53,.12); --ink:#182126; --muted:#607078; --soft:#e8f3f1; --danger:#c93c4a; }
-    @media (prefers-color-scheme:dark) { :root { --bg:#202326; --panel:rgba(38,43,46,.78); --line:rgba(255,255,255,.11); --ink:#f1f5f4; --muted:#aebbb9; --soft:#123d39; } }
-    * { box-sizing:border-box } body { margin:0; min-width:620px; color:var(--ink); font:14px/1.45 "Segoe UI Variable Text","Segoe UI",sans-serif; background:transparent; }
-    button,input,select { font:inherit } button { cursor:pointer } .shell { min-height:100vh; display:grid; grid-template-columns:208px minmax(0,1fr); background:var(--bg); }
-    .sidebar { padding:42px 12px 16px; border-right:1px solid var(--line); background:rgba(255,255,255,.18); display:flex; flex-direction:column; gap:6px; }
-    .brand { padding:0 12px 22px; font-weight:700; font-size:16px; letter-spacing:.1px } .brand small { display:block; color:var(--muted); font-size:11px; font-weight:500; margin-top:2px; }
-    .nav { border:0; background:transparent; text-align:left; border-radius:9px; padding:10px 12px; color:var(--muted); font-weight:600; } .nav:hover { background:rgba(127,127,127,.11); color:var(--ink); } .nav.active { color:var(--accent-ink); background:var(--soft); } .sidebar .spacer { flex:1 }
-    .content { padding:42px clamp(22px,4vw,52px) 42px; overflow:auto; } h1 { font-size:28px; margin:0 0 5px; letter-spacing:-.6px } .lede { color:var(--muted); margin:0 0 24px; }
-    .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:0 8px 28px rgba(0,0,0,.045); backdrop-filter:blur(18px); } .card-pad { padding:19px; }
-    .status { display:flex; align-items:center; gap:13px; padding:16px 18px; margin-bottom:14px; } .dot { width:10px; height:10px; border-radius:999px; background:#94a3b8; box-shadow:0 0 0 4px rgba(148,163,184,.16); } .dot.on { background:#22a06b; box-shadow:0 0 0 4px rgba(34,160,107,.16) } .dot.standby { background:#d08b26; box-shadow:0 0 0 4px rgba(208,139,38,.16) } .device { flex:1; } .device strong { display:block; font-size:15px; } .device span { color:var(--muted); font-size:12px; } .power-state { min-width:106px; display:flex; align-items:center; justify-content:center; gap:8px; padding:10px 17px; border-radius:10px; border:1px solid var(--line); font-weight:700; } .power-state svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; } .power-state.on { color:#fff; background:#0d9488; border-color:#0d9488; } .power-state.on:hover { background:#087f75; } .power-state.standby { color:var(--muted); background:rgba(255,255,255,.36); } .power-state.standby:hover { color:var(--ink); background:rgba(127,127,127,.1); }
-    .primary,.secondary { border-radius:8px; border:1px solid transparent; padding:8px 13px; font-weight:650; } .primary { background:var(--accent); color:white; } .primary:hover { background:#08766c } .secondary { color:var(--ink); background:rgba(127,127,127,.09); border-color:var(--line); } .secondary:hover { background:rgba(127,127,127,.16) } .small { padding:6px 10px; font-size:12px; }
-    .grid { display:grid; gap:14px; grid-template-columns:repeat(2,minmax(0,1fr)); } .wide { grid-column:1 / -1 } .eyebrow { color:var(--muted); font-size:10px; font-weight:750; letter-spacing:.9px; }
-    .volume-card { grid-column:1 / -1; padding:24px 28px 22px; min-height:194px; } .volume-heading { display:flex; align-items:start; justify-content:space-between; margin-bottom:24px; } .volume-heading strong { color:var(--muted); font-size:15px; font-weight:700; } .volume-heading output { color:var(--ink); font-size:40px; line-height:1; font-weight:760; letter-spacing:-1.5px; } .volume-controls { display:grid; grid-template-columns:58px 56px minmax(220px,1fr) 56px; gap:14px; align-items:start; } .volume-button { width:56px; height:56px; display:grid; place-items:center; padding:0; border:1px solid var(--line); border-radius:12px; color:var(--ink); background:rgba(255,255,255,.38); font-size:29px; font-weight:350; line-height:1; transition:background .15s,border-color .15s,transform .1s; } .volume-button:hover:not(:disabled) { background:rgba(127,127,127,.1); border-color:rgba(15,143,131,.4); } .volume-button:active:not(:disabled) { transform:scale(.97); } .volume-button:disabled { cursor:default; opacity:.42; } .volume-button svg { width:28px; height:28px; fill:none; stroke:currentColor; stroke-linecap:round; stroke-linejoin:round; stroke-width:2; } .volume-slider-wrap { min-width:0; padding-top:2px; } .volume-slider { --volume:0%; appearance:none; width:100%; height:28px; margin:0; background:transparent; cursor:pointer; } .volume-slider:disabled { cursor:default; opacity:.45; } .volume-slider::-webkit-slider-runnable-track { height:8px; border:1px solid rgba(70,82,88,.28); border-radius:999px; background:linear-gradient(to right,var(--accent) 0,var(--accent) var(--volume),#e5e7e8 var(--volume),#e5e7e8 100%); } .volume-slider::-webkit-slider-thumb { appearance:none; width:28px; height:28px; margin-top:-11px; border:0; border-radius:50%; background:var(--accent); box-shadow:0 1px 2px rgba(0,0,0,.12); } .volume-slider:focus-visible::-webkit-slider-thumb { outline:3px solid rgba(15,143,131,.23); outline-offset:3px; } .volume-ticks { display:flex; justify-content:space-between; color:#aab2b7; font:12px/1.1 Georgia,serif; padding-top:5px; } .volume-ticks span:first-child { transform:translateX(-1px) } .volume-ticks span:last-child { transform:translateX(2px) }
-    .inputs { display:grid; grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); gap:9px; margin-top:12px; } .input { min-height:52px; display:flex; align-items:center; justify-content:center; gap:9px; padding:9px 12px; border-radius:10px; border:1px solid var(--line); background:transparent; color:var(--ink); } .input svg { width:21px; height:21px; flex:none; fill:none; stroke:currentColor; stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; } .input:hover { border-color:var(--accent); } .input.active { border:2px solid var(--accent); color:var(--accent-ink); background:var(--soft); font-weight:700; }
-    .details { display:grid; grid-template-columns:120px 1fr; gap:8px 14px; margin:8px 0 0; } .details dt { color:var(--muted); } .details dd { margin:0; overflow-wrap:anywhere; }
-    .table { overflow:hidden; } .event-row { display:grid; grid-template-columns:minmax(180px,1fr) 82px 92px minmax(208px,1fr); align-items:center; min-height:67px; padding:10px 18px; gap:8px; border-top:1px solid var(--line); } .event-row:first-child { border-top:0 } .event-label strong { display:block } .event-label span { display:block; color:var(--muted); font-size:12px; margin-top:2px; } .switch { width:38px; height:22px; appearance:none; background:#aeb8bc; border-radius:999px; position:relative; cursor:pointer; transition:.18s; } .switch:checked { background:var(--accent) } .switch:before { content:""; width:16px; height:16px; border-radius:50%; background:white; position:absolute; left:3px; top:3px; transition:.18s; } .switch:checked:before { left:19px; } .na { color:var(--muted); text-align:center; }
-    .tests { display:flex; gap:6px; flex-wrap:wrap; } .result { grid-column:1 / -1; display:none; padding:8px 11px; border-radius:7px; font-size:12px; background:rgba(127,127,127,.1); color:var(--muted); } .result.show { display:block } .result.success { border-left:3px solid #22a06b } .result.warning { border-left:3px solid #d08b26 } .result.error { border-left:3px solid var(--danger) } .result.running { border-left:3px solid var(--accent) }
-    .section-title { display:flex; align-items:end; justify-content:space-between; margin:26px 0 10px; } h2 { margin:0; font-size:17px; } .hint { color:var(--muted); font-size:12px; }
-    .settings { display:grid; gap:12px; } .setting { display:grid; grid-template-columns:minmax(210px,1fr) minmax(180px,260px); align-items:center; gap:20px; padding:15px 18px; } .setting + .setting { border-top:1px solid var(--line); } .setting strong { display:block; } .setting span { color:var(--muted); font-size:12px; display:block; margin-top:2px; } input[type=text],input[type=number],select { width:100%; color:var(--ink); background:rgba(127,127,127,.08); border:1px solid var(--line); border-radius:7px; padding:8px 9px; outline:none; } input:focus,select:focus { border-color:var(--accent); }
-    .toolbar { display:flex; gap:8px; align-items:center; } .toolbar .secondary { display:flex; align-items:center; gap:7px; } .toolbar svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; } .log-search { position:relative; margin:18px 0 12px; } .log-search:before { content:"⌕"; position:absolute; left:16px; top:7px; color:#8795a1; font-size:25px; line-height:1; } .log-search input { width:100%; padding:12px 16px 12px 49px; border:1px solid var(--line); border-radius:11px; background:var(--panel); color:var(--ink); font-size:14px; outline:none; } .log-search input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(15,143,131,.12); } .log-filters { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; } .log-chip { border:1px solid transparent; border-radius:999px; padding:7px 12px; color:white; font:700 11px/1 "Cascadia Mono",Consolas,monospace; opacity:.42; } .log-chip.active { opacity:1; box-shadow:0 2px 8px rgba(0,0,0,.1); } .log-chip.error { background:#76151c } .log-chip.warn { background:#7b3f00 } .log-chip.event { background:#492090 } .log-chip.state { background:#006176 } .log-chip.step { background:#075f2c } .log-chip.info { background:#26354b } .log-panel { height:calc(100vh - 270px); min-height:390px; overflow:auto; background:#101827; color:#d2d9e5; border-radius:12px; padding:10px 12px; font:12px/1.55 "Cascadia Mono",Consolas,monospace; scrollbar-color:#6f7c8e transparent; } .log-row { display:grid; grid-template-columns:82px 68px minmax(0,1fr); gap:10px; align-items:start; padding:6px 8px; border-left:3px solid transparent; border-radius:7px; } .log-row:hover { background:rgba(255,255,255,.045); } .log-row.warn { background:rgba(132,72,0,.18); border-left-color:#f59e0b } .log-row.error { background:rgba(133,20,28,.2); border-left-color:#ef4444 } .log-time { color:#71839d } .log-level { text-align:center; border-radius:4px; padding:2px 5px; font-weight:800; } .log-level.error { color:#ffb4b9; background:#62151b; border:1px solid #8c252e } .log-level.warn { color:#ffd166; background:#5d2e00; border:1px solid #974b00 } .log-level.event { color:#cbb6ff; background:#351470; border:1px solid #5a2ba8 } .log-level.state { color:#67e8f9; background:#064e60; border:1px solid #08758a } .log-level.step { color:#86efac; background:#064e27; border:1px solid #08783b } .log-level.info { color:#cbd5e1; background:#233146; border:1px solid #344864 } .log-message { overflow-wrap:anywhere; white-space:pre-wrap; } .log-empty { padding:46px 20px; color:#7f8da2; text-align:center; } .log-footer { color:var(--muted); font-size:12px; margin:8px 4px 0; }
-    .toast-area { position:fixed; z-index:9; top:46px; right:28px; display:grid; gap:8px; width:min(360px,calc(100vw - 48px)); } .toast { padding:12px 14px; border-radius:10px; color:var(--ink); background:var(--panel); border:1px solid var(--line); box-shadow:0 12px 34px rgba(0,0,0,.14); backdrop-filter:blur(16px); } .toast b { display:block; margin-bottom:2px } .toast small { color:var(--muted) } .toast.success { border-left:3px solid #22a06b } .toast.error { border-left:3px solid var(--danger) } .toast.warning { border-left:3px solid #d08b26 } .toast.info { border-left:3px solid var(--accent) }
-    @media(max-width:760px) { body { min-width:0 } .shell { grid-template-columns:1fr } .sidebar { position:sticky; z-index:3; top:0; padding:9px; flex-direction:row; overflow:auto; border-bottom:1px solid var(--line); border-right:0; } .brand { display:none } .sidebar .spacer { display:none } .nav { white-space:nowrap } .content { padding:24px 16px } .grid { grid-template-columns:1fr } .volume-card { padding:20px 18px; } .volume-controls { grid-template-columns:52px 48px minmax(150px,1fr) 48px; gap:9px; } .volume-button { width:48px; height:52px; } .event-row { grid-template-columns:minmax(120px,1fr) 52px 52px; } .tests { grid-column:1 / -1 } .setting { grid-template-columns:1fr; gap:8px; } .log-row { grid-template-columns:62px 59px minmax(0,1fr); gap:6px; padding:6px 3px } .log-panel { height:calc(100vh - 320px) } }
+    :root {
+      color-scheme: light dark;
+      --teal: #0d9488; --teal-ink: #0f766e; --teal-soft: #f0fdfa;
+      --bg: #f3f3f3; --panel: #ffffff; --panel-flat: #fafafa; --panel-alt: #fcfcfc;
+      --line: #e5e5e5; --line-soft: #f0f0f0; --line-faint: #f5f5f5;
+      --ink: #1a1a1a; --muted: #616161; --faint: #8a8a8a; --ghost: #a0a0a0; --hair: #c4c4c4;
+      --btn-line: #d1d1d1; --btn-line-soft: #e0e0e0;
+      --danger: #dc2626;
+      --warn-bg: #fffbeb; --warn-line: #fde68a; --warn-ink: #92400e;
+      --test: #6d28d9; --test-bg: #f5f3ff; --test-line: #ddd6fe;
+      --ok-bg: #f0fdfa; --ok-ink: #0f766e;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --teal-soft: #10322e;
+        --bg: #202324; --panel: #2b2f30; --panel-flat: #272b2c; --panel-alt: #2e3233;
+        --line: rgba(255,255,255,.12); --line-soft: rgba(255,255,255,.08); --line-faint: rgba(255,255,255,.05);
+        --ink: #f1f4f3; --muted: #b7c0be; --faint: #93a09d; --ghost: #7d8a87; --hair: #5a6663;
+        --btn-line: rgba(255,255,255,.22); --btn-line-soft: rgba(255,255,255,.14);
+        --warn-bg: #372a10; --warn-line: #6b5518; --warn-ink: #fcd34d;
+        --test: #c4b5fd; --test-bg: #2e2450; --test-line: #4c3d85;
+        --ok-bg: #123430; --ok-ink: #5eead4;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; min-width: 620px; background: var(--bg); color: var(--ink);
+      font: 13.5px/1.5 "Segoe UI Variable Text", "Segoe UI", -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    button, input, select { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: default; }
+    svg { display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .spin { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .shell { display: flex; height: 100vh; }
+    nav { width: 148px; flex-shrink: 0; display: flex; flex-direction: column; gap: 2px; padding: 10px 6px 12px; }
+    .nav-btn {
+      position: relative; display: flex; align-items: center; gap: 11px; padding: 10px 12px;
+      border: 0; background: transparent; border-radius: 6px; font-size: 13.5px; text-align: left;
+    }
+    .nav-btn:hover { background: rgba(127,127,127,.10); }
+    .nav-btn.active { background: rgba(127,127,127,.16); font-weight: 600; }
+    .nav-btn.active::before {
+      content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+      width: 3px; height: 16px; border-radius: 2px; background: var(--teal);
+    }
+    .nav-spacer { flex: 1; }
+    main {
+      flex: 1; min-width: 0; background: var(--panel); overflow-y: auto;
+      border: 1px solid var(--line); border-right: 0; border-bottom: 0; border-top-left-radius: 8px;
+    }
+    .page { padding: 24px 28px 32px; max-width: 720px; }
+    .page.hidden { display: none; }
+    h1 { margin: 0; font-size: 24px; font-weight: 600; flex: 1; }
+    .page-head { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+
+    /* ── 状态条 ── */
+    .status-bar {
+      display: flex; align-items: center; gap: 12px; padding: 13px 16px; margin-bottom: 14px;
+      background: var(--panel-flat); border: 1px solid var(--line); border-radius: 10px;
+    }
+    .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; background: #94a3b8; }
+    .dot.on { background: #10b981; }
+    .status-name { font-size: 14px; font-weight: 600; }
+    .status-sub { font-size: 12px; color: var(--faint); margin-top: 2px; }
+    .power-switch {
+      margin-left: auto; display: flex; align-items: center; gap: 7px; padding: 8px 16px; flex-shrink: 0;
+      border: 1px solid var(--btn-line); background: var(--panel); border-radius: 7px;
+      font-size: 13px; font-weight: 600; color: var(--muted);
+    }
+    .power-switch.on { background: var(--teal); border-color: var(--teal); color: #fff; }
+    .power-switch.pending { opacity: .65; cursor: wait; }
+
+    /* ── 卡片 ── */
+    .card { padding: 16px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 12px; }
+    .card.dim { opacity: .45; pointer-events: none; }
+    .card-label { font-size: 12px; font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; }
+
+    /* ── 音量 ── */
+    .vol-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .vol-display {
+      border: 0; background: transparent; font-size: 32px; font-weight: 700; padding: 0; line-height: 1;
+      font-variant-numeric: tabular-nums; cursor: text;
+    }
+    .vol-edit {
+      width: 66px; border: 1.5px solid var(--teal); border-radius: 6px; font-size: 26px; font-weight: 700;
+      text-align: right; padding: 2px 6px; outline: none; font-variant-numeric: tabular-nums; background: var(--panel);
+    }
+    .vol-row { display: flex; align-items: center; gap: 10px; }
+    .vol-icon-btn {
+      width: 36px; height: 36px; border: 1px solid var(--btn-line-soft); background: var(--panel);
+      border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .nudge-btn {
+      width: 30px; height: 30px; border: 1px solid var(--btn-line-soft); background: var(--panel);
+      border-radius: 7px; color: var(--muted); display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .nudge-btn:hover:not(:disabled), .vol-icon-btn:hover:not(:disabled) { border-color: var(--teal); }
+    .slider-wrap { flex: 1; min-width: 0; }
+    .slider { --volume: 0%; appearance: none; width: 100%; height: 26px; margin: 0; background: transparent; cursor: pointer; }
+    .slider::-webkit-slider-runnable-track {
+      height: 6px; border-radius: 999px; transition: box-shadow .2s ease;
+      background: linear-gradient(to right, var(--teal) 0, var(--teal) var(--volume), rgba(127,127,127,.25) var(--volume));
+    }
+    .slider::-webkit-slider-thumb {
+      appearance: none; width: 18px; height: 18px; margin-top: -6px; border: 0; border-radius: 50%;
+      background: var(--teal); box-shadow: 0 1px 2px rgba(0,0,0,.2);
+      transition: box-shadow .18s ease, transform .12s ease;
+    }
+    .slider:hover:not(:disabled)::-webkit-slider-thumb {
+      box-shadow: 0 1px 2px rgba(0,0,0,.2), 0 0 0 5px rgba(13,148,136,.16);
+    }
+    .slider:active:not(:disabled)::-webkit-slider-thumb {
+      transform: scale(1.15);
+      box-shadow: 0 1px 3px rgba(0,0,0,.25), 0 0 0 8px rgba(13,148,136,.20), 0 0 16px rgba(13,148,136,.60);
+    }
+    .slider:active:not(:disabled)::-webkit-slider-runnable-track { box-shadow: 0 0 10px rgba(13,148,136,.30); }
+    .slider:focus-visible::-webkit-slider-thumb { outline: 3px solid rgba(13,148,136,.25); outline-offset: 2px; }
+    .ticks { display: flex; justify-content: space-between; margin-top: 4px; }
+    .ticks span { font-size: 10px; color: var(--hair); font-variant-numeric: tabular-nums; }
+    .mute-note { display: flex; align-items: center; gap: 5px; margin-top: 10px; font-size: 12px; color: var(--danger); }
+    .mute-note.hidden { display: none; }
+
+    /* ── 输入源 ── */
+    .input-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 10px; }
+    .input-btn {
+      display: flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 8px;
+      border: 1px solid var(--btn-line-soft); background: var(--panel); border-radius: 8px; font-size: 13px;
+    }
+    .input-btn:hover:not(:disabled) { border-color: var(--teal); }
+    .input-btn.active {
+      border-color: var(--teal); background: var(--teal-soft); color: var(--teal-ink);
+      font-weight: 600; box-shadow: inset 0 0 0 1px var(--teal);
+    }
+
+    /* ── 设备信息（折叠） ── */
+    .card-flat { background: var(--panel-flat); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+    .info-head {
+      width: 100%; display: flex; align-items: center; gap: 8px; padding: 11px 14px;
+      border: 0; background: transparent; color: var(--muted); text-align: left;
+    }
+    .info-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+    .info-summary { margin-left: auto; font-size: 12px; color: var(--ghost); }
+    .info-grid { margin: 0; padding: 0 14px 14px 36px; }
+    .info-grid.hidden { display: none; }
+    .info-row { display: flex; padding: 5px 0; border-top: 1px solid var(--line-soft); }
+    .info-row dt { width: 96px; font-size: 12.5px; color: var(--faint); margin: 0; flex-shrink: 0; }
+    .info-row dd { font-size: 12.5px; margin: 0; font-family: ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+
+    /* ── 日志 ── */
+    .ghost-btn {
+      display: flex; align-items: center; gap: 6px; padding: 7px 13px;
+      border: 1px solid var(--btn-line); background: var(--panel); border-radius: 6px; font-size: 13px;
+    }
+    .ghost-btn:hover { border-color: var(--faint); }
+    .search-box {
+      display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin-bottom: 8px;
+      border: 1px solid var(--btn-line); background: var(--panel); border-radius: 7px; color: var(--faint);
+    }
+    .search-box:focus-within { border-color: var(--teal); }
+    .search-box input { flex: 1; border: 0; outline: none; font-size: 13.5px; background: transparent; color: var(--ink); }
+    .lvl-filters { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 10px; }
+    .lvl-btn {
+      padding: 4px 10px; border: 1px solid var(--btn-line-soft); background: var(--panel); border-radius: 999px;
+      font: 600 11.5px ui-monospace, Consolas, monospace; color: var(--ghost);
+    }
+    .lvl-btn.active.ERROR { color: #fca5a5; border-color: #7f1d1d; background: #450a0a; }
+    .lvl-btn.active.WARN  { color: #fcd34d; border-color: #78350f; background: #451a03; }
+    .lvl-btn.active.EVENT { color: #c4b5fd; border-color: #4c1d95; background: #2e1065; }
+    .lvl-btn.active.STATE { color: #67e8f9; border-color: #155e75; background: #083344; }
+    .lvl-btn.active.STEP  { color: #86efac; border-color: #14532d; background: #052e16; }
+    .lvl-btn.active.INFO  { color: #cbd5e1; border-color: #334155; background: #1e293b; }
+    .log-box {
+      background: #0f172a; border-radius: 10px; padding: 12px; height: calc(100vh - 262px); min-height: 320px;
+      overflow-y: auto; font: 12px/1.65 ui-monospace, "Cascadia Mono", Consolas, monospace;
+      overscroll-behavior: contain; scrollbar-color: #475569 transparent;
+    }
+    .log-line { display: flex; gap: 8px; padding: 3px 6px; border-radius: 4px; align-items: flex-start; }
+    .log-line.ERROR { background: rgba(220,38,38,.15); box-shadow: inset 2px 0 0 #dc2626; }
+    .log-line.WARN { background: rgba(217,119,6,.12); box-shadow: inset 2px 0 0 #d97706; }
+    .log-time { color: #64748b; flex-shrink: 0; }
+    .log-lvl {
+      flex-shrink: 0; width: 48px; text-align: center; border-radius: 3px;
+      font-size: 10px; font-weight: 700; padding: 1px 0; border: 1px solid;
+    }
+    .log-lvl.ERROR { color: #fca5a5; border-color: #7f1d1d; background: #450a0a; }
+    .log-lvl.WARN  { color: #fcd34d; border-color: #78350f; background: #451a03; }
+    .log-lvl.EVENT { color: #c4b5fd; border-color: #4c1d95; background: #2e1065; }
+    .log-lvl.STATE { color: #67e8f9; border-color: #155e75; background: #083344; }
+    .log-lvl.STEP  { color: #86efac; border-color: #14532d; background: #052e16; }
+    .log-lvl.INFO  { color: #cbd5e1; border-color: #334155; background: #1e293b; }
+    .log-txt { color: #cbd5e1; word-break: break-all; white-space: pre-wrap; }
+    .log-empty { padding: 30px; text-align: center; color: #475569; }
+    .log-foot { margin: 8px 2px 0; font-size: 12px; color: var(--ghost); }
+
+    /* ── 设置 ── */
+    .saved-flash {
+      display: flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 600;
+      color: var(--teal-ink); background: var(--teal-soft); border-radius: 999px; padding: 4px 10px;
+    }
+    .saved-flash.hidden { display: none; }
+    .sec-title { margin: 18px 0 10px; font-size: 16px; font-weight: 600; }
+    .sec-desc { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+    .set-row { display: flex; align-items: center; gap: 14px; }
+    .set-label { font-size: 14px; font-weight: 600; }
+    .set-desc { font-size: 12px; color: var(--faint); margin-top: 2px; }
+    .divider { height: 1px; background: var(--line-soft); margin: 14px 0; }
+    select, .text-input {
+      padding: 7px 10px; border: 1px solid var(--btn-line); border-radius: 6px; font-size: 13.5px;
+      background: var(--panel); min-width: 130px; outline: none;
+    }
+    select:focus, .text-input:focus { border-color: var(--teal); }
+    .text-input { font-family: ui-monospace, Consolas, monospace; }
+    .target-val { text-align: right; }
+    .target-ip { font-size: 11.5px; color: var(--ghost); font-family: ui-monospace, Consolas, monospace; margin-top: 2px; }
+    .primary-btn {
+      display: flex; align-items: center; gap: 6px; padding: 7px 15px; border: 0; flex-shrink: 0;
+      background: var(--teal); color: #fff; border-radius: 6px; font-size: 13px; font-weight: 600;
+    }
+    .primary-btn:hover:not(:disabled) { background: #0b7f74; }
+    .primary-btn:disabled { opacity: .6; }
+    /* ── 选择扬声器弹窗 ── */
+    @keyframes fade-in { from { opacity: 0; } }
+    @keyframes pop-in { from { opacity: 0; transform: scale(.97) translateY(6px); } }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+    .dlg-backdrop {
+      position: fixed; inset: 0; background: rgba(15,23,42,.35); z-index: 100;
+      display: flex; align-items: center; justify-content: center; padding: 24px;
+      animation: fade-in .15s ease;
+    }
+    .dlg {
+      width: 100%; max-width: 460px; background: var(--panel); border: 1px solid var(--line);
+      border-radius: 12px; box-shadow: 0 24px 64px rgba(0,0,0,.30); padding: 18px 20px 16px;
+      animation: pop-in .16s ease; display: flex; flex-direction: column; max-height: calc(100vh - 48px); overflow-y: auto;
+    }
+    .dlg-head { display: flex; align-items: center; gap: 9px; }
+    .dlg-head-icon {
+      width: 26px; height: 26px; border-radius: 6px; background: var(--ink); color: var(--panel);
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .dlg-title { font-size: 17px; font-weight: 600; }
+    .dlg-x {
+      margin-left: auto; width: 28px; height: 28px; border: 0; background: transparent;
+      border-radius: 6px; color: var(--faint); display: flex; align-items: center; justify-content: center;
+    }
+    .dlg-x:hover { background: rgba(127,127,127,.12); color: var(--ink); }
+    .dlg-sub { margin: 8px 0 14px; font-size: 13px; color: var(--muted); }
+    .scan-bar {
+      display: flex; align-items: center; gap: 8px; padding: 9px 12px; margin-bottom: 10px;
+      background: var(--teal-soft); border: 1px solid rgba(13,148,136,.28); border-radius: 8px;
+    }
+    .scan-bar.failed { background: var(--warn-bg); border-color: var(--warn-line); }
+    .scan-bar.failed .scan-text { color: var(--warn-ink); }
+    .scan-text { font-size: 12.5px; color: var(--teal-ink); flex: 1; min-width: 0; font-variant-numeric: tabular-nums; }
+    .rescan-btn {
+      display: flex; align-items: center; gap: 4px; padding: 4px 10px; flex-shrink: 0;
+      border: 1px solid rgba(13,148,136,.4); background: var(--panel); border-radius: 6px;
+      font-size: 12px; color: var(--teal-ink); font-weight: 600;
+    }
+    .rescan-btn:hover { border-color: var(--teal); }
+    .dlg-list { display: flex; flex-direction: column; gap: 7px; min-height: 68px; }
+    .skeleton {
+      height: 60px; border-radius: 9px; background-size: 200% 100%; animation: shimmer 1.3s infinite;
+      background-image: linear-gradient(90deg, rgba(127,127,127,.10) 25%, rgba(127,127,127,.22) 50%, rgba(127,127,127,.10) 75%);
+    }
+    .sp-item {
+      display: flex; align-items: center; gap: 12px; padding: 12px 14px; width: 100%; text-align: left;
+      border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
+    }
+    .sp-item:hover { border-color: var(--teal); }
+    .sp-item.current { border-color: var(--teal); background: var(--teal-soft); box-shadow: inset 0 0 0 1px var(--teal); cursor: default; }
+    .sp-icon {
+      width: 34px; height: 34px; border-radius: 8px; background: rgba(127,127,127,.12); color: var(--muted);
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .sp-item.current .sp-icon { background: var(--teal); color: #fff; }
+    .sp-name { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .cur-tag { font-size: 10.5px; font-weight: 700; color: var(--teal-ink); background: rgba(13,148,136,.16); border-radius: 5px; padding: 1px 7px; flex-shrink: 0; }
+    .sp-meta { font-size: 11.5px; color: var(--faint); margin-top: 2px; font-family: ui-monospace, Consolas, monospace; }
+    .sel-hint { margin-left: auto; font-size: 12.5px; font-weight: 600; color: var(--teal); flex-shrink: 0; }
+    .dlg-empty { padding: 24px; text-align: center; color: var(--ghost); font-size: 13px; }
+    .manual-link {
+      align-self: flex-start; margin-top: 12px; border: 0; background: transparent;
+      color: var(--teal); font-size: 13px; padding: 4px 0; font-weight: 500;
+    }
+    .manual-link:hover { text-decoration: underline; }
+    .manual-box { margin-top: 12px; padding: 13px; background: var(--panel-flat); border: 1px solid var(--line); border-radius: 9px; }
+    .manual-title { font-size: 12.5px; font-weight: 600; margin-bottom: 9px; }
+    .manual-row { display: flex; gap: 8px; }
+    .manual-row .text-input { flex: 1; min-width: 0; width: auto; }
+    .manual-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+    .dlg-foot { display: flex; justify-content: flex-end; margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line-soft); }
+
+    /* ── 日志辅助控件 ── */
+    .search-box { position: relative; }
+    .search-clear {
+      border: 0; background: transparent; color: var(--faint); display: none;
+      width: 22px; height: 22px; border-radius: 5px; padding: 0; flex-shrink: 0;
+      align-items: center; justify-content: center;
+    }
+    .search-clear.show { display: flex; }
+    .search-clear:hover { background: rgba(127,127,127,.14); color: var(--ink); }
+    .lvl-link { border: 0; background: transparent; color: var(--teal); font-size: 12px; font-weight: 600; padding: 4px 6px; }
+    .lvl-link:hover { text-decoration: underline; }
+    .log-wrap { position: relative; }
+    .to-bottom {
+      position: absolute; right: 14px; bottom: 12px; display: none; align-items: center; gap: 5px;
+      padding: 6px 12px; border: 1px solid #334155; background: #1e293b; color: #cbd5e1;
+      border-radius: 999px; font-size: 12px; font-weight: 600; box-shadow: 0 6px 18px rgba(0,0,0,.4);
+    }
+    .to-bottom.show { display: flex; }
+    .to-bottom:hover { border-color: #64748b; }
+
+    .preset-row { display: flex; align-items: center; gap: 7px; margin-bottom: 12px; flex-wrap: wrap; }
+    .preset-label { font-size: 13px; color: var(--muted); }
+    .preset-btn { padding: 6px 15px; border: 1px solid var(--btn-line); background: var(--panel); border-radius: 6px; font-size: 13px; }
+    .preset-btn.active { background: var(--teal); border-color: var(--teal); color: #fff; font-weight: 600; }
+    .custom-tag { font-size: 11.5px; color: var(--faint); background: rgba(127,127,127,.15); border-radius: 5px; padding: 3px 8px; }
+    .custom-tag.hidden { display: none; }
+    .test-toggle {
+      margin-left: auto; display: flex; align-items: center; gap: 6px; padding: 6px 13px;
+      border: 1px solid var(--btn-line); background: var(--panel); border-radius: 6px; font-size: 13px; color: var(--muted);
+    }
+    .test-toggle.on { border-color: #7c3aed; background: var(--test-bg); color: var(--test); font-weight: 600; }
+    .reset-btn {
+      width: 30px; height: 30px; border: 1px solid var(--btn-line); background: var(--panel);
+      border-radius: 6px; color: var(--muted); display: flex; align-items: center; justify-content: center;
+    }
+    .test-banner {
+      display: flex; gap: 8px; margin: 0 0 11px; padding: 10px 13px; background: var(--test-bg);
+      border: 1px solid var(--test-line); border-radius: 8px; font-size: 12.5px; color: var(--test); line-height: 1.6;
+    }
+    .test-banner.hidden { display: none; }
+
+    .matrix { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+    .mx-head { display: grid; border-bottom: 1px solid var(--line); background: var(--panel-flat); }
+    .mx-row { display: grid; border-bottom: 1px solid var(--line-soft); }
+    .mx-row:last-of-type { border-bottom: 0; }
+    .mx-row.alt { background: var(--panel-alt); }
+    .matrix, .mx-head, .mx-row { --grid: 1fr 106px 106px; }
+    .matrix.testing .mx-head, .matrix.testing .mx-row { --grid: 1fr 88px 88px 172px; }
+    .mx-head, .mx-row { grid-template-columns: var(--grid); }
+    .th-event {
+      padding: 11px 16px; font-size: 11.5px; font-weight: 600; color: var(--faint);
+      text-transform: uppercase; letter-spacing: .04em; display: flex; align-items: center;
+    }
+    .th-col {
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+      padding: 8px; border: 0; border-left: 1px solid var(--line-soft); background: transparent;
+    }
+    .th-col-title { display: flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; }
+    .th-col-hint { font-size: 10px; color: var(--ghost); }
+    .td-event { display: flex; align-items: center; gap: 11px; padding: 12px 16px; min-width: 0; }
+    .ev-icon { color: var(--muted); flex-shrink: 0; }
+    .ev-label { font-size: 13.5px; font-weight: 600; }
+    .ev-desc { font-size: 11.5px; color: var(--faint); margin-top: 1px; }
+    .td-cell { display: flex; align-items: center; justify-content: center; border-left: 1px solid var(--line-faint); }
+    .check {
+      width: 23px; height: 23px; border-radius: 6px; border: 1.5px solid var(--hair);
+      background: var(--panel); color: #fff; padding: 0; display: flex; align-items: center; justify-content: center;
+    }
+    .check.on-wake { background: var(--teal); border-color: var(--teal); }
+    .check.on-standby { background: #525252; border-color: #525252; }
+    .check svg { visibility: hidden; }
+    .check.on-wake svg, .check.on-standby svg { visibility: visible; }
+    .na { color: var(--btn-line-soft); display: flex; }
+    .td-test { display: none; align-items: center; justify-content: center; gap: 5px; border-left: 1px solid var(--line-faint); padding: 6px 8px; flex-wrap: wrap; }
+    .matrix.testing .td-test { display: flex; }
+    .test-btn {
+      display: flex; align-items: center; gap: 4px; padding: 5px 10px; white-space: nowrap;
+      border: 1px solid var(--test-line); background: var(--test-bg); border-radius: 6px;
+      font-size: 12px; font-weight: 600; color: var(--test);
+    }
+    .test-btn.off { border-color: var(--btn-line-soft); background: var(--panel-flat); color: var(--ghost); font-weight: 400; }
+    .mx-result {
+      display: none; gap: 8px; padding: 10px 16px; font-size: 12.5px; line-height: 1.6;
+      border-bottom: 1px solid var(--line-soft); align-items: flex-start;
+    }
+    .matrix.testing .mx-result.show { display: flex; }
+    .mx-result.success { background: var(--ok-bg); color: var(--ok-ink); }
+    .mx-result.warning { background: var(--warn-bg); color: var(--warn-ink); }
+    .mx-result.error { background: var(--warn-bg); color: var(--danger); }
+    .mx-result.running { background: var(--test-bg); color: var(--test); }
+    .mx-result .detail { font-size: 11px; opacity: .75; margin-top: 2px; font-family: ui-monospace, Consolas, monospace; }
+    .mx-result .close {
+      margin-left: auto; border: 0; background: transparent; color: inherit; opacity: .4;
+      font-size: 12px; flex-shrink: 0; padding: 2px;
+    }
+    .warn-note {
+      display: flex; gap: 8px; margin-top: 11px; padding: 10px 13px; background: var(--warn-bg);
+      border: 1px solid var(--warn-line); border-radius: 8px; font-size: 12.5px; color: var(--warn-ink); line-height: 1.6;
+    }
+    .warn-note.hidden { display: none; }
+    .table-foot { margin: 10px 2px 0; font-size: 11.5px; color: var(--ghost); line-height: 1.6; }
+
+    .switch { width: 38px; height: 22px; appearance: none; background: #aeb8bc; border-radius: 999px; position: relative; cursor: pointer; transition: .18s; flex-shrink: 0; margin: 0; }
+    .switch:checked { background: var(--teal); }
+    .switch::before { content: ""; width: 16px; height: 16px; border-radius: 50%; background: #fff; position: absolute; left: 3px; top: 3px; transition: .18s; }
+    .switch:checked::before { left: 19px; }
+
+    /* ── Toast ── */
+    .toast-area { position: fixed; z-index: 9; top: 18px; right: 22px; display: grid; gap: 8px; width: min(340px, calc(100vw - 44px)); }
+    .toast {
+      padding: 11px 14px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line);
+      box-shadow: 0 12px 34px rgba(0,0,0,.16); font-size: 12.5px;
+    }
+    .toast b { display: block; margin-bottom: 2px; font-size: 13px; }
+    .toast small { color: var(--faint); }
+    .toast.success { border-left: 3px solid #10b981; }
+    .toast.error { border-left: 3px solid var(--danger); }
+    .toast.warning { border-left: 3px solid #d97706; }
+    .toast.info { border-left: 3px solid var(--teal); }
+
+    .boot-error { padding: 40px; color: var(--muted); }
   </style>
 </head>
 <body>
-  <div class="shell"><aside class="sidebar"><div class="brand">KEF Controller<small>Wireless speaker control</small></div><button class="nav active" data-page="home">Home</button><button class="nav" data-page="events">Event diagnostics</button><button class="nav" data-page="settings">Settings</button><div class="spacer"></div><button class="nav" data-page="logs">Application log</button></aside><main id="app" class="content"></main></div><div id="toasts" class="toast-area"></div>
+  <div class="shell">
+    <nav>
+      <button class="nav-btn active" data-nav="home"></button>
+      <button class="nav-btn" data-nav="log"></button>
+      <div class="nav-spacer"></div>
+      <button class="nav-btn" data-nav="settings"></button>
+    </nav>
+    <main id="main"></main>
+  </div>
+  <div id="toasts" class="toast-area"></div>
+
   <script>
-    let state={}, page='home', results={}, scanned=[], volumeTimer, lastAudibleVolume=40, logQuery='';
-    const LOG_KINDS=['error','warn','event','state','step','info'], logKinds=new Set(LOG_KINDS);
-    const api=async(method,...args)=>{const response=await fetch(`/api/${method}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({args})});const payload=await response.json();if(!response.ok||payload.error){const detail=payload.error||'The request failed.';toast('error','Controller error',detail);throw new Error(detail)}return payload.result};
-    const bridge={initialState:()=>api('initialState'),updates:cursor=>api('updates',cursor),logs:()=>api('logs'),refresh:()=>api('refresh'),togglePower:()=>api('togglePower'),setVolume:value=>api('setVolume',value),changeInput:value=>api('changeInput',value),updateSettings:value=>api('updateSettings',value),applyTarget:(ip,mac)=>api('applyTarget',ip,mac),updateStartup:(mode,enabled)=>api('updateStartup',mode,enabled),runEvent:key=>api('runEvent',key),scanSpeakers:()=>api('scanSpeakers'),openLogFolder:()=>api('openLogFolder')};
-    const app=document.querySelector('#app'), esc=s=>String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-    const toast=(level,title,detail)=>{const el=document.createElement('div');el.className=`toast ${level||'info'}`;el.innerHTML=`<b>${esc(title)}</b><small>${esc(detail)}</small>`;document.querySelector('#toasts').append(el);setTimeout(()=>el.remove(),5200)};
-    const setPage=p=>{page=p;document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('active',n.dataset.page===p));render(); if(p==='logs') bridge.logs().then(v=>{state.logs=v;render()}).catch(()=>{})};
-    const svgIcon=paths=>`<svg viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
-    const uiIcon=name=>name==='refresh'?svgIcon('<path d="M20 6v5h-5"></path><path d="M19 11a7.5 7.5 0 1 0 .2 4"></path>'):name==='folder'?svgIcon('<path d="M3 7.5h6l2 2h10v8.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><path d="M3 9.5V6a2 2 0 0 1 2-2h4l2 2h5"></path>'):svgIcon('<path d="M12 2v10"></path><path d="M7.2 5.8a8 8 0 1 0 9.6 0"></path>');
-    const inputIcon=value=>{const icons={wifi:'<path d="M3.5 9a13 13 0 0 1 17 0"></path><path d="M6.5 12.5a8.5 8.5 0 0 1 11 0"></path><path d="M9.7 16a3.5 3.5 0 0 1 4.6 0"></path><circle cx="12" cy="19" r=".7" fill="currentColor" stroke="none"></circle>',bluetooth:'<path d="m8 7 8 10V3L8 13l8 8V7z"></path>',tv:'<rect x="3" y="4" width="18" height="13" rx="1.5"></rect><path d="M8 21h8m-4-4v4"></path>',optical:'<circle cx="12" cy="12" r="2"></circle><path d="M7.8 7.8a6 6 0 0 0 0 8.4m8.4-8.4a6 6 0 0 1 0 8.4M5 5a10 10 0 0 0 0 14m14-14a10 10 0 0 1 0 14"></path>',coaxial:'<path d="M8 3v5a4 4 0 0 0 8 0V3M6 3h4v4H6zm8 0h4v4h-4zM12 12v9m0-4h6v4"></path>',analog:'<path d="M7 5v14m10-14v14M3 9h4m10 6h4"></path><circle cx="3" cy="9" r="1.5"></circle><circle cx="21" cy="15" r="1.5"></circle>',usb:'<path d="M12 3v13m0-10 4 4m-4 2-4 4m4 0a3 3 0 1 0 3 3"></path><path d="m16 6-1-2h2z"></path><circle cx="8" cy="16" r="1.3"></circle>'};return svgIcon(icons[value]||icons.analog)};
-    const inputLabel=value=>({wifi:'Wi-Fi',bluetooth:'蓝牙',tv:'TV (HDMI)',optical:'光纤',coaxial:'同轴',analog:'模拟',usb:'USB'}[value]||value);
-    const home=()=>{const s=state.speaker||{}, online=s.on?'on':(s.ip?'standby':''),vol=Math.max(0,Math.min(100,Number(s.volume??0)));if(vol>0)lastAudibleVolume=vol;const disabled=s.on?'':'disabled',order=['wifi','bluetooth','tv','optical','coaxial','analog','usb'],inputs=[...(state.inputs||[])].sort((a,b)=>order.indexOf(a.value)-order.indexOf(b.value));return `<h1>Home</h1><p class="lede">Control your KEF speaker from one place.</p><section class="card status"><i class="dot ${online}"></i><div class="device"><strong>${esc(s.name)}${s.model?` · ${esc(s.model)}`:''}</strong><span>${esc(s.status||'Disconnected')}${s.ip?` · ${esc(s.ip)}`:''}</span></div><button class="power-state ${s.on?'on':'standby'}" onclick="bridge.togglePower()">${uiIcon('power')}<span>${s.on?'开机':'待机'}</span></button></section><div class="grid"><section class="card volume-card"><div class="volume-heading"><strong>音量</strong><output id="volumeOut">${esc(s.volume??'—')}</output></div><div class="volume-controls"><button id="muteButton" class="volume-button" ${disabled} title="${vol>0?'静音':'恢复音量'}" aria-label="${vol>0?'静音':'恢复音量'}" onclick="toggleMute()">${volumeGlyph(vol<=0)}</button><button class="volume-button" ${disabled} title="音量减 5" aria-label="音量减 5" onclick="nudgeVolume(-5)">−</button><div class="volume-slider-wrap"><input id="volumeSlider" class="volume-slider" type="range" min="0" max="100" step="1" value="${vol}" style="--volume:${vol}%" ${disabled} oninput="previewVolume(this)"><div class="volume-ticks"><span>0</span><span>25</span><span>50</span><span>75</span><span>100</span></div></div><button class="volume-button" ${disabled} title="音量加 5" aria-label="音量加 5" onclick="nudgeVolume(5)">＋</button></div></section><section class="card card-pad"><div class="eyebrow">输入源</div><div class="inputs">${inputs.map(x=>`<button class="input ${s.input===x.value?'active':''}" ${disabled} onclick="bridge.changeInput('${x.value}')">${inputIcon(x.value)}<span>${esc(inputLabel(x.value))}</span></button>`).join('')}</div></section><section class="card card-pad"><div class="eyebrow">DEVICE INFO</div><dl class="details"><dt>IP address</dt><dd>${esc(s.ip||'—')}</dd><dt>MAC address</dt><dd>${esc(s.mac||'—')}</dd><dt>Model</dt><dd>${esc(s.model||'—')}</dd><dt>Firmware</dt><dd>${esc(s.firmware||'—')}</dd></dl></section></div>`};
-    const events=()=>`<h1>Event diagnostics</h1><p class="lede">Enable a power behavior and test it from the same row.</p><section class="card table"><div class="event-row" style="min-height:42px"><div class="eyebrow">TRIGGER EVENT</div><div class="eyebrow" style="text-align:center">WAKE</div><div class="eyebrow" style="text-align:center">STANDBY</div><div class="eyebrow">TEST</div></div>${(state.events||[]).map(e=>{const wake=['startup','display-on','unlock'].includes(e.key), standby=!wake;const r=results[e.key];return `<div class="event-row"><div class="event-label"><strong>${esc(e.label)}</strong><span>${esc(e.description)}</span></div><div style="text-align:center">${wake?`<input class="switch" type="checkbox" ${e.enabled?'checked':''} onchange="saveRule('${e.setting}',this.checked)">`:'<span class="na">—</span>'}</div><div style="text-align:center">${standby?`<input class="switch" type="checkbox" ${e.enabled?'checked':''} onchange="saveRule('${e.setting}',this.checked)">`:'<span class="na">—</span>'}</div><div class="tests"><button class="secondary small" onclick="bridge.runEvent('${e.key}')">▶ Simulate</button></div>${r?`<div class="result show ${esc(r.state)}"><b>${esc(r.title)}</b> · ${esc(r.detail)}</div>`:''}</div>`}).join('')}</section>`;
-    const settings=()=>{const s=state.settings||{}, ruleRows=[['wake_on_startup','Wake speaker when the app starts'],['standby_on_display_off','Standby when the screen turns off'],['wake_on_display_on','Wake speaker when the screen turns on'],['wake_on_unlock_only','Wake speaker after Windows unlocks'],['standby_on_lock','Standby when Windows locks'],['standby_on_sleep','Standby when Windows sleeps'],['endsession_standby_on_shutdown','Standby when Windows shuts down']];const devices=scanned.map(d=>`<button class="secondary small" onclick="chooseSpeaker('${esc(d.ip)}','${esc(d.mac)}')">${esc(d.name||d.model||'KEF speaker')} · ${esc(d.ip)}${d.mac?` · ${esc(d.mac)}`:''}</button>`).join('');return `<h1>Settings</h1><p class="lede">Changes are applied immediately and saved to your local configuration.</p><div class="section-title"><h2>Speaker</h2></div><section class="card settings"><div class="setting"><div><strong>Find a speaker</strong><span>Search the local network for supported KEF speakers.</span></div><div><button class="secondary" onclick="bridge.scanSpeakers()">Scan network</button>${devices?`<div class="tests" style="margin-top:8px">${devices}</div>`:''}</div></div><div class="setting"><div><strong>Target speaker IP</strong><span>Used to reach your speaker directly.</span></div><input id="set-ip" type="text" value="${esc(s.device?.kef_ip||'')}"></div><div class="setting"><div><strong>Target speaker MAC</strong><span>Lets the controller recover a changed IP address.</span></div><input id="set-mac" type="text" value="${esc(s.device?.kef_mac||'')}"></div><div class="setting"><div><strong>Default input</strong><span>Selected after a wake action.</span></div><select id="set-input">${(state.inputs||[]).map(x=>`<option value="${x.value}" ${s.device?.kef_input===x.value?'selected':''}>${esc(x.label)}</option>`).join('')}</select></div></section><div class="section-title"><h2>Speaker power behavior</h2><span class="hint">Each rule also appears in Event diagnostics.</span></div><section class="card settings">${ruleRows.map(([k,label])=>`<div class="setting"><div><strong>${label}</strong></div><input class="switch" data-setting="${k}" type="checkbox" ${s.wake?.[k]??s.standby_triggers?.[k]??s.end_session?.[k]?'checked':''}></div>`).join('')}</section><div class="section-title"><h2>Windows startup</h2></div><section class="card settings"><div class="setting"><div><strong>Run when I sign in</strong><span>Creates or removes the selected Windows startup registration.</span></div><input id="set-startup-enabled" class="switch" type="checkbox" ${state.startup?.registered?'checked':''}></div><div class="setting"><div><strong>Registration method</strong></div><select id="set-startup"><option value="off" ${s.startup?.startup_registration_mode==='off'?'selected':''}>Off</option><option value="task" ${s.startup?.startup_registration_mode==='task'?'selected':''}>Task Scheduler</option><option value="registry" ${s.startup?.startup_registration_mode==='registry'?'selected':''}>Registry Run</option></select></div></section><p style="margin-top:16px"><button class="primary" onclick="saveSettings()">Save settings</button></p>`};
-    const parseLog=line=>{const raw=String(line||''),full=raw.match(/^\[([^\]]+)\]\[([^\]]+)\]\s*(.*)$/),short=full?null:raw.match(/^\[([^\]]+)\]\s*(.*)$/),stamp=full?full[1]:(short?short[1]:''),source=full?full[2]:'',original=full?full[3]:(short?short[2]:raw),upper=original.toUpperCase();let kind='info';if(/\b(ERROR|EXCEPTION|TRACEBACK|FAILED|FAILURE)\b/.test(upper))kind='error';else if(/\b(WARN|WARNING)\b|COULD NOT|IS DISABLED/.test(upper))kind='warn';else if(/\bEVENT\b|\bKIND=/.test(upper))kind='event';else if(/\bSTATE\b|\bDESIRED=/.test(upper))kind='state';else if(/\bSTEP\b|\bSTEP=/.test(upper))kind='step';const message=original.replace(/^\s*(ERROR|WARN(?:ING)?|EVENT|STATE|STEP|INFO)\s*[:|-]?\s*/i,'');return{raw,time:stamp.includes(' ')?stamp.split(' ').pop():stamp,source,message,kind}};
-    const logItems=()=>((state.logs||[]).map(parseLog));
-    const visibleLogItems=()=>{const q=logQuery.trim().toLowerCase();return logItems().filter(x=>logKinds.has(x.kind)&&(!q||x.raw.toLowerCase().includes(q)))};
-    const logRowsMarkup=()=>{const rows=visibleLogItems();return rows.length?rows.map(x=>`<div class="log-row ${x.kind}"><span class="log-time">${esc(x.time||'—')}</span><span class="log-level ${x.kind}">${x.kind.toUpperCase()}</span><span class="log-message">${x.source?`${esc(x.source)} · `:''}${esc(x.message)}</span></div>`).join(''):'<div class="log-empty">没有符合当前条件的日志。</div>'};
-    const logs=()=>{const items=logItems(),counts=Object.fromEntries(LOG_KINDS.map(k=>[k,items.filter(x=>x.kind===k).length])),visible=visibleLogItems().length;return `<div class="section-title"><div><h1>应用日志</h1><p class="lede" style="margin:5px 0 0">查看、搜索和筛选控制器的实时诊断记录。</p></div><div class="toolbar"><button class="secondary" onclick="reloadLogs()">${uiIcon('refresh')}<span>刷新</span></button><button class="secondary" onclick="bridge.openLogFolder()">${uiIcon('folder')}<span>打开文件夹</span></button></div></div><div class="log-search"><input id="log-search" type="search" placeholder="搜索日志…" value="${esc(logQuery)}" oninput="setLogQuery(this.value)"></div><div class="log-filters">${LOG_KINDS.map(k=>`<button data-log-kind="${k}" class="log-chip ${k} ${logKinds.has(k)?'active':''}" onclick="toggleLogKind('${k}')">${k.toUpperCase()}&nbsp; <span>${counts[k]}</span></button>`).join('')}</div><div id="log-list" class="log-panel">${logRowsMarkup()}</div><div id="log-footer" class="log-footer">显示 ${visible} / ${items.length} 行</div>`};
-    function render(){app.innerHTML=page==='home'?home():page==='events'?events():page==='settings'?settings():logs()}
-    function volumeGlyph(muted){return muted?'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"></path><path d="m16 9 5 6m0-6-5 6"></path></svg>':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"></path><path d="M15 9a4 4 0 0 1 0 6m3-9a8 8 0 0 1 0 12"></path></svg>'}
-    function updateVolumeUi(value){const v=Math.max(0,Math.min(100,Math.round(Number(value)||0))),out=document.querySelector('#volumeOut'),slider=document.querySelector('#volumeSlider'),mute=document.querySelector('#muteButton');if(out)out.textContent=v;if(slider){slider.value=v;slider.style.setProperty('--volume',`${v}%`)}if(v>0)lastAudibleVolume=v;if(mute){mute.innerHTML=volumeGlyph(v<=0);mute.title=v>0?'静音':'恢复音量';mute.setAttribute('aria-label',mute.title)}return v}
-    function previewVolume(input){const v=updateVolumeUi(input.value);clearTimeout(volumeTimer);volumeTimer=setTimeout(()=>bridge.setVolume(v).catch(()=>{}),180)}
-    function nudgeVolume(delta){clearTimeout(volumeTimer);const slider=document.querySelector('#volumeSlider'),current=slider?Number(slider.value):Number(state.speaker?.volume||0),value=updateVolumeUi(current+delta);bridge.setVolume(value).catch(()=>{})}
-    function toggleMute(){clearTimeout(volumeTimer);const slider=document.querySelector('#volumeSlider'),current=slider?Number(slider.value):Number(state.speaker?.volume||0),value=updateVolumeUi(current>0?0:(lastAudibleVolume||40));bridge.setVolume(value).catch(()=>{})}
-    function saveRule(key,value){bridge.updateSettings(JSON.stringify({[key]:value})).catch(()=>{})}
-    function chooseSpeaker(ip,mac){document.querySelector('#set-ip').value=ip;document.querySelector('#set-mac').value=mac;bridge.applyTarget(ip,mac).catch(()=>{})}
-    function saveSettings(){const c={kef_input:document.querySelector('#set-input').value};document.querySelectorAll('[data-setting]').forEach(x=>c[x.dataset.setting]=x.checked);bridge.updateSettings(JSON.stringify(c)).catch(()=>{});bridge.applyTarget(document.querySelector('#set-ip').value.trim(),document.querySelector('#set-mac').value.trim()).catch(()=>{});bridge.updateStartup(document.querySelector('#set-startup').value,document.querySelector('#set-startup-enabled').checked).catch(()=>{})}
-    function reloadLogs(){bridge.refresh().then(()=>bridge.logs()).then(v=>{state.logs=v;render()}).catch(()=>{})}
-    function setLogQuery(value){logQuery=value;refreshLogResults()}
-    function toggleLogKind(kind){logKinds.has(kind)?logKinds.delete(kind):logKinds.add(kind);render()}
-    function refreshLogResults(){const list=document.querySelector('#log-list'),footer=document.querySelector('#log-footer'),items=logItems();if(!list||!footer)return;list.innerHTML=logRowsMarkup();footer.textContent=`显示 ${visibleLogItems().length} / ${items.length} 行`;document.querySelectorAll('[data-log-kind]').forEach(chip=>{const kind=chip.dataset.logKind;chip.querySelector('span').textContent=items.filter(x=>x.kind===kind).length})}
-    document.querySelectorAll('.nav').forEach(n=>n.onclick=()=>setPage(n.dataset.page));
-    window.kefNative={stateChanged(raw){const next=JSON.parse(raw);if(!Object.prototype.hasOwnProperty.call(next,'logs'))next.logs=state.logs||[];state=next;const tag=document.activeElement?.tagName;if(tag!=='INPUT'&&tag!=='SELECT')render()},toast(raw){const msg=JSON.parse(raw);if(msg.kind==='event'){results[msg.key]=msg;render()}else if(msg.kind==='scan'){scanned=[...scanned,...msg.devices].filter((d,i,a)=>d.ip&&a.findIndex(x=>x.ip===d.ip)===i);if(page==='settings')render()}else toast(msg.level,msg.title,msg.detail)},logLine(line){if(page==='logs'){state.logs=[...(state.logs||[]),line].slice(-500);document.activeElement?.id==='log-search'?refreshLogResults():render()}}};
-    let updateCursor=0, polling=false;
-    async function pollUpdates(){if(polling)return;polling=true;try{const batch=await bridge.updates(updateCursor);updateCursor=batch.cursor;for(const item of batch.updates){if(item.channel==='state')window.kefNative.stateChanged(item.payload);else if(item.channel==='toast')window.kefNative.toast(item.payload);else if(item.channel==='log')window.kefNative.logLine(item.payload)}}catch(_error){}finally{polling=false}}
-    bridge.initialState().then(value=>{state=value;render()}).catch(()=>{app.innerHTML='<h1>Controller unavailable</h1><p class="lede">The local controller interface could not be started.</p>'});
-    setInterval(pollUpdates,400);
+  "use strict";
+  // ═════════════════════════════════════════════════════════
+  // 常量与工具
+  // ═════════════════════════════════════════════════════════
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  const $$ = (sel, root) => [...(root || document).querySelectorAll(sel)];
+  const esc = s => String(s ?? "").replace(/[&<>'"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c]));
+
+  const ICONS = {
+    home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.7V21h14V9.7"/>',
+    log: '<path d="M14 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3v5h5"/><path d="M8.5 12.5h7m-7 4h7"/>',
+    settings: '<circle cx="12" cy="12" r="3.1"/><path d="M12 2.8v2.6m0 13.2v2.6M4.9 4.9l1.9 1.9m10.4 10.4 1.9 1.9M2.8 12h2.6m13.2 0h2.6M4.9 19.1l1.9-1.9M17.2 6.8l1.9-1.9"/>',
+    power: '<path d="M12 2v10"/><path d="M7.2 5.8a8 8 0 1 0 9.6 0"/>',
+    play: '<path d="M7 4.5v15l12-7.5z"/>',
+    monitor: '<rect x="3" y="4" width="18" height="13" rx="1.5"/><path d="M8 21h8m-4-4v4"/>',
+    lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+    unlock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.7-1.4"/>',
+    moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5z"/>',
+    laptop: '<rect x="4.5" y="5" width="15" height="10.5" rx="1.5"/><path d="M2 19h20"/>',
+    monitorOff: '<rect x="3" y="4" width="18" height="13" rx="1.5"/><path d="M8 21h8m-4-4v4"/><path d="m5.5 6.5 13 8"/>',
+    flask: '<path d="M9.5 3h5M10 3v6l-5.2 8.7A2 2 0 0 0 6.5 21h11a2 2 0 0 0 1.7-3.3L14 9V3"/><path d="M7.6 15h8.8"/>',
+    chevronRight: '<path d="m9.5 6.5 5.5 5.5-5.5 5.5"/>',
+    chevronDown: '<path d="m6.5 9.5 5.5 5.5 5.5-5.5"/>',
+    check: '<path d="m5 12.5 5 5 9-10.5"/>',
+    minus: '<path d="M6 12h12"/>',
+    plus: '<path d="M12 6v12M6 12h12"/>',
+    x: '<path d="m6 6 12 12M18 6 6 18"/>',
+    volume: '<path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15 9a4 4 0 0 1 0 6m3-9a8 8 0 0 1 0 12"/>',
+    volumeX: '<path d="M11 5 6 9H3v6h3l5 4z"/><path d="m16 9 5 6m0-6-5 6"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="m20.5 20.5-4.6-4.6"/>',
+    refresh: '<path d="M20 6v5h-5"/><path d="M19 11a7.5 7.5 0 1 0 .2 4"/>',
+    folder: '<path d="M3 7.5h6l2 2h10v8.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 9.5V6a2 2 0 0 1 2-2h4l2 2h5"/>',
+    rotateCcw: '<path d="M3 3v5h5"/><path d="M3.5 8A9 9 0 1 1 3 12"/>',
+    alert: '<circle cx="12" cy="12" r="9"/><path d="M12 8v4.5m0 3.2v.1"/>',
+    loader: '<path d="M12 3a9 9 0 1 1-9 9"/>',
+    wifi: '<path d="M3.5 9a13 13 0 0 1 17 0"/><path d="M6.5 12.5a8.5 8.5 0 0 1 11 0"/><path d="M9.7 16a3.5 3.5 0 0 1 4.6 0"/><circle cx="12" cy="19" r=".7" fill="currentColor" stroke="none"/>',
+    bluetooth: '<path d="m8 7 8 10V3L8 13l8 8V7z"/>',
+    tv: '<rect x="3" y="4" width="18" height="13" rx="1.5"/><path d="M8 21h8m-4-4v4"/>',
+    optical: '<circle cx="12" cy="12" r="2"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4m8.4-8.4a6 6 0 0 1 0 8.4M5 5a10 10 0 0 0 0 14m14-14a10 10 0 0 1 0 14"/>',
+    coaxial: '<path d="M8 3v5a4 4 0 0 0 8 0V3M6 3h4v4H6zm8 0h4v4h-4zM12 12v9m0-4h6v4"/>',
+    analog: '<path d="M7 5v14m10-14v14M3 9h4m10 6h4"/><circle cx="3" cy="9" r="1.5"/><circle cx="21" cy="15" r="1.5"/>',
+    usb: '<path d="M12 3v13m0-10 4 4m-4 2-4 4m4 0a3 3 0 1 0 3 3"/><path d="m16 6-1-2h2z"/><circle cx="8" cy="16" r="1.3"/>',
+  };
+  const icon = (name, size = 15, cls = "") =>
+    `<svg class="${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
+
+  const INPUT_META = {
+    wifi: "Wi-Fi", bluetooth: "蓝牙", tv: "TV (HDMI)", optical: "光纤",
+    coaxial: "同轴", analog: "模拟", usb: "USB",
+  };
+  const INPUT_ORDER = ["wifi", "bluetooth", "tv", "optical", "coaxial", "analog", "usb"];
+  const inputLabel = v => INPUT_META[v] || v;
+
+  // 电源行为矩阵：每行对应后端 config 字段与可模拟的事件
+  const EVENT_ROWS = [
+    { id: "app_start", label: "App 启动", desc: "打开 KEF Controller 时", icon: "play",
+      wake: "wake_on_startup", standby: null,
+      tests: [{ key: "startup", label: "启动", col: "wake" }] },
+    { id: "screen", label: "屏幕开关", desc: "显示器点亮 / 熄灭时", icon: "monitor",
+      wake: "wake_on_display_on", standby: "standby_on_display_off",
+      tests: [{ key: "display-off", label: "熄屏", col: "standby" }, { key: "display-on", label: "亮屏", col: "wake" }] },
+    { id: "lock", label: "Windows 锁屏", desc: "锁定 / 解锁时", icon: "lock",
+      wake: "wake_on_unlock_only", standby: "standby_on_lock",
+      tests: [{ key: "lock", label: "锁定", col: "standby" }, { key: "unlock", label: "解锁", col: "wake" }] },
+    { id: "sleep", label: "Windows 睡眠", desc: "进入睡眠时", icon: "moon",
+      wake: null, standby: "standby_on_sleep",
+      tests: [{ key: "sleep", label: "睡眠", col: "standby" }] },
+    { id: "lid", label: "笔记本合盖", desc: "合上笔记本盖子时", icon: "laptop",
+      wake: null, standby: "standby_on_lid_close", tests: [] },
+    { id: "shutdown", label: "Windows 关机", desc: "关机或注销时", icon: "power",
+      wake: null, standby: "endsession_standby_on_shutdown",
+      tests: [{ key: "shutdown", label: "关机", col: "standby" }] },
+  ];
+  const RULE_KEYS = EVENT_ROWS.flatMap(r => [r.wake, r.standby]).filter(Boolean);
+  const PRESETS = {
+    recommended: { label: "推荐", desc: "跟随电脑状态自动开关",
+      values: Object.fromEntries(RULE_KEYS.map(k => [k, true])) },
+    conservative: { label: "保守", desc: "只在睡眠、合盖和关机时待机",
+      values: Object.fromEntries(RULE_KEYS.map(k =>
+        [k, ["standby_on_sleep", "standby_on_lid_close", "endsession_standby_on_shutdown"].includes(k)])) },
+    manual: { label: "手动", desc: "全部关闭，只手动控制",
+      values: Object.fromEntries(RULE_KEYS.map(k => [k, false])) },
+  };
+
+  const TOAST_ZH = {
+    "Controller error": "控制器错误", "Volume updated": "音量已更新", "Volume update failed": "音量更新失败",
+    "Input changed": "输入源已切换", "Input change failed": "输入源切换失败", "Invalid input": "无效的输入源",
+    "Settings were not saved": "设置未保存", "Settings saved": "设置已保存",
+    "Settings updated for this session": "设置已在本次会话生效",
+    "Target not saved": "目标未保存", "Target saved": "目标已保存",
+    "Target updated for this session": "目标已在本次会话生效",
+    "Startup settings saved": "开机自启设置已保存", "Startup settings need attention": "开机自启设置需要处理",
+    "Scanning for speakers": "正在扫描扬声器", "Speaker scan complete": "扫描完成", "Speaker scan failed": "扫描失败",
+    "Speaker action": "扬声器操作", "Speaker action failed": "扬声器操作失败",
+    "Wake": "唤醒", "Standby": "待机", "Early Standby": "提前待机", "Endsession Standby": "关机待机",
+    "Unknown test": "未知的模拟事件",
+    "Running": "执行中", "Completed": "已完成", "No action": "无动作", "Failed": "失败",
+  };
+  const DETAIL_ZH = [
+    [/^Searching the local network…$/, "正在搜索本地网络…"],
+    [/^Found (\d+) supported speaker\(s\)\.$/, "找到 $1 台受支持的扬声器。"],
+    [/^No supported speakers were found\.$/, "未找到受支持的扬声器。"],
+    [/^Changes are now active\.$/, "更改已生效。"],
+    [/^Volume is now (\d+)\.$/, "音量已设为 $1。"],
+    [/^Switched to (\S+)\.$/, "已切换到 $1。"],
+    [/^Verified ([\d.]+) and saved the target\.$/, "已验证 $1 并保存目标。"],
+    [/^Recovered ([\d.]+) from the MAC address and saved it\.$/, "已通过 MAC 找回 $1 并保存。"],
+    [/^Saved the target, but the speaker did not report its MAC during verification\.$/, "目标已保存，但验证时扬声器未报告 MAC。"],
+    [/^Saved the MAC target\. The app will recover its IP when the speaker appears\.$/, "已保存 MAC 目标，扬声器上线后会自动找回 IP。"],
+    [/^Saved the target as a connection hint; it is not reachable right now\.$/, "已保存为连接提示；当前无法访问该地址。"],
+    [/^That IP responded, but is not a supported KEF speaker\.$/, "该 IP 有响应，但不是受支持的 KEF 扬声器。"],
+    [/^That IP belongs to a speaker with MAC (.+)\.$/, "该 IP 属于 MAC 为 $1 的扬声器。"],
+    [/^Enter a routable IPv4 address\.$/, "请输入有效的 IPv4 地址。"],
+    [/^Enter a 12-digit MAC address\.$/, "请输入 12 位 MAC 地址。"],
+    [/^Enter an IP address or MAC address\.$/, "请输入 IP 或 MAC 地址。"],
+    [/^The target details could not be validated\.$/, "无法验证目标信息。"],
+    [/^Windows startup registration is up to date\.$/, "Windows 开机自启注册已更新。"],
+    [/^Wake requested$/, "已请求唤醒"], [/^Standby requested$/, "已请求待机"],
+    [/^Wake is running\.$/, "正在唤醒扬声器。"], [/^Standby is running\.$/, "正在进入待机。"],
+    [/^Action scheduled( ·.*)?$/, "动作已调度$1"],
+    [/^No action was scheduled( ·.*)?$/, "未调度任何动作$1"],
+    [/^Waiting for the controller to respond…$/, "等待控制器响应…"],
+  ];
+  const zhTitle = t => TOAST_ZH[t] || t;
+  const zhDetail = d => {
+    let out = String(d || "");
+    for (const [re, rep] of DETAIL_ZH) if (re.test(out)) { out = out.replace(re, rep); break; }
+    return out.replace(/Speaker: On/, "扬声器：开机").replace(/Speaker: Standby/, "扬声器：待机")
+              .replace(/Speaker: Unknown/, "扬声器：未知").replace(/^Completed/, "已完成").replace(/^Failed/, "失败");
+  };
+
+  // ═════════════════════════════════════════════════════════
+  // API（本地回环 HTTP → Python 桥）
+  // ═════════════════════════════════════════════════════════
+  const api = async (method, ...args) => {
+    const response = await fetch(`/api/${method}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ args }),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.error) {
+      const detail = payload.error || "请求失败。";
+      toast("error", "控制器错误", detail);
+      throw new Error(detail);
+    }
+    return payload.result;
+  };
+  const bridge = {
+    initialState: () => api("initialState"),
+    updates: cursor => api("updates", cursor),
+    logs: () => api("logs"),
+    refresh: () => api("refresh"),
+    togglePower: () => api("togglePower"),
+    setVolume: v => api("setVolume", v),
+    changeInput: v => api("changeInput", v),
+    updateSettings: v => api("updateSettings", v),
+    applyTarget: (ip, mac) => api("applyTarget", ip, mac),
+    updateStartup: (mode, enabled) => api("updateStartup", mode, enabled),
+    runEvent: key => api("runEvent", key),
+    scanSpeakers: () => api("scanSpeakers"),
+    openLogFolder: () => api("openLogFolder"),
+  };
+
+  // ═════════════════════════════════════════════════════════
+  // 全局状态
+  // ═════════════════════════════════════════════════════════
+  let state = null, lastStateJson = "";
+  let page = "home";
+  let muted = false, lastAudible = 40, volumeTimer = null, editingVol = false, draggingVol = false;
+  let volumeHoldUntil = 0; // 用户刚改过音量时，短暂忽略远端快照，避免被旧值覆盖
+  let powerPending = false, powerPendingTimer = null;
+  let infoOpen = false;
+  let testMode = false, runningTest = null;
+  let dlg = null; // 选择扬声器弹窗：{ phase: "scanning"|"done", found: [], checked: 0, failed: "" }
+  let inputHoldUntil = 0, localInput = null; // 与音量同理：刚点过的输入源短暂优先于远端快照
+  let logItems = [], logQuery = "", logSearchTimer = null;
+  const LOG_LEVELS = ["ERROR", "WARN", "EVENT", "STATE", "STEP", "INFO"];
+  const activeLevels = new Set(LOG_LEVELS);
+  let savedFlashTimer = null;
+
+  const ruleOn = key => {
+    if (!state || !key) return false;
+    const s = state.settings || {};
+    for (const section of ["wake", "standby_triggers", "end_session"]) {
+      if (s[section] && key in s[section]) return !!s[section][key];
+    }
+    return false;
+  };
+
+  // ═════════════════════════════════════════════════════════
+  // Toast
+  // ═════════════════════════════════════════════════════════
+  function toast(level, title, detail) {
+    const el = document.createElement("div");
+    el.className = `toast ${level || "info"}`;
+    el.innerHTML = `<b>${esc(zhTitle(title))}</b><small>${esc(zhDetail(String(detail || "")))}</small>`;
+    $("#toasts").append(el);
+    setTimeout(() => el.remove(), 5200);
+  }
+  function flashSaved() {
+    const el = $("#saved-flash");
+    if (!el) return;
+    el.classList.remove("hidden");
+    clearTimeout(savedFlashTimer);
+    savedFlashTimer = setTimeout(() => el.classList.add("hidden"), 1600);
+  }
+
+  // ═════════════════════════════════════════════════════════
+  // 页面骨架（只构建一次，之后定点更新，避免打断滚动/点击）
+  // ═════════════════════════════════════════════════════════
+  function buildShell() {
+    const navMeta = { home: ["home", "主页"], log: ["log", "日志"], settings: ["settings", "设置"] };
+    for (const btn of $$(".nav-btn")) {
+      const [ic, label] = navMeta[btn.dataset.nav];
+      btn.innerHTML = `${icon(ic, 17)}<span>${label}</span>`;
+    }
+    $("#main").innerHTML = `
+      <div id="page-home" class="page">${homeSkeleton()}</div>
+      <div id="page-log" class="page hidden">${logSkeleton()}</div>
+      <div id="page-settings" class="page hidden">${settingsSkeleton()}</div>`;
+    bindHome();
+    bindLog();
+    bindSettings();
+  }
+
+  // ── 主页 ──
+  function homeSkeleton() {
+    const inputs = [...(state.inputs || [])]
+      .sort((a, b) => INPUT_ORDER.indexOf(a.value) - INPUT_ORDER.indexOf(b.value));
+    return `
+      <div class="status-bar">
+        <span id="dot" class="dot"></span>
+        <div style="min-width:0">
+          <div id="dev-name" class="status-name">—</div>
+          <div id="dev-sub" class="status-sub">—</div>
+        </div>
+        <button id="power-btn" class="power-switch" role="switch">${icon("power", 14)}<span>—</span></button>
+      </div>
+
+      <section id="vol-card" class="card">
+        <div class="vol-head">
+          <span class="card-label">音量</span>
+          <button id="vol-display" class="vol-display" title="点击直接输入音量">—</button>
+          <input id="vol-edit" class="vol-edit" style="display:none" inputmode="numeric">
+        </div>
+        <div class="vol-row">
+          <button id="mute-btn" class="vol-icon-btn" title="静音">${icon("volume", 19)}</button>
+          <button id="vol-down" class="nudge-btn" title="音量 −1">${icon("minus", 15)}</button>
+          <div class="slider-wrap">
+            <input id="vol-slider" class="slider" type="range" min="0" max="100" step="1" value="0">
+            <div class="ticks"><span>0</span><span>25</span><span>50</span><span>75</span><span>100</span></div>
+          </div>
+          <button id="vol-up" class="nudge-btn" title="音量 +1">${icon("plus", 15)}</button>
+        </div>
+        <div id="mute-note" class="mute-note hidden">${icon("volumeX", 12)} 已静音，点击喇叭图标恢复</div>
+      </section>
+
+      <section id="input-card" class="card">
+        <span class="card-label">输入源</span>
+        <div class="input-grid">
+          ${inputs.map(x => `
+            <button class="input-btn" data-input="${esc(x.value)}">
+              ${icon(x.value in ICONS ? x.value : "analog", 15)}<span>${esc(inputLabel(x.value))}</span>
+            </button>`).join("")}
+        </div>
+      </section>
+
+      <section class="card-flat">
+        <button id="info-head" class="info-head">
+          <span id="info-chevron">${icon("chevronRight", 15)}</span>
+          <span class="info-title">设备信息</span>
+          <span id="info-summary" class="info-summary">—</span>
+        </button>
+        <dl id="info-grid" class="info-grid hidden">
+          ${["IP 地址", "MAC 地址", "型号", "固件"].map((k, i) => `
+            <div class="info-row"><dt>${k}</dt><dd id="info-v${i}">—</dd></div>`).join("")}
+        </dl>
+      </section>`;
+  }
+
+  function bindHome() {
+    $("#power-btn").addEventListener("click", () => {
+      if (powerPending) return;
+      powerPending = true;
+      clearTimeout(powerPendingTimer);
+      powerPendingTimer = setTimeout(() => { powerPending = false; syncHome(); }, 12000);
+      syncHome();
+      bridge.togglePower().catch(() => { powerPending = false; syncHome(); });
+    });
+
+    const slider = $("#vol-slider");
+    slider.addEventListener("pointerdown", () => { draggingVol = true; });
+    slider.addEventListener("pointerup", () => { draggingVol = false; });
+    slider.addEventListener("input", () => {
+      muted = false;
+      previewVolume(+slider.value);
+    });
+    $("#vol-down").addEventListener("click", () => nudge(-1));
+    $("#vol-up").addEventListener("click", () => nudge(1));
+    $("#mute-btn").addEventListener("click", () => {
+      const current = currentVolume();
+      if (!muted && current > 0) { muted = true; lastAudible = current; sendVolume(0); }
+      else { muted = false; sendVolume(lastAudible || 40); }
+      syncHome();
+    });
+
+    $("#vol-display").addEventListener("click", () => {
+      editingVol = true;
+      const edit = $("#vol-edit");
+      edit.value = String(currentVolume());
+      $("#vol-display").style.display = "none";
+      edit.style.display = "";
+      edit.focus(); edit.select();
+    });
+    const commitVol = () => {
+      if (!editingVol) return;
+      editingVol = false;
+      const edit = $("#vol-edit");
+      const n = Math.max(0, Math.min(100, parseInt(edit.value, 10) || 0));
+      edit.style.display = "none";
+      $("#vol-display").style.display = "";
+      muted = false;
+      sendVolume(n);
+      syncHome();
+    };
+    $("#vol-edit").addEventListener("blur", commitVol);
+    $("#vol-edit").addEventListener("keydown", e => {
+      if (e.key === "Enter") commitVol();
+      if (e.key === "Escape") { editingVol = false; $("#vol-edit").style.display = "none"; $("#vol-display").style.display = ""; }
+    });
+    $("#vol-edit").addEventListener("input", e => {
+      e.target.value = e.target.value.replace(/\D/g, "").slice(0, 3);
+    });
+
+    $(".input-grid").addEventListener("click", e => {
+      const btn = e.target.closest("[data-input]");
+      if (!btn || btn.disabled) return;
+      localInput = btn.dataset.input;
+      inputHoldUntil = Date.now() + 2500;
+      bridge.changeInput(localInput).catch(() => {});
+      if (state && state.speaker) { state.speaker.input = localInput; syncHome(); }
+    });
+
+    $("#info-head").addEventListener("click", () => {
+      infoOpen = !infoOpen;
+      $("#info-grid").classList.toggle("hidden", !infoOpen);
+      $("#info-chevron").innerHTML = icon(infoOpen ? "chevronDown" : "chevronRight", 15);
+    });
+  }
+
+  const currentVolume = () => {
+    const slider = $("#vol-slider");
+    return slider ? +slider.value : Number(state?.speaker?.volume || 0);
+  };
+  function paintVolume(v) {
+    const value = Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
+    const slider = $("#vol-slider");
+    slider.value = value;
+    slider.style.setProperty("--volume", `${value}%`);
+    $("#vol-display").textContent = String(value);
+    $("#mute-btn").innerHTML = icon(value <= 0 ? "volumeX" : "volume", 19);
+    $("#mute-btn").title = value <= 0 ? "恢复音量" : "静音";
+    $("#mute-btn").querySelector("svg").style.color = value <= 0 ? "var(--danger)" : "";
+    $("#mute-note").classList.toggle("hidden", !(muted && value <= 0));
+    if (value > 0) lastAudible = value;
+    return value;
+  }
+  function previewVolume(v) {
+    const value = paintVolume(v);
+    if (state && state.speaker) state.speaker.volume = value;
+    volumeHoldUntil = Date.now() + 2500;
+    clearTimeout(volumeTimer);
+    volumeTimer = setTimeout(() => bridge.setVolume(value).catch(() => {}), 180);
+  }
+  function sendVolume(v) {
+    clearTimeout(volumeTimer);
+    const value = paintVolume(v);
+    if (state && state.speaker) state.speaker.volume = value;
+    volumeHoldUntil = Date.now() + 2500;
+    bridge.setVolume(value).catch(() => {});
+  }
+  function nudge(delta) {
+    muted = false;
+    sendVolume(currentVolume() + delta);
+  }
+
+  function syncHome() {
+    if (!state) return;
+    const s = state.speaker || {};
+    const on = !!s.on;
+    $("#dot").className = `dot ${on ? "on" : ""}`;
+    $("#dev-name").textContent = s.name || "未找到设备";
+    const link = s.ip ? (on ? "已连接 · 开机" : "已连接 · 待机") : "未连接";
+    $("#dev-sub").textContent = `${link}${s.ip ? " · " + s.ip : ""}`;
+
+    const pb = $("#power-btn");
+    pb.className = `power-switch ${on ? "on" : ""} ${powerPending ? "pending" : ""}`;
+    pb.disabled = powerPending;
+    pb.setAttribute("aria-checked", String(on));
+    pb.innerHTML = powerPending
+      ? `${icon("loader", 14, "spin")}<span>切换中</span>`
+      : `${icon("power", 14)}<span>${on ? "开机" : "待机"}</span>`;
+
+    if (!editingVol && !draggingVol && s.volume != null && Date.now() > volumeHoldUntil) {
+      if (muted && Number(s.volume) > 0) muted = false;
+      paintVolume(s.volume);
+    }
+    $("#vol-card").classList.toggle("dim", !on);
+    $("#input-card").classList.toggle("dim", !on);
+    const shownInput = (Date.now() < inputHoldUntil && localInput) ? localInput : s.input;
+    for (const btn of $$("[data-input]")) {
+      btn.classList.toggle("active", btn.dataset.input === shownInput);
+      btn.disabled = !on;
+    }
+
+    $("#info-summary").textContent = [s.model, s.firmware].filter(Boolean).join(" · ") || "—";
+    const vals = [s.ip, s.mac, s.model, s.firmware];
+    vals.forEach((v, i) => { $(`#info-v${i}`).textContent = v || "—"; });
+  }
+
+  // ── 日志页 ──
+  function logSkeleton() {
+    return `
+      <div class="page-head">
+        <h1>应用日志</h1>
+        <button id="log-refresh" class="ghost-btn">${icon("refresh", 14)} 刷新</button>
+        <button id="log-folder" class="ghost-btn">${icon("folder", 14)} 打开文件夹</button>
+      </div>
+      <div class="search-box">
+        ${icon("search", 15)}
+        <input id="log-search" type="search" placeholder="搜索日志…">
+        <button id="log-search-clear" class="search-clear" title="清除搜索">${icon("x", 13)}</button>
+      </div>
+      <div class="lvl-filters">
+        ${LOG_LEVELS.map(l => `
+          <button class="lvl-btn active ${l}" data-level="${l}">${l} <span data-count="${l}">0</span></button>`).join("")}
+        <button id="lvl-all" class="lvl-link">清空</button>
+      </div>
+      <div class="log-wrap">
+        <div id="log-box" class="log-box"><div class="log-empty">正在加载日志…</div></div>
+        <button id="to-bottom" class="to-bottom">${icon("chevronDown", 13)} 回到底部</button>
+      </div>
+      <p id="log-foot" class="log-foot"></p>`;
+  }
+
+  function bindLog() {
+    $("#log-refresh").addEventListener("click", () => {
+      bridge.refresh().catch(() => {});
+      loadLogs();
+    });
+    $("#log-folder").addEventListener("click", () => bridge.openLogFolder().catch(() => {}));
+    $("#log-search").addEventListener("input", e => {
+      $("#log-search-clear").classList.toggle("show", !!e.target.value);
+      clearTimeout(logSearchTimer);
+      logSearchTimer = setTimeout(() => { logQuery = e.target.value; renderLogList(); }, 120);
+    });
+    $("#log-search-clear").addEventListener("click", () => {
+      const input = $("#log-search");
+      input.value = "";
+      logQuery = "";
+      $("#log-search-clear").classList.remove("show");
+      renderLogList();
+      input.focus();
+    });
+    $(".lvl-filters").addEventListener("click", e => {
+      if (e.target.closest("#lvl-all")) {
+        const allOn = LOG_LEVELS.every(l => activeLevels.has(l));
+        activeLevels.clear();
+        if (!allOn) LOG_LEVELS.forEach(l => activeLevels.add(l));
+        for (const btn of $$("[data-level]")) btn.classList.toggle("active", activeLevels.has(btn.dataset.level));
+        renderLogList();
+        return;
+      }
+      const btn = e.target.closest("[data-level]");
+      if (!btn) return;
+      const lvl = btn.dataset.level;
+      activeLevels.has(lvl) ? activeLevels.delete(lvl) : activeLevels.add(lvl);
+      btn.classList.toggle("active", activeLevels.has(lvl));
+      renderLogList();
+    });
+    const box = $("#log-box");
+    box.addEventListener("scroll", () => {
+      $("#to-bottom").classList.toggle("show", !isNearBottom(box));
+    });
+    $("#to-bottom").addEventListener("click", () => {
+      box.scrollTop = box.scrollHeight;
+      $("#to-bottom").classList.remove("show");
+    });
+  }
+
+  function parseLog(line) {
+    const raw = String(line || "");
+    const full = raw.match(/^\[([^\]]+)\]\[([^\]]+)\]\s*(.*)$/);
+    const short = full ? null : raw.match(/^\[([^\]]+)\]\s*(.*)$/);
+    const stamp = full ? full[1] : (short ? short[1] : "");
+    const source = full ? full[2] : "";
+    const original = full ? full[3] : (short ? short[2] : raw);
+    const upper = original.toUpperCase();
+    let lvl = "INFO";
+    if (/\b(ERROR|EXCEPTION|TRACEBACK|FAILED|FAILURE)\b/.test(upper)) lvl = "ERROR";
+    else if (/\b(WARN|WARNING)\b|COULD NOT|IS DISABLED/.test(upper)) lvl = "WARN";
+    else if (/\bEVENT\b|\bKIND=/.test(upper)) lvl = "EVENT";
+    else if (/\bSTATE\b|\bDESIRED=/.test(upper)) lvl = "STATE";
+    else if (/\bSTEP\b|\bSTEP=/.test(upper)) lvl = "STEP";
+    const message = original.replace(/^\s*(ERROR|WARN(?:ING)?|EVENT|STATE|STEP|INFO)\s*[:|-]?\s*/i, "");
+    return { raw, time: stamp.includes(" ") ? stamp.split(" ").pop() : stamp, source, message, lvl };
+  }
+
+  const logMatches = item =>
+    activeLevels.has(item.lvl) &&
+    (!logQuery.trim() || item.raw.toLowerCase().includes(logQuery.trim().toLowerCase()));
+
+  function logRowHtml(item) {
+    return `<div class="log-line ${item.lvl}">
+      <span class="log-time">${esc(item.time || "—")}</span>
+      <span class="log-lvl ${item.lvl}">${item.lvl}</span>
+      <span class="log-txt">${item.source ? esc(item.source) + " · " : ""}${esc(item.message)}</span>
+    </div>`;
+  }
+
+  function isNearBottom(box) {
+    return box.scrollHeight - box.scrollTop - box.clientHeight < 48;
+  }
+
+  function renderLogList({ stickBottom = false } = {}) {
+    const box = $("#log-box");
+    if (!box) return;
+    const keep = stickBottom || isNearBottom(box);
+    const visible = logItems.filter(logMatches);
+    box.innerHTML = visible.length
+      ? visible.map(logRowHtml).join("")
+      : `<div class="log-empty">没有匹配的日志行</div>`;
+    if (keep) box.scrollTop = box.scrollHeight;
+    syncLogMeta(visible.length);
+  }
+
+  function syncLogMeta(visibleCount) {
+    for (const l of LOG_LEVELS) {
+      const el = $(`[data-count="${l}"]`);
+      if (el) el.textContent = String(logItems.filter(x => x.lvl === l).length);
+    }
+    const foot = $("#log-foot");
+    if (foot) foot.textContent = `显示 ${visibleCount ?? logItems.filter(logMatches).length} / ${logItems.length} 行`;
+    const all = $("#lvl-all");
+    if (all) all.textContent = LOG_LEVELS.every(l => activeLevels.has(l)) ? "清空" : "全选";
+    const box = $("#log-box"), toBottom = $("#to-bottom");
+    if (box && toBottom) toBottom.classList.toggle("show", !isNearBottom(box));
+  }
+
+  function appendLogLine(line) {
+    const item = parseLog(line);
+    logItems.push(item);
+    if (logItems.length > 800) logItems.splice(0, logItems.length - 800);
+    const box = $("#log-box");
+    if (!box) return;
+    if (logMatches(item)) {
+      const keep = isNearBottom(box);
+      const empty = box.querySelector(".log-empty");
+      if (empty) empty.remove();
+      box.insertAdjacentHTML("beforeend", logRowHtml(item));
+      while (box.children.length > 800) box.firstElementChild.remove();
+      if (keep) box.scrollTop = box.scrollHeight;
+    }
+    syncLogMeta();
+  }
+
+  function loadLogs() {
+    bridge.logs().then(lines => {
+      logItems = (lines || []).map(parseLog);
+      renderLogList({ stickBottom: true });
+    }).catch(() => {});
+  }
+
+  // ── 设置页 ──
+  function settingsSkeleton() {
+    return `
+      <div class="page-head">
+        <h1>设置</h1>
+        <span id="saved-flash" class="saved-flash hidden">${icon("check", 13)} 已保存</span>
+      </div>
+
+      <h3 class="sec-title">扬声器</h3>
+      <section class="card">
+        <div class="set-row">
+          <div style="flex:1">
+            <div class="set-label">默认输入源</div>
+            <div class="set-desc">App 唤醒扬声器时自动切到这个输入</div>
+          </div>
+          <select id="set-input">
+            ${(state.inputs || []).map(x => `<option value="${esc(x.value)}">${esc(inputLabel(x.value))}</option>`).join("")}
+          </select>
+        </div>
+        <div class="divider"></div>
+        <div class="set-row">
+          <div style="flex:1">
+            <div class="set-label">目标扬声器</div>
+            <div class="set-desc">MAC 是身份标识，IP 只是当前地址</div>
+          </div>
+          <div class="target-val">
+            <div id="target-name">—</div>
+            <div id="target-meta" class="target-ip">—</div>
+          </div>
+          <button id="pick-btn" class="primary-btn">选择扬声器</button>
+        </div>
+      </section>
+
+      <h3 class="sec-title">电源行为</h3>
+      <p class="sec-desc">哪些电脑事件会唤醒扬声器、哪些会让它待机。<span id="enabled-count"></span></p>
+
+      <div class="preset-row">
+        <span class="preset-label">预设</span>
+        ${Object.entries(PRESETS).map(([k, p]) => `
+          <button class="preset-btn" data-preset="${k}" title="${esc(p.desc)}">${p.label}</button>`).join("")}
+        <span id="custom-tag" class="custom-tag hidden">自定义</span>
+        <button id="test-toggle" class="test-toggle">${icon("flask", 13)}<span>模拟事件</span></button>
+        <button id="reset-btn" class="reset-btn" title="恢复推荐预设">${icon("rotateCcw", 13)}</button>
+      </div>
+
+      <div id="test-banner" class="test-banner hidden">
+        ${icon("flask", 14)}
+        <span>模拟模式已开启。点任意一行的模拟按钮，会按该行<strong>当前的规则</strong>执行一次真实动作。规则关着就不会有动作，这本身就是诊断结果。</span>
+      </div>
+
+      <div id="matrix" class="matrix">
+        <div class="mx-head">
+          <div class="th-event">触发事件</div>
+          <button class="th-col" data-col="wake">
+            <span class="th-col-title">${icon("unlock", 13)}<span style="color:var(--teal)">唤醒</span></span>
+            <span class="th-col-hint" data-col-hint="wake"></span>
+          </button>
+          <button class="th-col" data-col="standby">
+            <span class="th-col-title">${icon("monitorOff", 13)}<span style="color:var(--faint)">待机</span></span>
+            <span class="th-col-hint" data-col-hint="standby"></span>
+          </button>
+          <div class="th-col td-test" style="cursor:default">
+            <span class="th-col-title">模拟</span>
+            <span class="th-col-hint">触发一次</span>
+          </div>
+        </div>
+        ${EVENT_ROWS.map((row, i) => `
+          <div class="mx-row ${i % 2 ? "alt" : ""}" data-row="${row.id}">
+            <div class="td-event">
+              <span class="ev-icon">${icon(row.icon, 15)}</span>
+              <div style="min-width:0">
+                <div class="ev-label">${row.label}</div>
+                <div class="ev-desc">${row.desc}</div>
+              </div>
+            </div>
+            ${["wake", "standby"].map(col => `
+              <div class="td-cell">
+                ${row[col]
+                  ? `<button class="check" data-rule="${row[col]}" data-checkcol="${col}" role="checkbox">${icon("check", 14)}</button>`
+                  : `<span class="na" title="不适用">${icon("minus", 13)}</span>`}
+              </div>`).join("")}
+            <div class="td-test">
+              ${row.tests.map(t => `
+                <button class="test-btn" data-test="${t.key}" data-testcol="${t.col === "wake" ? row.wake : row.standby}">
+                  ${icon("play", 11)}<span>${t.label}</span>
+                </button>`).join("") || `<span class="na">${icon("minus", 13)}</span>`}
+            </div>
+          </div>
+          <div class="mx-result" data-result="${row.id}"></div>`).join("")}
+      </div>
+
+      <div id="screen-warn" class="warn-note hidden">
+        ${icon("alert", 14)}
+        <span>屏幕熄灭会让扬声器待机，但屏幕点亮不会唤醒它。你需要手动开机，或同时勾上「屏幕开关 · 唤醒」。</span>
+      </div>
+      <p class="table-foot">点击列标题可整列开关。改动即时生效。<span id="test-foot" style="display:none">模拟会真实控制扬声器，当前状态见主页。</span></p>
+
+      <h3 class="sec-title">Windows 启动</h3>
+      <section class="card">
+        <div class="set-row">
+          <div style="flex:1">
+            <div class="set-label">登录时自动运行</div>
+            <div class="set-desc">创建或移除所选的 Windows 开机自启注册</div>
+          </div>
+          <input id="set-startup-enabled" class="switch" type="checkbox">
+        </div>
+        <div class="divider"></div>
+        <div class="set-row">
+          <div style="flex:1">
+            <div class="set-label">注册方式</div>
+            <div class="set-desc">任务计划可绕过 UAC 提示；注册表最简单</div>
+          </div>
+          <select id="set-startup-mode">
+            <option value="off">关闭</option>
+            <option value="task">任务计划程序</option>
+            <option value="registry">注册表 Run</option>
+          </select>
+        </div>
+      </section>`;
+  }
+
+  function bindSettings() {
+    $("#set-input").addEventListener("change", e => {
+      bridge.updateSettings(JSON.stringify({ kef_input: e.target.value })).then(flashSaved).catch(() => {});
+    });
+
+    $("#pick-btn").addEventListener("click", openSpeakerDialog);
+
+    $(".preset-row").addEventListener("click", e => {
+      const preset = e.target.closest("[data-preset]");
+      if (preset) {
+        bridge.updateSettings(JSON.stringify(PRESETS[preset.dataset.preset].values)).then(flashSaved).catch(() => {});
+        return;
+      }
+      if (e.target.closest("#reset-btn")) {
+        bridge.updateSettings(JSON.stringify(PRESETS.recommended.values)).then(flashSaved).catch(() => {});
+        return;
+      }
+      if (e.target.closest("#test-toggle")) {
+        testMode = !testMode;
+        for (const el of $$(".mx-result")) { el.classList.remove("show"); el.innerHTML = ""; }
+        syncSettings();
+      }
+    });
+
+    $("#matrix").addEventListener("click", e => {
+      const check = e.target.closest("[data-rule]");
+      if (check) {
+        const key = check.dataset.rule;
+        bridge.updateSettings(JSON.stringify({ [key]: !ruleOn(key) })).then(flashSaved).catch(() => {});
+        return;
+      }
+      const colBtn = e.target.closest("[data-col]");
+      if (colBtn) {
+        const col = colBtn.dataset.col;
+        const keys = EVENT_ROWS.map(r => r[col]).filter(Boolean);
+        const allOn = keys.every(ruleOn);
+        bridge.updateSettings(JSON.stringify(Object.fromEntries(keys.map(k => [k, !allOn]))))
+          .then(flashSaved).catch(() => {});
+        return;
+      }
+      const testBtn = e.target.closest("[data-test]");
+      if (testBtn && !runningTest) {
+        runningTest = testBtn.dataset.test;
+        syncSettings();
+        bridge.runEvent(runningTest).catch(() => { runningTest = null; syncSettings(); });
+        return;
+      }
+      const close = e.target.closest(".mx-result .close");
+      if (close) {
+        const box = close.closest(".mx-result");
+        box.classList.remove("show");
+        box.innerHTML = "";
+      }
+    });
+
+    $("#set-startup-enabled").addEventListener("change", pushStartup);
+    $("#set-startup-mode").addEventListener("change", pushStartup);
+  }
+
+  function pushStartup() {
+    bridge.updateStartup($("#set-startup-mode").value, $("#set-startup-enabled").checked)
+      .then(flashSaved).catch(() => {});
+  }
+
+  // ── 选择扬声器弹窗 ──
+  const normMac = m => String(m || "").replace(/[^0-9a-fA-F]/g, "").toUpperCase();
+  const currentTargetMac = () => normMac(state?.speaker?.mac || state?.settings?.device?.kef_mac);
+
+  function openSpeakerDialog() {
+    dlg = { phase: "scanning", found: [], checked: 0, failed: "" };
+    const el = document.createElement("div");
+    el.className = "dlg-backdrop";
+    el.id = "dlg-backdrop";
+    el.innerHTML = `
+      <div class="dlg" role="dialog" aria-modal="true" aria-label="选择扬声器">
+        <div class="dlg-head">
+          <div class="dlg-head-icon">${icon("optical", 15)}</div>
+          <span class="dlg-title">选择扬声器</span>
+          <button class="dlg-x" data-dlg="close" title="关闭">${icon("x", 15)}</button>
+        </div>
+        <p class="dlg-sub">选择这个 App 要控制的 KEF 扬声器。</p>
+        <div id="dlg-scan-bar" class="scan-bar"></div>
+        <div id="dlg-list" class="dlg-list"></div>
+        <button id="dlg-manual-link" class="manual-link">没找到？手动输入 IP 地址</button>
+        <div id="dlg-manual" class="manual-box" style="display:none">
+          <div class="manual-title">手动指定</div>
+          <div class="manual-row">
+            <input id="dlg-ip" class="text-input" placeholder="IP 地址，如 10.0.0.222">
+            <input id="dlg-mac" class="text-input" placeholder="MAC（可选）">
+          </div>
+          <div class="manual-actions">
+            <button id="dlg-manual-cancel" class="ghost-btn">取消</button>
+            <button id="dlg-manual-apply" class="primary-btn" disabled>应用</button>
+          </div>
+        </div>
+        <div class="dlg-foot"><button class="ghost-btn" data-dlg="close">关闭</button></div>
+      </div>`;
+    document.body.append(el);
+
+    el.addEventListener("click", e => {
+      if (e.target === el || e.target.closest("[data-dlg=close]")) { closeSpeakerDialog(); return; }
+      const rescan = e.target.closest("#dlg-rescan");
+      if (rescan) { startDialogScan(); return; }
+      const item = e.target.closest("[data-sp-ip]");
+      if (item && !item.classList.contains("current")) {
+        bridge.applyTarget(item.dataset.spIp, item.dataset.spMac || "").then(flashSaved).catch(() => {});
+        closeSpeakerDialog();
+      }
+    });
+    $("#dlg-manual-link").addEventListener("click", () => {
+      $("#dlg-manual-link").style.display = "none";
+      $("#dlg-manual").style.display = "";
+      $("#dlg-ip").focus();
+    });
+    $("#dlg-manual-cancel").addEventListener("click", () => {
+      $("#dlg-manual").style.display = "none";
+      $("#dlg-manual-link").style.display = "";
+    });
+    $("#dlg-ip").addEventListener("input", () => {
+      $("#dlg-manual-apply").disabled = !$("#dlg-ip").value.trim();
+    });
+    $("#dlg-manual-apply").addEventListener("click", () => {
+      const ip = $("#dlg-ip").value.trim();
+      if (!ip) return;
+      bridge.applyTarget(ip, $("#dlg-mac").value.trim()).then(flashSaved).catch(() => {});
+      closeSpeakerDialog();
+    });
+
+    startDialogScan();
+  }
+
+  function closeSpeakerDialog() {
+    dlg = null;
+    const el = $("#dlg-backdrop");
+    if (el) el.remove();
+  }
+
+  function startDialogScan() {
+    if (!dlg) return;
+    dlg.phase = "scanning";
+    dlg.found = [];
+    dlg.checked = 0;
+    dlg.failed = "";
+    syncDialog();
+    bridge.scanSpeakers().catch(() => {
+      if (!dlg) return;
+      dlg.phase = "done";
+      dlg.failed = "扫描请求失败，请重试。";
+      syncDialog();
+    });
+  }
+
+  function syncDialog() {
+    if (!dlg) return;
+    const bar = $("#dlg-scan-bar"), list = $("#dlg-list");
+    if (!bar || !list) return;
+
+    bar.classList.toggle("failed", !!dlg.failed);
+    if (dlg.phase === "scanning") {
+      bar.innerHTML = `${icon("loader", 15, "spin")}<span class="scan-text">正在扫描局域网…${dlg.checked ? ` 已检查 ${dlg.checked} 台设备` : ""}</span>`;
+    } else if (dlg.failed) {
+      bar.innerHTML = `${icon("alert", 15)}<span class="scan-text">${esc(dlg.failed)}</span>
+        <button id="dlg-rescan" class="rescan-btn">${icon("refresh", 12)} 重新扫描</button>`;
+    } else {
+      const hasCurrent = dlg.found.some(d => normMac(d.mac) === currentTargetMac());
+      bar.innerHTML = `${icon("check", 15)}<span class="scan-text">扫描完成，找到 ${dlg.found.length} 台。${hasCurrent ? "已包含你当前的扬声器。" : ""}</span>
+        <button id="dlg-rescan" class="rescan-btn">${icon("refresh", 12)} 重新扫描</button>`;
+    }
+
+    if (dlg.phase === "scanning" && !dlg.found.length) {
+      list.innerHTML = `<div class="skeleton"></div><div class="skeleton"></div>`;
+    } else if (dlg.phase === "done" && !dlg.found.length) {
+      list.innerHTML = `<div class="dlg-empty">没有扫描到扬声器</div>`;
+    } else {
+      const cur = currentTargetMac();
+      list.innerHTML = dlg.found.map(d => {
+        const isCur = cur && normMac(d.mac) === cur;
+        return `
+        <button class="sp-item ${isCur ? "current" : ""}" data-sp-ip="${esc(d.ip)}" data-sp-mac="${esc(d.mac || "")}">
+          <span class="sp-icon">${icon(isCur ? "check" : "optical", 16)}</span>
+          <div style="flex:1;min-width:0">
+            <div class="sp-name"><span>${esc(d.name || d.model || "KEF 扬声器")}</span>${isCur ? `<span class="cur-tag">使用中</span>` : ""}</div>
+            <div class="sp-meta">IP ${esc(d.ip)}${d.mac ? ` · MAC ${esc(d.mac)}` : ""}</div>
+          </div>
+          ${isCur ? "" : `<span class="sel-hint">选择</span>`}
+        </button>`;
+      }).join("") + (dlg.phase === "scanning" ? `<div class="skeleton" style="height:34px"></div>` : "");
+    }
+  }
+
+  function syncSettings() {
+    if (!state) return;
+    const dev = (state.settings || {}).device || {};
+    const sel = $("#set-input");
+    if (sel && document.activeElement !== sel) sel.value = dev.kef_input || "";
+
+    const s = state.speaker || {};
+    $("#target-name").textContent = s.name || "未找到设备";
+    $("#target-meta").textContent = [s.mac || dev.kef_mac, s.ip || dev.kef_ip].filter(Boolean).join(" · ") || "—";
+
+    // 矩阵
+    for (const check of $$("[data-rule]")) {
+      const on = ruleOn(check.dataset.rule);
+      check.classList.toggle("on-wake", on && check.dataset.checkcol === "wake");
+      check.classList.toggle("on-standby", on && check.dataset.checkcol === "standby");
+      check.setAttribute("aria-checked", String(on));
+    }
+    for (const col of ["wake", "standby"]) {
+      const keys = EVENT_ROWS.map(r => r[col]).filter(Boolean);
+      const allOn = keys.every(ruleOn);
+      const hint = $(`[data-col-hint="${col}"]`);
+      if (hint) hint.textContent = allOn ? "全部关闭" : "全部开启";
+    }
+    const enabled = RULE_KEYS.filter(ruleOn).length;
+    $("#enabled-count").textContent = `已启用 ${enabled} / ${RULE_KEYS.length} 条规则。`;
+
+    const active = Object.entries(PRESETS).find(([, p]) =>
+      RULE_KEYS.every(k => p.values[k] === ruleOn(k)))?.[0];
+    for (const btn of $$("[data-preset]")) btn.classList.toggle("active", btn.dataset.preset === active);
+    $("#custom-tag").classList.toggle("hidden", !!active);
+
+    // 模拟模式
+    $("#matrix").classList.toggle("testing", testMode);
+    $("#test-banner").classList.toggle("hidden", !testMode);
+    $("#test-foot").style.display = testMode ? "" : "none";
+    const toggle = $("#test-toggle");
+    toggle.classList.toggle("on", testMode);
+    toggle.innerHTML = `${icon("flask", 13)}<span>${testMode ? "退出模拟" : "模拟事件"}</span>`;
+    for (const btn of $$("[data-test]")) {
+      const on = ruleOn(btn.dataset.testcol);
+      btn.classList.toggle("off", !on);
+      btn.title = on ? "按当前规则真实执行一次" : "规则已关闭，模拟不会有动作";
+      btn.disabled = !!runningTest;
+      const running = runningTest === btn.dataset.test;
+      btn.firstElementChild.outerHTML = running ? icon("loader", 11, "spin") : icon("play", 11);
+    }
+
+    $("#screen-warn").classList.toggle("hidden",
+      !(ruleOn("standby_on_display_off") && !ruleOn("wake_on_display_on")));
+
+    const startupSwitch = $("#set-startup-enabled");
+    if (document.activeElement !== startupSwitch) startupSwitch.checked = !!(state.startup || {}).registered;
+    const modeSel = $("#set-startup-mode");
+    if (document.activeElement !== modeSel) {
+      modeSel.value = ((state.settings || {}).startup || {}).startup_registration_mode || "registry";
+    }
+  }
+
+  // 模拟事件结果 → 行内结果条
+  function showEventResult(msg) {
+    if (msg.state !== "running" && runningTest === msg.key) runningTest = null;
+    const row = EVENT_ROWS.find(r => r.tests.some(t => t.key === msg.key));
+    syncSettings();
+    if (!row) return;
+    const box = $(`[data-result="${row.id}"]`);
+    if (!box) return;
+    const test = row.tests.find(t => t.key === msg.key);
+    const iconName = { success: "check", warning: "alert", error: "alert", running: "loader" }[msg.state] || "check";
+    box.className = `mx-result show ${esc(msg.state)}`;
+    box.innerHTML = `
+      ${icon(iconName, 14, msg.state === "running" ? "spin" : "")}
+      <div style="min-width:0">
+        <div><strong>${esc(test ? test.label : msg.key)}</strong> · ${esc(zhTitle(msg.title))} · ${esc(zhDetail(msg.detail || ""))}</div>
+      </div>
+      <button class="close">✕</button>`;
+  }
+
+  // ═════════════════════════════════════════════════════════
+  // 导航与状态应用
+  // ═════════════════════════════════════════════════════════
+  function setPage(next) {
+    page = next;
+    for (const btn of $$(".nav-btn")) btn.classList.toggle("active", btn.dataset.nav === next);
+    for (const id of ["home", "log", "settings"]) {
+      $(`#page-${id}`).classList.toggle("hidden", id !== next);
+    }
+    if (next === "log") loadLogs();
+    if (next === "home") syncHome();
+    if (next === "settings") syncSettings();
+  }
+
+  function applyState(next) {
+    const json = JSON.stringify(next);
+    if (json === lastStateJson) return;
+    lastStateJson = json;
+    const prevOn = state?.speaker?.on;
+    state = next;
+    if (powerPending && prevOn !== undefined && state.speaker && state.speaker.on !== prevOn) {
+      powerPending = false;
+      clearTimeout(powerPendingTimer);
+    }
+    syncHome();
+    syncSettings();
+  }
+
+  const POWER_ACTION_TITLES = new Set(["Wake", "Standby", "Early Standby", "Endsession Standby", "Speaker action failed"]);
+
+  function handleToast(msg) {
+    if (msg.kind === "event") { showEventResult(msg); return; }
+    if (msg.kind === "scan") {
+      if (!dlg) return; // 弹窗已关，静默丢弃
+      if (msg.state === "progress") {
+        dlg.checked = Math.max(dlg.checked, Number(msg.checked) || 0);
+      } else if (msg.state === "candidate" || msg.state === "complete") {
+        dlg.found = [...dlg.found, ...(msg.devices || [])]
+          .filter((d, i, a) => d.ip && a.findIndex(x => x.ip === d.ip) === i);
+        if (msg.state === "complete") dlg.phase = "done";
+      } else if (msg.state === "failed") {
+        dlg.phase = "done";
+        dlg.failed = msg.detail || "扫描失败。";
+      }
+      syncDialog();
+      return;
+    }
+    if (msg.kind === "toast" && POWER_ACTION_TITLES.has(msg.title) && powerPending) {
+      powerPending = false;
+      clearTimeout(powerPendingTimer);
+      syncHome();
+    }
+    toast(msg.level, msg.title, msg.detail);
+  }
+
+  // ═════════════════════════════════════════════════════════
+  // 启动 + 更新轮询
+  // ═════════════════════════════════════════════════════════
+  document.querySelector("nav").addEventListener("click", e => {
+    const btn = e.target.closest("[data-nav]");
+    if (btn) setPage(btn.dataset.nav);
+  });
+
+  let updateCursor = 0, polling = false;
+  async function pollUpdates() {
+    if (polling) return;
+    polling = true;
+    try {
+      const batch = await bridge.updates(updateCursor);
+      updateCursor = batch.cursor;
+      for (const item of batch.updates) {
+        if (item.channel === "state") applyState(JSON.parse(item.payload));
+        else if (item.channel === "toast") handleToast(JSON.parse(item.payload));
+        else if (item.channel === "log") appendLogLine(item.payload);
+      }
+    } catch (_error) { /* 下一轮重试 */ }
+    finally { polling = false; }
+  }
+
+  bridge.initialState().then(value => {
+    state = value;
+    lastStateJson = JSON.stringify(value);
+    buildShell();
+    syncHome();
+    syncSettings();
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape" && dlg) closeSpeakerDialog();
+    });
+    setInterval(pollUpdates, 400);
+  }).catch(() => {
+    $("#main").innerHTML = `<div class="boot-error"><h1>控制器不可用</h1><p>本地控制接口未能启动，请重启应用。</p></div>`;
+  });
   </script>
 </body>
 </html>
