@@ -9,10 +9,41 @@ Package as .exe:
 """
 from __future__ import annotations
 
+import os
 import sys
 
+
+def _run_webview_host(url: str) -> None:
+    import webview
+
+    webview.create_window(
+        "KEF Controller",
+        url,
+        width=1080,
+        height=760,
+        min_size=(720, 560),
+        background_color="#f4f5f6",
+        text_select=True,
+    )
+    webview.start(gui="edgechromium", debug=False)
+
+
+if "--webview-host" in sys.argv:
+    host_index = sys.argv.index("--webview-host")
+    if host_index + 1 >= len(sys.argv):
+        raise SystemExit("Missing WebView host URL")
+    _run_webview_host(sys.argv[host_index + 1])
+    raise SystemExit(0)
+
+
+if "--webview2-import-check" in sys.argv:
+    import webview
+
+    assert webview
+    raise SystemExit(0)
+
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
-from qfluentwidgets import Theme, setTheme
 
 from kef_app.runtime.bootstrap import build_runtime_context, exit_if_startup_task_repair_requested
 from kef_app.runtime.headless_service import HeadlessRuntime
@@ -28,9 +59,8 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("KEF Controller")
+    app.setFont(QFont("Segoe UI Variable Text", 10))
     apply_application_icon(app)
-
-    setTheme(Theme.AUTO)
 
     log_handler = UILogHandler()
     runtime_context = build_runtime_context(extra_log_handlers=[log_handler])

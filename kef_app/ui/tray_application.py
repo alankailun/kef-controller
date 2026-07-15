@@ -260,6 +260,7 @@ class KefTrayApp:
         self._controller.stop_speaker_event_monitor()
         self._tray.hide()
         self._window.hide()
+        self._window.dispose()
         self._controller_bridge.dispose()
         if stop_runtime:
             self._runtime.request_stop()

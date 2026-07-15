@@ -39,14 +39,22 @@ def _map_hosts_concurrently(
     worker: Callable[[str], _T],
     *,
     should_continue: Optional[Callable[[], bool]] = None,
+    on_progress: Optional[Callable[[int], None]] = None,
 ) -> dict[str, _T]:
     futures = {executor.submit(worker, host_ip): host_ip for host_ip in hosts}
     results: dict[str, _T] = {}
+    completed = 0
     for future in as_completed(futures):
         if should_continue is not None and not should_continue():
             for pending in futures:
                 pending.cancel()
             break
+        completed += 1
+        if on_progress is not None:
+            try:
+                on_progress(completed)
+            except Exception:
+                pass
         try:
             results[futures[future]] = future.result()
         except Exception:
@@ -60,12 +68,14 @@ def _reachable_hosts(
     config: AppConfig,
     *,
     should_continue: Optional[Callable[[], bool]] = None,
+    on_progress: Optional[Callable[[int], None]] = None,
 ) -> list[str]:
     results = _map_hosts_concurrently(
         executor,
         hosts,
         lambda host_ip: probe_ip_port(host_ip, config.mac_discovery_tcp_port, config.mac_discovery_probe_timeout),
         should_continue=should_continue,
+        on_progress=on_progress,
     )
     return [host_ip for host_ip in hosts if results.get(host_ip)]
 
@@ -112,6 +122,7 @@ def _scan_candidate_hosts(
     config: AppConfig,
     *,
     should_continue: Optional[Callable[[], bool]] = None,
+    on_progress: Optional[Callable[[int], None]] = None,
 ) -> tuple[list[str], list[str], list[SpeakerIdentity]]:
     hosts = _candidate_hosts(networks, seed_ip)
     if not hosts:
@@ -120,7 +131,9 @@ def _scan_candidate_hosts(
         return hosts, [], []
 
     with ThreadPoolExecutor(max_workers=_shared_discovery_workers(len(hosts), config)) as executor:
-        reachable_hosts = _reachable_hosts(executor, hosts, config, should_continue=should_continue)
+        reachable_hosts = _reachable_hosts(
+            executor, hosts, config, should_continue=should_continue, on_progress=on_progress
+        )
         identities = (
             _identify_hosts(executor, reachable_hosts, config, should_continue=should_continue)
             if reachable_hosts and (should_continue is None or should_continue())
@@ -201,6 +214,7 @@ def discover_kef_devices(
     *,
     on_candidate: Optional[Callable[[SpeakerIdentity], None]] = None,
     should_continue: Optional[Callable[[], bool]] = None,
+    on_progress: Optional[Callable[[int], None]] = None,
 ) -> list[SpeakerIdentity]:
     networks = build_candidate_networks(seed_ip, config, log)
     if not networks:
@@ -231,11 +245,17 @@ def discover_kef_devices(
         if should_continue is not None and not should_continue():
             break
         network_started = time.monotonic()
+        checked_before_network = total_hosts
         hosts, reachable_hosts, identities = _scan_candidate_hosts(
             [network],
             seed_ip,
             config,
             should_continue=should_continue,
+            on_progress=(
+                (lambda done: on_progress(checked_before_network + done))
+                if on_progress is not None
+                else None
+            ),
         )
         total_hosts += len(hosts)
         total_reachable_hosts += len(reachable_hosts)

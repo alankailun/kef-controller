@@ -1,5 +1,5 @@
 pywin32
 pykefcontrol==0.9.3
 PySide6
-PySide6-Fluent-Widgets
 pyinstaller
+pywebview==6.2.1

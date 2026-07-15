@@ -1,23 +1,28 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer
-from PySide6.QtCore import QSize, Signal
-from PySide6.QtGui import QCloseEvent, QGuiApplication, QHideEvent, QShowEvent
-from qfluentwidgets import FluentIcon as FIF, FluentWindow, NavigationItemPosition
+import ctypes
+import subprocess
+import sys
+from pathlib import Path
+
+import win32con
+import win32gui
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from ..config import AppConfig
-from ..storage import UserConfigStore
 from ..controller import KefPowerController
+from ..storage import UserConfigStore
 from .controller_events import ControllerEventBridge
-from .home_view import HomeInterface
-from .logs import LogInterface, UILogHandler
-from .settings import SettingsInterface
+from .logs import UILogHandler
+from .web_api_server import WebApiServer
+from .web_bridge import WebControllerBridge
 
 
-class KefMainWindow(FluentWindow):
+class KefMainWindow(QObject):
+    """Manage a native Edge WebView2 window outside Qt's embedding layer."""
+
     visibility_changed = Signal(bool)
-    _DEFAULT_WIDTH = 980
-    _DEFAULT_HEIGHT = 720
+    _WINDOW_TITLE = "KEF Controller"
 
     def __init__(
         self,
@@ -28,84 +33,122 @@ class KefMainWindow(FluentWindow):
         log_handler: UILogHandler,
     ) -> None:
         super().__init__()
-
-        self.setWindowTitle("KEF Controller")
-        self.resize(self._DEFAULT_WIDTH, self._DEFAULT_HEIGHT)
-        self.setMinimumSize(700, 560)
-        self._has_positioned_once = False
-
-        self._home = HomeInterface(config, controller, config_store, controller_bridge, self)
-        self._log_iface = LogInterface(config, log_handler, self)
-        self._settings_iface = SettingsInterface(config, controller, config_store, self)
-        self._settings_iface.settings_saved.connect(self._on_settings_saved)
-
-        self.addSubInterface(self._home, FIF.HOME, "Home")
-        self.addSubInterface(self._log_iface, FIF.DOCUMENT, "Log")
-        self.addSubInterface(
-            self._settings_iface, FIF.SETTING, "Settings",
-            NavigationItemPosition.BOTTOM,
+        self._log = controller.log
+        self._bridge = WebControllerBridge(
+            config, controller, config_store, controller_bridge, log_handler, self
         )
+        self._server = WebApiServer(self._web_root(), self._bridge)
+        self._server.start()
+        self._bridge.state_changed.connect(lambda payload: self._server.publish("state", payload))
+        self._bridge.toast.connect(lambda payload: self._server.publish("toast", payload))
+        self._bridge.log_line.connect(lambda payload: self._server.publish("log", payload))
 
-    def _on_settings_saved(self) -> None:
-        self._home.request_state_refresh()
+        self._host_process: subprocess.Popen[bytes] | None = None
+        self._host_hwnd = 0
+        self._find_attempts = 0
+        self._monitor = QTimer(self)
+        self._monitor.setInterval(500)
+        self._monitor.timeout.connect(self._monitor_host)
 
-    def closeEvent(self, event: QCloseEvent) -> None:
-        event.ignore()
-        self.hide()
+    @staticmethod
+    def _web_root() -> Path:
+        frozen_root = getattr(sys, "_MEIPASS", None)
+        if frozen_root:
+            return Path(frozen_root) / "kef_app" / "ui" / "web"
+        return Path(__file__).resolve().parent / "web"
 
-    def hideEvent(self, event: QHideEvent) -> None:
-        super().hideEvent(event)
+    def setWindowIcon(self, _icon: object) -> None:
+        # The host process is the same executable, so Windows uses its packaged icon.
+        return
+
+    def isVisible(self) -> bool:
+        return bool(self._host_hwnd and win32gui.IsWindow(self._host_hwnd) and win32gui.IsWindowVisible(self._host_hwnd))
+
+    def show(self) -> None:
+        if self._host_hwnd and win32gui.IsWindow(self._host_hwnd):
+            win32gui.ShowWindow(self._host_hwnd, win32con.SW_RESTORE)
+            win32gui.SetForegroundWindow(self._host_hwnd)
+            self.visibility_changed.emit(True)
+            self._bridge.refresh()
+            return
+        self._launch_host()
+
+    def hide(self) -> None:
+        if self._host_hwnd and win32gui.IsWindow(self._host_hwnd):
+            win32gui.ShowWindow(self._host_hwnd, win32con.SW_HIDE)
         self.visibility_changed.emit(False)
-
-    def showEvent(self, event: QShowEvent) -> None:
-        super().showEvent(event)
-        self.visibility_changed.emit(True)
-        if not self._has_positioned_once:
-            self._has_positioned_once = True
-            QTimer.singleShot(0, lambda: self._restore_reasonable_geometry(force=True))
-
-    def _available_geometry(self):
-        screen = self.screen() or QGuiApplication.primaryScreen()
-        if screen is None:
-            return None
-        return screen.availableGeometry()
-
-    def _target_window_size(self) -> QSize:
-        available = self._available_geometry()
-        if available is None:
-            return QSize(self._DEFAULT_WIDTH, self._DEFAULT_HEIGHT)
-
-        desired_width = min(self._DEFAULT_WIDTH, int(available.width() * 0.72))
-        desired_height = min(self._DEFAULT_HEIGHT, int(available.height() * 0.80))
-        width = min(max(self.minimumWidth(), desired_width), available.width())
-        height = min(max(self.minimumHeight(), desired_height), available.height())
-        return QSize(width, height)
-
-    def _restore_reasonable_geometry(self, force: bool = False) -> None:
-        available = self._available_geometry()
-        if available is None:
-            return
-
-        frame = self.frameGeometry()
-        too_small = self.width() < 760 or self.height() < 600
-        off_screen = not available.intersects(frame)
-        if not force and not too_small and not off_screen:
-            return
-
-        self.resize(self._target_window_size())
-        frame = self.frameGeometry()
-        frame.moveCenter(available.center())
-        self.move(frame.topLeft())
 
     def toggle(self) -> None:
         if self.isVisible():
             self.hide()
         else:
-            if self.isMinimized():
-                self.showNormal()
-            else:
-                self.show()
-            self._home.request_state_refresh()
-            self._restore_reasonable_geometry()
-            self.raise_()
-            self.activateWindow()
+            self.show()
+
+    def dispose(self) -> None:
+        self._monitor.stop()
+        if self._host_hwnd and win32gui.IsWindow(self._host_hwnd):
+            win32gui.PostMessage(self._host_hwnd, win32con.WM_CLOSE, 0, 0)
+        self._server.stop()
+
+    def _launch_host(self) -> None:
+        command = [sys.executable]
+        if not getattr(sys, "frozen", False):
+            command.append(str(Path(__file__).resolve().parents[2] / "main_gui.py"))
+        command.extend(["--webview-host", self._server.url])
+        self._log.info("Launching native Edge WebView2 host | url=%s", self._server.url)
+        self._host_process = subprocess.Popen(
+            command,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            close_fds=True,
+        )
+        self._host_hwnd = 0
+        self._find_attempts = 0
+        self._monitor.start()
+
+    def _monitor_host(self) -> None:
+        if self._host_process is not None and self._host_process.poll() is not None:
+            self._host_process = None
+            self._host_hwnd = 0
+            self._monitor.stop()
+            self.visibility_changed.emit(False)
+            return
+        if not self._host_hwnd or not win32gui.IsWindow(self._host_hwnd):
+            self._host_hwnd = self._find_host_window()
+            self._find_attempts += 1
+            if not self._host_hwnd:
+                if self._find_attempts == 20:
+                    self._log.error("Native Edge WebView2 host window was not found after 10 seconds")
+                return
+            self._apply_native_window_effects(self._host_hwnd)
+            self._log.info("Native Edge WebView2 host is ready | hwnd=%s", self._host_hwnd)
+        self.visibility_changed.emit(bool(win32gui.IsWindowVisible(self._host_hwnd)))
+
+    @classmethod
+    def _find_host_window(cls) -> int:
+        matches: list[int] = []
+
+        def callback(hwnd: int, _extra: object) -> bool:
+            if win32gui.GetWindowText(hwnd) != cls._WINDOW_TITLE:
+                return True
+            class_name = win32gui.GetClassName(hwnd)
+            if class_name.startswith("WindowsForms10."):
+                matches.append(hwnd)
+            return True
+
+        win32gui.EnumWindows(callback, None)
+        return matches[-1] if matches else 0
+
+    def _apply_native_window_effects(self, hwnd: int) -> None:
+        try:
+            dwm = ctypes.windll.dwmapi
+            rounded = ctypes.c_int(2)
+            mica = ctypes.c_int(2)
+            for attribute, value in ((33, rounded), (38, mica)):
+                dwm.DwmSetWindowAttribute(
+                    ctypes.c_void_p(hwnd),
+                    ctypes.c_uint(attribute),
+                    ctypes.byref(value),
+                    ctypes.sizeof(value),
+                )
+        except (AttributeError, OSError, ValueError):
+            self._log.debug("Windows DWM effects are unavailable", exc_info=True)

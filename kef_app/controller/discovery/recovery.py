@@ -12,6 +12,7 @@ class ControllerDiscoveryRecoveryMixin:
         self,
         on_candidate: Callable[[SpeakerIdentity], None] | None = None,
         should_continue: Callable[[], bool] | None = None,
+        on_progress: Callable[[int], None] | None = None,
     ) -> list[SpeakerIdentity]:
         if not self._blind_discovery_lock.acquire(blocking=False):
             self._log_structured(
@@ -36,6 +37,7 @@ class ControllerDiscoveryRecoveryMixin:
                 self.log,
                 on_candidate=on_candidate,
                 should_continue=should_continue,
+                on_progress=on_progress,
             )
             self._log_structured(
                 "END",
