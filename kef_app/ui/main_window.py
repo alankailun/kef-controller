@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import win32con
@@ -24,6 +25,8 @@ class KefMainWindow(QObject):
 
     visibility_changed = Signal(bool)
     _WINDOW_TITLE = "KEF Controller"
+    _HOST_HEARTBEAT_GRACE_S = 20.0
+    _HOST_HEARTBEAT_TIMEOUT_S = 60.0
 
     def __init__(
         self,
@@ -48,6 +51,8 @@ class KefMainWindow(QObject):
         self._host_process: subprocess.Popen[bytes] | None = None
         self._host_hwnd = 0
         self._find_attempts = 0
+        self._host_ready_mono = 0.0
+        self._last_host_restart_mono = 0.0
         self._monitor = QTimer(self)
         self._monitor.setInterval(500)
         self._monitor.timeout.connect(self._monitor_host)
@@ -114,6 +119,7 @@ class KefMainWindow(QObject):
         )
         self._host_hwnd = 0
         self._find_attempts = 0
+        self._host_ready_mono = 0.0
         self._monitor.start()
 
     def _monitor_host(self) -> None:
@@ -137,8 +143,35 @@ class KefMainWindow(QObject):
                     self.visibility_changed.emit(False)
                 return
             self._apply_native_window_effects(self._host_hwnd)
+            self._host_ready_mono = time.monotonic()
             self._log.info("Native Edge WebView2 host is ready | hwnd=%s", self._host_hwnd)
-        self.visibility_changed.emit(bool(win32gui.IsWindowVisible(self._host_hwnd)))
+        visible = bool(win32gui.IsWindowVisible(self._host_hwnd))
+        if self._host_needs_restart(visible):
+            self._restart_unresponsive_host()
+            return
+        self.visibility_changed.emit(visible)
+
+    def _host_needs_restart(self, visible: bool) -> bool:
+        if not visible or not self._host_ready_mono:
+            return False
+        now = time.monotonic()
+        if now - self._host_ready_mono < self._HOST_HEARTBEAT_GRACE_S:
+            return False
+        if now - self._last_host_restart_mono < self._HOST_HEARTBEAT_TIMEOUT_S:
+            return False
+        return self._server.client_activity_age_s > self._HOST_HEARTBEAT_TIMEOUT_S
+
+    def _restart_unresponsive_host(self) -> None:
+        """Recover a hung Edge renderer without restarting the controller."""
+        self._last_host_restart_mono = time.monotonic()
+        self._log.warning("Native Edge WebView2 host stopped sending UI heartbeats; restarting it")
+        if self._host_is_alive():
+            self._host_process.terminate()
+        self._host_process = None
+        self._host_hwnd = 0
+        self._host_ready_mono = 0.0
+        self.visibility_changed.emit(False)
+        self._launch_host()
 
     @classmethod
     def _find_host_window(cls, host_pid: int | None = None) -> int:

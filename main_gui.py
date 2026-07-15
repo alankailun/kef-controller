@@ -50,8 +50,11 @@ def _run_webview_host(url: str) -> None:
     webview.create_window(
         "KEF Controller",
         url,
-        width=1280,
-        height=860,
+        # Keep the normal launch compact.  The window remains resizable and
+        # can still be maximized, but the controller does not open as a large
+        # mostly-empty canvas on wide displays.
+        width=1120,
+        height=760,
         min_size=(840, 620),
         background_color="#f4f5f6",
         text_select=True,

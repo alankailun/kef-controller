@@ -60,10 +60,9 @@
       border: 1px solid var(--line); border-right: 0; border-bottom: 0; border-top-left-radius: 8px;
     }
     .page {
-      width: 100%; max-width: 860px; min-height: 100%; margin-inline: auto;
+      width: 100%; min-height: 100%; margin: 0;
       padding: clamp(22px, 2.6vw, 36px) clamp(24px, 3.2vw, 48px) 36px;
     }
-    #page-log { max-width: 1100px; }
     .page.hidden { display: none; }
     h1 { margin: 0; font-size: 24px; font-weight: 600; flex: 1; min-width: max-content; }
     .page-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
@@ -469,7 +468,7 @@
 
     @media (max-width: 980px) {
       nav { width: 132px; }
-      .page { padding: 22px 24px 32px; }
+      .page { width: 100%; padding: 22px 24px 32px; }
       .input-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .matrix { overflow-x: auto; }
       .mx-head, .mx-row { min-width: 650px; }
@@ -670,32 +669,32 @@
   // ═════════════════════════════════════════════════════════
   // API（本地回环 HTTP → Python 桥）
   // ═════════════════════════════════════════════════════════
-  const api = async (method, ...args) => {
+  const api = async (method, args = [], { signal = undefined, silent = false } = {}) => {
     const response = await fetch(`/api/${method}`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ args }),
+      body: JSON.stringify({ args }), signal,
     });
     const payload = await response.json();
     if (!response.ok || payload.error) {
       const detail = payload.error || t("request_failed");
-      toast("error", t("controller_error"), detail);
+      if (!silent) toast("error", t("controller_error"), detail);
       throw new Error(detail);
     }
     return payload.result;
   };
   const bridge = {
     initialState: () => api("initialState"),
-    updates: cursor => api("updates", cursor),
-    logs: name => api("logs", name || ""),
+    updates: (cursor, signal) => api("updates", [cursor], { signal, silent: true }),
+    logs: name => api("logs", [name || ""]),
     logFiles: () => api("logFiles"),
     refresh: () => api("refresh"),
     togglePower: () => api("togglePower"),
-    setVolume: v => api("setVolume", v),
-    changeInput: v => api("changeInput", v),
-    updateSettings: v => api("updateSettings", v),
-    applyTarget: (ip, mac) => api("applyTarget", ip, mac),
-    updateStartup: (mode, enabled) => api("updateStartup", mode, enabled),
-    runEvent: key => api("runEvent", key),
+    setVolume: v => api("setVolume", [v]),
+    changeInput: v => api("changeInput", [v]),
+    updateSettings: v => api("updateSettings", [v]),
+    applyTarget: (ip, mac) => api("applyTarget", [ip, mac]),
+    updateStartup: (mode, enabled) => api("updateStartup", [mode, enabled]),
+    runEvent: key => api("runEvent", [key]),
     scanSpeakers: () => api("scanSpeakers"),
     openLogFolder: () => api("openLogFolder"),
   };
@@ -1790,25 +1789,38 @@
     if (btn) setPage(btn.dataset.nav);
   });
 
-  let updateCursor = 0, polling = false, updatePollTimer = null;
+  let updateCursor = 0, polling = false, updateAbort = null, updateRetryTimer = null;
   async function pollUpdates() {
-    if (polling) return;
+    if (polling || document.hidden) return;
     polling = true;
+    const controller = new AbortController();
+    updateAbort = controller;
     try {
-      const batch = await bridge.updates(updateCursor);
+      const batch = await bridge.updates(updateCursor, controller.signal);
       updateCursor = batch.cursor;
       for (const item of batch.updates) {
         if (item.channel === "state") applyState(JSON.parse(item.payload));
         else if (item.channel === "toast") handleToast(JSON.parse(item.payload));
         else if (item.channel === "log") appendLogLine(item.payload);
       }
-    } catch (_error) { /* 下一轮重试 */ }
-    finally { polling = false; }
+    } catch (error) {
+      if (error.name !== "AbortError") updateRetryTimer = setTimeout(() => {
+        updateRetryTimer = null;
+        pollUpdates();
+      }, 1000);
+    } finally {
+      if (updateAbort === controller) updateAbort = null;
+      polling = false;
+      if (!document.hidden && !updateRetryTimer) pollUpdates();
+    }
   }
-  function scheduleUpdatePolling() {
-    clearInterval(updatePollTimer);
-    const interval = document.hidden ? 2000 : 400;
-    updatePollTimer = setInterval(pollUpdates, interval);
+  function updatePollingVisibility() {
+    if (document.hidden) {
+      if (updateAbort) updateAbort.abort();
+      clearTimeout(updateRetryTimer);
+      updateRetryTimer = null;
+      return;
+    }
     pollUpdates();
   }
 
@@ -1823,8 +1835,8 @@
     document.addEventListener("keydown", e => {
       if (e.key === "Escape" && dlg) closeSpeakerDialog();
     });
-    document.addEventListener("visibilitychange", scheduleUpdatePolling);
-    scheduleUpdatePolling();
+    document.addEventListener("visibilitychange", updatePollingVisibility);
+    updatePollingVisibility();
   }).catch(() => {
     $("#main").innerHTML = `<div class="boot-error"><h1>${t("controller_unavailable")}</h1><p>${t("controller_unavailable_desc")}</p></div>`;
   });

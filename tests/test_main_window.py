@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import Mock, patch
 
+from PySide6.QtCore import QObject
+
 from kef_app.ui.main_window import KefMainWindow
 
 
@@ -12,10 +14,14 @@ class KefMainWindowHostTests(unittest.TestCase):
         # These tests exercise the native-host lifecycle only, without needing
         # a QApplication or a live WebView2 process.
         window = KefMainWindow.__new__(KefMainWindow)
+        QObject.__init__(window)
         window._host_hwnd = 0
         window._host_process = None
         window._monitor = Mock()
         window._launch_host = Mock()
+        window._server = Mock()
+        window._host_ready_mono = 0.0
+        window._last_host_restart_mono = 0.0
         return window
 
     def test_show_does_not_launch_another_host_while_one_is_starting(self) -> None:
@@ -57,6 +63,23 @@ class KefMainWindowHostTests(unittest.TestCase):
             hwnd = KefMainWindow._find_host_window(20)
 
         self.assertEqual(hwnd, 200)
+
+    def test_restarts_a_visible_host_when_the_ui_heartbeat_has_stalled(self) -> None:
+        window = self._window()
+        process = Mock()
+        process.poll.return_value = None
+        window._host_process = process
+        window._host_hwnd = 100
+        window._host_ready_mono = 100.0
+        window._server.client_activity_age_s = 61.0
+        window._log = Mock()
+
+        with patch("kef_app.ui.main_window.time.monotonic", return_value=161.0):
+            self.assertTrue(window._host_needs_restart(True))
+            window._restart_unresponsive_host()
+
+        process.terminate.assert_called_once_with()
+        window._launch_host.assert_called_once_with()
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import threading
+import time
 from collections import deque
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,8 +24,10 @@ class WebApiServer:
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._events: deque[dict[str, object]] = deque(maxlen=500)
-        self._events_lock = threading.Lock()
+        self._events_condition = threading.Condition()
         self._next_event_id = 1
+        self._last_client_activity_mono = time.monotonic()
+        self._stopping = False
 
     @property
     def url(self) -> str:
@@ -48,25 +51,48 @@ class WebApiServer:
             def log_message(self, _format: str, *_args: object) -> None:
                 return
 
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        class LoopbackServer(ThreadingHTTPServer):
+            # A pending long-poll must never delay shutdown of the tray app.
+            daemon_threads = True
+
+        self._stopping = False
+        self._server = LoopbackServer(("127.0.0.1", 0), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True, name="WebApiServer")
         self._thread.start()
 
     def stop(self) -> None:
         if self._server is None:
             return
+        with self._events_condition:
+            self._stopping = True
+            self._events_condition.notify_all()
         self._server.shutdown()
         self._server.server_close()
         self._server = None
 
     def publish(self, channel: str, payload: str) -> None:
-        with self._events_lock:
+        with self._events_condition:
             event_id = self._next_event_id
             self._next_event_id += 1
             self._events.append({"id": event_id, "channel": channel, "payload": payload})
+            self._events_condition.notify_all()
 
-    def _updates_since(self, cursor: int) -> dict[str, object]:
-        with self._events_lock:
+    @property
+    def client_activity_age_s(self) -> float:
+        with self._events_condition:
+            return max(0.0, time.monotonic() - self._last_client_activity_mono)
+
+    def _touch_client_activity(self) -> None:
+        with self._events_condition:
+            self._last_client_activity_mono = time.monotonic()
+
+    def _updates_since(self, cursor: int, timeout_s: float = 15.0) -> dict[str, object]:
+        """Wait briefly for UI updates instead of forcing a 400 ms request loop."""
+        with self._events_condition:
+            self._events_condition.wait_for(
+                lambda: self._stopping or self._next_event_id - 1 > cursor,
+                timeout=max(0.0, timeout_s),
+            )
             updates = [event.copy() for event in self._events if int(event["id"]) > cursor]
             latest = self._next_event_id - 1
         return {"cursor": latest, "updates": updates}
@@ -95,6 +121,7 @@ class WebApiServer:
             self._send_error(handler, HTTPStatus.NOT_FOUND, "Not found")
             return
         try:
+            self._touch_client_activity()
             size = int(handler.headers.get("Content-Length", "0"))
             payload = json.loads(handler.rfile.read(size).decode("utf-8") or "{}")
             args = payload.get("args", []) if isinstance(payload, dict) else []
