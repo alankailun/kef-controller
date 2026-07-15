@@ -1883,6 +1883,24 @@ class PowerEventLogicTests(unittest.TestCase):
 
         self.assertFalse(controller.set_volume("loud"))  # type: ignore[arg-type]
 
+    def test_set_volume_logs_the_completed_action_at_info_level(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        controller._ensure_target_identity = Mock(return_value=True)
+        controller.get_speaker = Mock(return_value=Mock())
+        controller._log_structured = Mock()
+        controller.mono = Mock(return_value=123.0)
+
+        self.assertTrue(controller.set_volume(40))
+
+        controller._log_structured.assert_called_once_with(
+            "STEP",
+            log_level="info",
+            action="SET_VOLUME",
+            level=40,
+            status="success",
+            mono="123.000",
+        )
+
     def test_speaker_event_poll_returns_normalized_ui_state(self):
         controller = self.make_controller(kef_ip="192.168.1.10")
         speaker = Mock()

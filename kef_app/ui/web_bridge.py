@@ -134,7 +134,6 @@ class WebControllerBridge(QObject):
         def done(ok: bool) -> None:
             if ok:
                 self._volume = level
-                self._notify("success", "Volume updated", f"Volume is now {level}.")
             else:
                 self._notify("error", "Volume update failed", "The speaker did not accept the volume change.")
             self.publish_state()

@@ -577,7 +577,14 @@ class ControllerDeviceControlsMixin:
             with temporary_socket_timeout(self.config.socket_timeout):
                 speaker = self.get_speaker(fresh=False)
                 speaker.volume = level
-            self._log_structured("STEP", action="SET_VOLUME", level=level, status="success", mono=f"{self.mono():.3f}")
+            self._log_structured(
+                "STEP",
+                log_level="info",
+                action="SET_VOLUME",
+                level=level,
+                status="success",
+                mono=f"{self.mono():.3f}",
+            )
             return True
         except Exception as exc:
             self.reset_speaker()

@@ -500,6 +500,7 @@
   const TEXT = {
     nav_home: ["主页", "Home"], nav_log: ["日志", "Log"], nav_settings: ["设置", "Settings"],
     volume: ["音量", "Volume"], direct_volume: ["点击直接输入音量", "Click to enter volume"],
+    volume_down: ["音量 −1", "Volume −1"], volume_up: ["音量 +1", "Volume +1"],
     mute: ["静音", "Mute"], unmute: ["恢复音量", "Restore volume"], mute_note: ["已静音，点击喇叭图标恢复", "Muted — click the speaker icon to restore"],
     input_source: ["输入源", "Input Source"], device_info: ["设备信息", "Device Info"],
     ip_address: ["IP 地址", "IP Address"], mac_address: ["MAC 地址", "MAC Address"], model: ["型号", "Model"], firmware: ["固件", "Firmware"],
@@ -520,12 +521,12 @@
     enabled_rules: ["已启用 $ / $ 条规则。", "$ / $ rules enabled."], preset: ["预设", "Preset"], custom: ["自定义", "Custom"],
     simulate_events: ["模拟事件", "Simulate"], exit_simulate: ["退出模拟", "Exit simulation"], restore_recommended: ["恢复推荐", "Restore recommended"],
     test_banner: ["模拟模式已开启。点任意一行的模拟按钮，会按该行当前的规则执行一次真实动作。规则关着就不会有动作，这本身就是诊断结果。", "Simulation is on. Each button runs the current rule for that row. A disabled rule does nothing, which is itself a useful diagnostic."],
-    trigger_event: ["触发事件", "Trigger Event"], wake: ["唤醒", "Wake"], standby: ["待机", "Standby"], test: ["模拟", "Test"], run_once: ["触发一次", "Run once"], all_off: ["全部关闭", "Turn all off"], all_on: ["全部开启", "Turn all on"], not_applicable: ["不适用", "N/A"],
+    trigger_event: ["触发事件", "Trigger Event"], wake: ["唤醒", "Wake"], standby: ["待机", "Standby"], test: ["模拟", "Test"], run_once: ["触发一次", "Run once"], all_off: ["全部关闭", "Turn all off"], all_on: ["全部开启", "Turn all on"], not_applicable: ["不适用", "N/A"], rule_disabled_simulation: ["规则已关闭，模拟不会有动作", "This rule is off; simulation will take no action."],
     screen_warning: ["屏幕熄灭会让扬声器待机，但屏幕点亮不会唤醒它。你需要手动开机，或同时勾上「屏幕开关 · 唤醒」。", "Display-off puts the speaker in standby, but display-on will not wake it. Turn it on manually, or also enable Display Power · Wake."],
     table_foot: ["点击列标题可整列开关。改动即时生效。", "Click a column header to toggle the whole column. Changes save instantly."], table_foot_test: ["模拟会真实控制扬声器，当前状态见主页。", "Simulations control the real speaker; see current state on Home."],
     windows_startup: ["Windows 启动", "Windows Startup"], start_on_login: ["登录时自动运行", "Run when I sign in"], start_on_login_desc: ["创建或移除所选的 Windows 开机自启注册", "Create or remove the selected Windows startup registration"], startup_method: ["注册方式", "Registration method"], startup_method_desc: ["任务计划可绕过 UAC 提示；注册表最简单", "Task Scheduler can avoid UAC prompts; Registry Run is simplest"], startup_off: ["关闭", "Off"], startup_task: ["任务计划程序", "Task Scheduler"], startup_registry: ["注册表 Run", "Registry Run"],
     dlg_sub: ["选择这个 App 要控制的 KEF 扬声器。", "Choose the KEF speaker this app should control."], scanning: ["正在扫描局域网…", "Scanning your network…"], checked_devices: ["已检查 $ 台设备", "checked $ devices"], scan_complete: ["扫描完成，找到 $ 台。", "Scan complete, found $."], current_included: ["已包含你当前的扬声器。", "Your current speaker is included."], rescan: ["重新扫描", "Rescan"], no_speaker: ["没有扫描到扬声器", "No speakers found"], manual_link: ["没找到？手动输入 IP 地址", "Not listed? Enter an IP manually"], manual_entry: ["手动指定", "Manual entry"], ip_placeholder: ["IP 地址，如 10.0.0.222", "IP address, e.g. 10.0.0.222"], mac_placeholder: ["MAC（可选）", "MAC (optional)"], cancel: ["取消", "Cancel"], apply: ["应用", "Apply"], close: ["关闭", "Close"], in_use: ["使用中", "In use"], select: ["选择", "Select"], scan_failed: ["扫描请求失败，请重试。", "Scan request failed. Please retry."],
-    volume_updated: ["音量 $", "Volume $"], muted: ["已静音", "Muted"], input_changed: ["已切换到 $", "Switched to $"], settings_saved: ["设置已保存", "Settings saved"], controller_unavailable: ["控制器不可用", "Controller unavailable"], controller_unavailable_desc: ["本地控制接口未能启动，请重启应用。", "The local control interface could not start. Please restart the app."],
+    volume_updated: ["音量 $", "Volume $"], muted: ["已静音", "Muted"], input_changed: ["已切换到 $", "Switched to $"], settings_saved: ["设置已保存", "Settings saved"], controller_error: ["控制器错误", "Controller error"], request_failed: ["请求失败。", "Request failed."], controller_unavailable: ["控制器不可用", "Controller unavailable"], controller_unavailable_desc: ["本地控制接口未能启动，请重启应用。", "The local control interface could not start. Please restart the app."],
   };
   let uiLanguage = "zh";
   const t = (key, ...args) => {
@@ -669,8 +670,8 @@
     });
     const payload = await response.json();
     if (!response.ok || payload.error) {
-      const detail = payload.error || "请求失败。";
-      toast("error", "控制器错误", detail);
+      const detail = payload.error || t("request_failed");
+      toast("error", t("controller_error"), detail);
       throw new Error(detail);
     }
     return payload.result;
@@ -732,10 +733,7 @@
   const toastKind = (level, title, detail, channel) => {
     const value = `${title || ""} ${detail || ""}`;
     if (level === "error") return "error";
-    if (channel === "volume") {
-      const isMute = muted || value.toLowerCase().includes("mute") || value.includes("静音") || /(?:^|\D)0(?:\D|$)/.test(value);
-      return isMute ? "mute" : "volume";
-    }
+    if (channel === "volume") return "volume";
     if (channel === "power") return value.toLowerCase().includes("standby") || value.includes("待机") ? "standby" : "success";
     if (channel === "save" || level === "success") return "success";
     if (level === "warning") return "warning";
@@ -752,7 +750,7 @@
     if (node) node.remove();
     toastNodes.delete(channel);
   }
-  function toast(level, title, detail = "", channel = toastChannel(title), ttl = 3600) {
+  function toast(level, title, detail = "", channel = toastChannel(title), ttl = 3600, visualKind = "") {
     let el = toastNodes.get(channel);
     if (!el) {
       const area = $("#toasts");
@@ -768,7 +766,7 @@
       area.append(el);
       toastNodes.set(channel, el);
     }
-    const kind = toastKind(level, title, detail, channel);
+    const kind = visualKind || toastKind(level, title, detail, channel);
     el.className = `toast ${level || "info"} kind-${kind}`;
     $(".toast-icon", el).innerHTML = icon(toastIcon(kind), 17);
     $("b", el).textContent = localTitle(title);
@@ -829,12 +827,12 @@
         </div>
         <div class="vol-row">
           <button id="mute-btn" class="vol-icon-btn" title="${t("mute")}">${icon("volume", 19)}</button>
-          <button id="vol-down" class="nudge-btn" title="音量 −1">${icon("minus", 15)}</button>
+          <button id="vol-down" class="nudge-btn" title="${t("volume_down")}">${icon("minus", 15)}</button>
           <div class="slider-wrap">
             <input id="vol-slider" class="slider" type="range" min="0" max="100" step="1" value="0">
             <div class="ticks"><span>0</span><span>25</span><span>50</span><span>75</span><span>100</span></div>
           </div>
-          <button id="vol-up" class="nudge-btn" title="音量 +1">${icon("plus", 15)}</button>
+          <button id="vol-up" class="nudge-btn" title="${t("volume_up")}">${icon("plus", 15)}</button>
         </div>
         <div id="mute-note" class="mute-note hidden">${icon("volumeX", 12)} ${t("mute_note")}</div>
       </section>
@@ -884,7 +882,7 @@
     $("#vol-up").addEventListener("click", () => nudge(1));
     $("#mute-btn").addEventListener("click", () => {
       const current = currentVolume();
-      if (!muted && current > 0) { muted = true; lastAudible = current; sendVolume(0); }
+      if (!muted && current > 0) { muted = true; lastAudible = current; sendVolume(0, { mutedAction: true }); }
       else { muted = false; sendVolume(lastAudible || 40); }
       syncHome();
     });
@@ -957,16 +955,26 @@
     clearTimeout(volumeTimer);
     volumeTimer = setTimeout(() => bridge.setVolume(value).catch(() => {}), 180);
     clearTimeout(volumeToastTimer);
-    volumeToastTimer = setTimeout(() => toast("info", t("volume_updated", value), "", "volume", 2600), 350);
+    volumeToastTimer = setTimeout(
+      () => toast("info", t("volume_updated", value), "", "volume", 2600, "volume"),
+      350,
+    );
   }
-  function sendVolume(v) {
+  function sendVolume(v, { mutedAction = false } = {}) {
     clearTimeout(volumeTimer);
     const value = paintVolume(v);
     if (state && state.speaker) state.speaker.volume = value;
     volumeHoldUntil = Date.now() + 2500;
     bridge.setVolume(value).catch(() => {});
     clearTimeout(volumeToastTimer);
-    toast(value <= 0 ? "warning" : "info", value <= 0 ? t("muted") : t("volume_updated", value), "", "volume", 2600);
+    toast(
+      mutedAction ? "warning" : "info",
+      mutedAction ? t("muted") : t("volume_updated", value),
+      "",
+      "volume",
+      2600,
+      mutedAction ? "mute" : "volume",
+    );
   }
   function nudge(delta) {
     muted = false;
@@ -1010,6 +1018,8 @@
     $("#info-summary").textContent = [s.model, s.firmware].filter(Boolean).join(" · ") || "—";
     const vals = [s.ip, s.mac, s.model, s.firmware];
     vals.forEach((v, i) => { $(`#info-v${i}`).textContent = v || "—"; });
+    $("#info-grid").classList.toggle("hidden", !infoOpen);
+    $("#info-chevron").innerHTML = icon(infoOpen ? "chevronDown" : "chevronRight", 15);
   }
 
   // ── 日志页 ──
@@ -1023,8 +1033,8 @@
       <div class="log-toolbar">
         <div class="search-box">
           ${icon("search", 15)}
-          <input id="log-search" type="search" placeholder="${t("search_log")}">
-          <button id="log-search-clear" class="search-clear" title="${t("clear_search")}">${icon("x", 13)}</button>
+          <input id="log-search" type="search" value="${esc(logQuery)}" placeholder="${t("search_log")}">
+          <button id="log-search-clear" class="search-clear ${logQuery ? "show" : ""}" title="${t("clear_search")}">${icon("x", 13)}</button>
         </div>
         <div class="severity-row">
           <span class="severity-hint">${t("min_level")}</span>
@@ -1116,7 +1126,7 @@
       index % 2 ? `<mark>${esc(part)}</mark>` : esc(part)).join("");
   }
 
-  function logRowHtml(item, previous) {
+  function logRowHtml(item) {
     return `<div class="log-line ${item.lvl}">
       <span class="log-time">${esc(item.time || "—")}</span>
       <span class="log-lvl ${item.lvl}">${item.lvl}</span>
@@ -1134,7 +1144,7 @@
     const keep = stickBottom || isNearBottom(box);
     const visible = logItems.filter(logMatches);
     box.innerHTML = visible.length
-      ? visible.map((item, index) => logRowHtml(item, visible[index - 1])).join("")
+      ? visible.map(logRowHtml).join("")
       : `<div class="log-empty">${logQuery.trim() ? t("no_match", logQuery.trim()) : t("no_level")}</div>`;
     if (keep) box.scrollTop = box.scrollHeight;
     syncLogMeta(visible.length);
@@ -1173,8 +1183,7 @@
       const keep = isNearBottom(box);
       const empty = box.querySelector(".log-empty");
       if (empty) empty.remove();
-      const previous = logItems.length > 1 ? logItems[logItems.length - 2] : null;
-      box.insertAdjacentHTML("beforeend", logRowHtml(item, previous));
+      box.insertAdjacentHTML("beforeend", logRowHtml(item));
       while (box.children.length > 800) box.firstElementChild.remove();
       if (keep) box.scrollTop = box.scrollHeight;
     }
@@ -1330,7 +1339,15 @@
       const next = button.dataset.language;
       uiLanguage = next;
       if (state?.settings?.general) state.settings.general.ui_language = next;
+      document.documentElement.lang = uiLanguage === "en" ? "en" : "zh-CN";
       buildShell();
+      syncHome();
+      syncSettings();
+      if (page === "log") {
+        $("#log-search").value = logQuery;
+        $("#log-search-clear").classList.toggle("show", !!logQuery);
+        renderLogList({ stickBottom: true });
+      }
       setPage(page);
       bridge.updateSettings(JSON.stringify({ ui_language: next })).then(flashSaved).catch(() => {});
     });
@@ -1568,7 +1585,7 @@
     for (const btn of $$("[data-test]")) {
       const on = ruleOn(btn.dataset.testcol);
       btn.classList.toggle("off", !on);
-      btn.title = on ? t("run_once") : t("not_applicable");
+      btn.title = on ? t("run_once") : t("rule_disabled_simulation");
       btn.disabled = !!runningTest;
       const running = runningTest === btn.dataset.test;
       btn.firstElementChild.outerHTML = running ? icon("loader", 11, "spin") : icon("play", 11);
@@ -1647,7 +1664,7 @@
         if (msg.state === "complete") dlg.phase = "done";
       } else if (msg.state === "failed") {
         dlg.phase = "done";
-        dlg.failed = msg.detail || "扫描失败。";
+        dlg.failed = msg.detail || t("scan_failed");
       }
       syncDialog();
       return;
@@ -1688,6 +1705,7 @@
   bridge.initialState().then(value => {
     state = value;
     uiLanguage = state?.settings?.general?.ui_language === "en" ? "en" : "zh";
+    document.documentElement.lang = uiLanguage === "en" ? "en" : "zh-CN";
     lastStateJson = JSON.stringify(value);
     buildShell();
     syncHome();

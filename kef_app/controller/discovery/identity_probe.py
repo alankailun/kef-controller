@@ -247,7 +247,6 @@ class ControllerIdentityProbeMixin:
         if should_log_success:
             self._log_structured(
                 "STEP",
-                log_level="info",
                 action="DISCOVER_IP",
                 reason=reason,
                 step="capture_identity_from_current_ip",

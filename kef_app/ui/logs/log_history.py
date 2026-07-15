@@ -3,7 +3,11 @@ from __future__ import annotations
 from collections import deque
 from typing import Iterable
 
-_UI_HIDDEN_LOG_MARKERS = ("ui_home_poll", "ui_tray_poll", "web_ui_poll")
+_UI_HIDDEN_LOG_MARKERS = (
+    "ui_home_poll",
+    "ui_tray_poll",
+    "web_ui_poll",
+)
 
 
 def should_hide_from_ui_log(line: str) -> bool:
