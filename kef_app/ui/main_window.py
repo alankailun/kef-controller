@@ -7,6 +7,7 @@ from pathlib import Path
 
 import win32con
 import win32gui
+import win32process
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from ..config import AppConfig
@@ -57,10 +58,6 @@ class KefMainWindow(QObject):
             return Path(frozen_root) / "kef_app" / "ui" / "web"
         return Path(__file__).resolve().parent / "web"
 
-    def setWindowIcon(self, _icon: object) -> None:
-        # The host process is the same executable, so Windows uses its packaged icon.
-        return
-
     def isVisible(self) -> bool:
         return bool(self._host_hwnd and win32gui.IsWindow(self._host_hwnd) and win32gui.IsWindowVisible(self._host_hwnd))
 
@@ -70,6 +67,13 @@ class KefMainWindow(QObject):
             win32gui.SetForegroundWindow(self._host_hwnd)
             self.visibility_changed.emit(True)
             self._bridge.refresh()
+            return
+
+        # Creating an Edge WebView2 window takes a moment.  Until its HWND is
+        # discoverable, _host_hwnd is still zero, so treating that as "no host"
+        # would start one child process for every tray/menu click.
+        if self._host_is_alive():
+            self._monitor.start()
             return
         self._launch_host()
 
@@ -88,9 +92,16 @@ class KefMainWindow(QObject):
         self._monitor.stop()
         if self._host_hwnd and win32gui.IsWindow(self._host_hwnd):
             win32gui.PostMessage(self._host_hwnd, win32con.WM_CLOSE, 0, 0)
+        elif self._host_is_alive():
+            self._host_process.terminate()
         self._server.stop()
 
+    def _host_is_alive(self) -> bool:
+        return self._host_process is not None and self._host_process.poll() is None
+
     def _launch_host(self) -> None:
+        if self._host_is_alive():
+            return
         command = [sys.executable]
         if not getattr(sys, "frozen", False):
             command.append(str(Path(__file__).resolve().parents[2] / "main_gui.py"))
@@ -113,26 +124,37 @@ class KefMainWindow(QObject):
             self.visibility_changed.emit(False)
             return
         if not self._host_hwnd or not win32gui.IsWindow(self._host_hwnd):
-            self._host_hwnd = self._find_host_window()
+            host_pid = self._host_process.pid if self._host_process is not None else None
+            self._host_hwnd = self._find_host_window(host_pid)
             self._find_attempts += 1
             if not self._host_hwnd:
                 if self._find_attempts == 20:
                     self._log.error("Native Edge WebView2 host window was not found after 10 seconds")
+                    if self._host_is_alive():
+                        self._host_process.terminate()
+                    self._host_process = None
+                    self._monitor.stop()
+                    self.visibility_changed.emit(False)
                 return
             self._apply_native_window_effects(self._host_hwnd)
             self._log.info("Native Edge WebView2 host is ready | hwnd=%s", self._host_hwnd)
         self.visibility_changed.emit(bool(win32gui.IsWindowVisible(self._host_hwnd)))
 
     @classmethod
-    def _find_host_window(cls) -> int:
+    def _find_host_window(cls, host_pid: int | None = None) -> int:
         matches: list[int] = []
 
         def callback(hwnd: int, _extra: object) -> bool:
             if win32gui.GetWindowText(hwnd) != cls._WINDOW_TITLE:
                 return True
             class_name = win32gui.GetClassName(hwnd)
-            if class_name.startswith("WindowsForms10."):
-                matches.append(hwnd)
+            if not class_name.startswith("WindowsForms10."):
+                return True
+            if host_pid is not None:
+                _thread_id, window_pid = win32process.GetWindowThreadProcessId(hwnd)
+                if window_pid != host_pid:
+                    return True
+            matches.append(hwnd)
             return True
 
         win32gui.EnumWindows(callback, None)

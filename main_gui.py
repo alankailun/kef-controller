@@ -9,11 +9,42 @@ Package as .exe:
 """
 from __future__ import annotations
 
-import os
 import sys
+
+from kef_app.platform.webview2_runtime import check_webview2_readiness
+
+
+def _webview2_requirement_message() -> str:
+    readiness = check_webview2_readiness()
+    details: list[str] = []
+    if readiness.missing_runtime:
+        details.append("Microsoft Edge WebView2 Runtime")
+    if readiness.missing_dotnet:
+        details.append("Microsoft .NET Framework 4.6.2 或更高版本")
+    requirement = "、".join(details) or "Microsoft Edge WebView2 Runtime"
+    return (
+        "KEF Controller 无法启动界面，因为此电脑缺少：\n\n"
+        f"{requirement}\n\n"
+        "请重新运行 KEF Controller 安装程序（保持联网），安装程序会自动安装 WebView2。"
+        "程序已停止，以避免显示空白窗口。"
+    )
+
+
+def _show_webview2_requirement_message() -> None:
+    import ctypes
+
+    ctypes.windll.user32.MessageBoxW(None, _webview2_requirement_message(), "KEF Controller", 0x10)
+
+
+def _webview2_is_ready() -> bool:
+    return check_webview2_readiness().ready
 
 
 def _run_webview_host(url: str) -> None:
+    if not _webview2_is_ready():
+        _show_webview2_requirement_message()
+        raise SystemExit(2)
+
     import webview
 
     webview.create_window(
@@ -37,23 +68,31 @@ if "--webview-host" in sys.argv:
 
 
 if "--webview2-import-check" in sys.argv:
-    import webview
+    if not _webview2_is_ready():
+        raise SystemExit(2)
 
-    assert webview
+    import webview
+    import webview.platforms.edgechromium as edgechromium
+
+    assert webview and edgechromium
     raise SystemExit(0)
 
-from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QApplication
-
-from kef_app.runtime.bootstrap import build_runtime_context, exit_if_startup_task_repair_requested
-from kef_app.runtime.headless_service import HeadlessRuntime
-from kef_app.ui import KefTrayApp
-from kef_app.ui.app_icon import apply_application_icon, configure_windows_app_user_model_id
-from kef_app.ui.logs import UILogHandler
-
-
 def main() -> None:
+    from kef_app.runtime.bootstrap import build_runtime_context, exit_if_startup_task_repair_requested
+
     exit_if_startup_task_repair_requested()
+    if not _webview2_is_ready():
+        _show_webview2_requirement_message()
+        raise SystemExit(2)
+
+    from PySide6.QtGui import QFont
+    from PySide6.QtWidgets import QApplication
+
+    from kef_app.runtime.headless_service import HeadlessRuntime
+    from kef_app.ui import KefTrayApp
+    from kef_app.ui.app_icon import apply_application_icon, configure_windows_app_user_model_id
+    from kef_app.ui.logs import UILogHandler
+
     configure_windows_app_user_model_id()
 
     app = QApplication(sys.argv)

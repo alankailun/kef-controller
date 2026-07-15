@@ -126,8 +126,11 @@ exe = EXE(
     icon='installer/assets/setup-icon.ico',
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX saves little here but materially increases antivirus false positives
+    # for an unsigned desktop executable.
+    upx=False,
     upx_exclude=[],
+    version='installer/version_info.txt',
     runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,

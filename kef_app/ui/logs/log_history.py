@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections import deque
+import os
+import re
 from typing import Iterable
 
 _UI_HIDDEN_LOG_MARKERS = (
@@ -8,6 +10,35 @@ _UI_HIDDEN_LOG_MARKERS = (
     "ui_tray_poll",
     "web_ui_poll",
 )
+
+
+def list_log_history_files(log_file: str) -> list[str]:
+    """Return the current log followed by date-rotated files, newest first."""
+    base_name = os.path.basename(log_file)
+    log_dir = os.path.dirname(log_file)
+    if not base_name:
+        return []
+
+    rotated_name = re.compile(rf"^{re.escape(base_name)}\.\d{{4}}-\d{{2}}-\d{{2}}$")
+    try:
+        archived = sorted(
+            (name for name in os.listdir(log_dir) if rotated_name.fullmatch(name)),
+            reverse=True,
+        )
+    except OSError:
+        archived = []
+    return [base_name, *archived]
+
+
+def resolve_log_history_file(log_file: str, selected_name: str) -> str:
+    """Resolve a UI-selected log name without allowing directory traversal."""
+    selected = str(selected_name or "").strip()
+    base_name = os.path.basename(log_file)
+    if not selected or selected == base_name:
+        return log_file
+    if selected not in list_log_history_files(log_file):
+        raise ValueError("Unknown log history file")
+    return os.path.join(os.path.dirname(log_file), selected)
 
 
 def should_hide_from_ui_log(line: str) -> bool:

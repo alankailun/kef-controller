@@ -153,40 +153,44 @@ class HeadlessRuntime:
             nonlocal cleaned_up, session_notify_registered, power_notify_handles, network_interface_monitor, class_registered, hwnd, wc
             with resource_lock:
                 if cleaned_up:
-                    return
-                cleaned_up = True
-            with self._hwnd_lock:
-                self._hwnd = 0
-            self.controller.stop_speaker_event_monitor()
-            self.controller.stop_prewarmed_standby_socket_monitor()
+                    first_cleanup = False
+                else:
+                    cleaned_up = True
+                    first_cleanup = True
 
-            if session_notify_registered and hwnd:
-                try:
-                    WTSUnRegisterSessionNotification(hwnd)
-                    self.log.info(f"Unregistered session notifications | hwnd={hwnd}")
-                except Exception as exc:
-                    self.log.info(f"Failed to unregister session notifications | hwnd={hwnd} | {exc}")
-                finally:
-                    session_notify_registered = False
+            if first_cleanup:
+                with self._hwnd_lock:
+                    self._hwnd = 0
+                self.controller.stop_speaker_event_monitor()
+                self.controller.stop_prewarmed_standby_socket_monitor()
 
-            for setting_name, handle in power_notify_handles:
-                try:
-                    UnregisterPowerSettingNotification(handle)
-                    self.log.info(f"Unregistered power setting notification | setting={setting_name} | handle={handle}")
-                except Exception as exc:
-                    self.log.info(
-                        f"Failed to unregister power setting notification | setting={setting_name} | handle={handle} | {exc}"
-                    )
-            power_notify_handles = []
+                if session_notify_registered and hwnd:
+                    try:
+                        WTSUnRegisterSessionNotification(hwnd)
+                        self.log.info(f"Unregistered session notifications | hwnd={hwnd}")
+                    except Exception as exc:
+                        self.log.info(f"Failed to unregister session notifications | hwnd={hwnd} | {exc}")
+                    finally:
+                        session_notify_registered = False
 
-            if network_interface_monitor is not None:
-                try:
-                    network_interface_monitor.close()
-                    self.log.info("Unregistered network interface change notifications")
-                except Exception as exc:
-                    self.log.info(f"Failed to unregister network interface change notifications | {exc}")
-                finally:
-                    network_interface_monitor = None
+                for setting_name, handle in power_notify_handles:
+                    try:
+                        UnregisterPowerSettingNotification(handle)
+                        self.log.info(f"Unregistered power setting notification | setting={setting_name} | handle={handle}")
+                    except Exception as exc:
+                        self.log.info(
+                            f"Failed to unregister power setting notification | setting={setting_name} | handle={handle} | {exc}"
+                        )
+                power_notify_handles = []
+
+                if network_interface_monitor is not None:
+                    try:
+                        network_interface_monitor.close()
+                        self.log.info("Unregistered network interface change notifications")
+                    except Exception as exc:
+                        self.log.info(f"Failed to unregister network interface change notifications | {exc}")
+                    finally:
+                        network_interface_monitor = None
 
             if allow_destroy_window and hwnd:
                 try:
@@ -198,13 +202,16 @@ class HeadlessRuntime:
                 finally:
                     hwnd = None
 
-            if class_registered and wc is not None:
+            # WM_DESTROY is delivered while the window still belongs to its
+            # class.  Unregistering here fails with WinError 1412, so defer
+            # it until the destroy call has returned or PumpMessages exits.
+            if allow_destroy_window and class_registered and wc is not None:
                 try:
                     win32gui.UnregisterClass(wc.lpszClassName, wc.hInstance)
                     self.log.info(f"Unregistered the window class | class={wc.lpszClassName}")
                 except Exception as exc:
                     self.log.info(f"Failed to unregister the window class | class={wc.lpszClassName} | {exc}")
-                finally:
+                else:
                     class_registered = False
 
         def handle_signal(signum, _frame):

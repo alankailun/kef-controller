@@ -40,9 +40,11 @@ def build_runtime_context(*, extra_log_handlers: Iterable[logging.Handler] = ())
     for message in user_config_store.drain_startup_messages():
         log.info(message)
 
-    ensure_startup_registration(config.app_name, log, mode=config.startup_registration_mode)
-
+    # Check this before touching the preferred executable or Task Scheduler.
+    # A second copy launched from a build folder must not try to replace the
+    # executable used by the live instance before it exits.
     single_instance_mutex = ensure_single_instance(log, config.single_instance_mutex_name)
+    ensure_startup_registration(config.app_name, log, mode=config.startup_registration_mode)
     state_store = SpeakerStateStore(config, log)
     controller = KefPowerController(config, log, state_store=state_store)
 

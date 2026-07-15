@@ -9,7 +9,7 @@ from ...devices.speaker_models import SpeakerIdentity, normalize_mac
 class ControllerIdentityStateMixin:
     @staticmethod
     def _is_ui_poll_trigger(trigger: str) -> bool:
-        return str(trigger).startswith(("ui_home_poll", "ui_tray_poll"))
+        return str(trigger).startswith(("ui_home_poll", "ui_tray_poll", "web_ui_poll"))
 
     def get_current_kef_ip(self) -> str:
         with self._ip_lock:
@@ -146,19 +146,23 @@ class ControllerIdentityStateMixin:
             if offline:
                 self._identity_available = False
 
-        self._log_structured(
-            "WARN",
-            action="IDENTITY_PROBE",
-            step="mark_failure",
-            source=source,
-            trigger=trigger,
-            cause=cause,
-            current_ip=current_ip,
-            failures=failures,
-            threshold=threshold,
-            offline=offline,
-            mono=f"{self.mono():.3f}",
-        )
+        # The UI poll already emits one rate-limited network-error summary.
+        # Repeating this second identity line every two seconds made a normal
+        # temporary Wi-Fi outage look like an application failure.
+        if not self._is_ui_poll_trigger(trigger):
+            self._log_structured(
+                "WARN",
+                action="IDENTITY_PROBE",
+                step="mark_failure",
+                source=source,
+                trigger=trigger,
+                cause=cause,
+                current_ip=current_ip,
+                failures=failures,
+                threshold=threshold,
+                offline=offline,
+                mono=f"{self.mono():.3f}",
+            )
         if availability_changed:
             self._emit_identity_changed()
         return availability_changed

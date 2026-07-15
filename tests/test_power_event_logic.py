@@ -1901,6 +1901,17 @@ class PowerEventLogicTests(unittest.TestCase):
             mono="123.000",
         )
 
+    def test_wake_completion_waits_for_a_real_state_poll_before_marking_on(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        events = self.capture_events(controller)
+
+        controller._emit_power_action_finished("WAKE", "web_ui", "success_attempt_1")
+
+        self.assertEqual(
+            [name for name, _payload in events],
+            ["power_action_finished"],
+        )
+
     def test_speaker_event_poll_returns_normalized_ui_state(self):
         controller = self.make_controller(kef_ip="192.168.1.10")
         speaker = Mock()
@@ -1939,6 +1950,25 @@ class PowerEventLogicTests(unittest.TestCase):
 
         self.assertEqual(result, ("wifi", 31, True))
         self.assertTrue(controller._speaker_runtime_power_on)
+
+    def test_web_ui_poll_failure_logs_once_per_rate_limit_window(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        controller._log_structured = Mock()
+        controller.mono = Mock(side_effect=[100.0, 101.0, 131.0])
+
+        controller._log_ui_poll_failure(
+            reason="web_ui_poll", trigger="web_ui_poll", step="speaker_status", error=TimeoutError("first")
+        )
+        controller._log_ui_poll_failure(
+            reason="web_ui_poll", trigger="web_ui_poll", step="volume", error=TimeoutError("suppressed")
+        )
+        controller._log_ui_poll_failure(
+            reason="web_ui_poll", trigger="web_ui_poll", step="volume", error=TimeoutError("later")
+        )
+
+        self.assertEqual(controller._log_structured.call_count, 2)
+        self.assertEqual(controller._log_structured.call_args_list[0].kwargs["status"], "retrying_rate_limited")
+        self.assertEqual(controller._log_structured.call_args_list[1].kwargs["step"], "volume")
 
     def test_speaker_event_poll_ignores_non_ui_events(self):
         controller = self.make_controller(kef_ip="192.168.1.10")

@@ -15,9 +15,34 @@ T = TypeVar("T")
 _EVENT_MONITOR_IDLE_DELAY_S = 0.2
 _EVENT_MONITOR_RETRY_DELAY_S = 2.0
 _EVENT_MONITOR_POWER_ACTION_DELAY_S = 0.5
+_UI_POLL_FAILURE_LOG_INTERVAL_S = 30.0
 
 
 class ControllerDeviceControlsMixin:
+    def _log_ui_poll_failure(self, *, reason: str, trigger: str, step: str, error: Exception) -> None:
+        now = self.mono()
+        with self._state_lock:
+            last_logged = self._last_ui_poll_failure_log_mono
+            if now - last_logged < _UI_POLL_FAILURE_LOG_INTERVAL_S:
+                return
+            self._last_ui_poll_failure_log_mono = now
+
+        self._log_structured(
+            "WARN",
+            action="POLL_EXTERNAL_STATE",
+            reason=reason,
+            trigger=trigger,
+            step=step,
+            status="retrying_rate_limited",
+            next_log_after_s=f"{_UI_POLL_FAILURE_LOG_INTERVAL_S:.0f}",
+            error=repr(error),
+            mono=f"{now:.3f}",
+        )
+
+    def _clear_ui_poll_failure_rate_limit(self) -> None:
+        with self._state_lock:
+            self._last_ui_poll_failure_log_mono = 0.0
+
     def _read_ui_value(
         self,
         reason: str,
@@ -33,6 +58,9 @@ class ControllerDeviceControlsMixin:
                 return reader(speaker), True
         except Exception as exc:
             self.reset_speaker()
+            if self._is_ui_poll_trigger(trigger):
+                self._log_ui_poll_failure(reason=reason, trigger=trigger, step=step, error=exc)
+                return None, False
             self._log_structured(
                 "WARN",
                 action="POLL_EXTERNAL_STATE",
@@ -294,6 +322,9 @@ class ControllerDeviceControlsMixin:
         identity_seen = False
         ip_refreshed = False
         reachable = power_ok or input_ok or volume_ok
+
+        if power_ok and input_ok and volume_ok:
+            self._clear_ui_poll_failure_rate_limit()
 
         if reachable and self.get_effective_target_mac():
             identity_seen, ip_refreshed = self.probe_external_identity(reason=reason, trigger=trigger)

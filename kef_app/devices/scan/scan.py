@@ -5,13 +5,12 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Optional, TypeVar
 
-_T = TypeVar("_T")
-
 from ...config import AppConfig
 from ..speaker_models import SpeakerIdentity, normalize_mac
 from .identity import identify_kef_device
 from .network import build_candidate_networks, probe_ip_port, read_arp_table
 
+_T = TypeVar("_T")
 _SEED_IDENTITY_HTTP_TIMEOUT_FLOOR_S = 1.50
 _SEED_IDENTITY_RETRY_DELAY_S = 0.35
 

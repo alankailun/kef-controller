@@ -18,7 +18,13 @@ from ..platform.windows import is_startup_registered
 from .background_tasks import start_background_task
 from .controller_events import ControllerEventBridge
 from .logs import UILogHandler
-from .logs.log_history import merge_recent_lines, read_log_tail_lines, should_hide_from_ui_log
+from .logs.log_history import (
+    list_log_history_files,
+    merge_recent_lines,
+    read_log_tail_lines,
+    resolve_log_history_file,
+    should_hide_from_ui_log,
+)
 from .settings.settings_service import get_speaker_power_disabled_reason, save_settings_and_sync_startup
 
 
@@ -47,11 +53,20 @@ _EVENTS: dict[str, tuple[str, str, str, Callable[[Any], object]]] = {
         "Sleep", "standby_on_sleep", "Put the speaker in standby when Windows sleeps.",
         lambda controller: controller.on_suspend("WEB_TEST_SUSPEND"),
     ),
+    "lid-close": (
+        "Lid Close", "standby_on_lid_close", "Put the speaker in standby when the laptop lid closes.",
+        lambda controller: controller.on_lid_closed("WEB_TEST_LID_CLOSE"),
+    ),
     "shutdown": (
         "Shutdown", "endsession_standby_on_shutdown", "Put the speaker in standby when Windows shuts down.",
         lambda controller: controller.standby_kef_end_session("WEB_TEST_ENDSESSION", "WEB_TEST"),
     ),
 }
+
+
+def _wake_is_confirmed(speaker_on: object, input_source: str | None) -> bool:
+    """Only enable live controls after the speaker reports a usable source."""
+    return speaker_on is True and bool(input_source) and input_source != "standby"
 
 
 class WebControllerBridge(QObject):
@@ -84,6 +99,7 @@ class WebControllerBridge(QObject):
         self._startup_registered = is_startup_registered("KEF Controller")
         self._poll_lock = threading.Lock()
         self._last_action_started = 0.0
+        self._awaiting_wake_confirmation = False
 
         self._poll_timer = QTimer(self)
         self._poll_timer.timeout.connect(self._poll_speaker_state)
@@ -326,22 +342,30 @@ class WebControllerBridge(QObject):
                               log=self._controller.log)
 
     @Slot(result=str)
-    def logs(self) -> str:
+    @Slot(str, result=str)
+    def logs(self, selected_name: str = "") -> str:
         # v1.6.3 merged the file tail with the in-memory UI ring. Keep that
         # model, but filter hidden poll noise *before* applying the display cap;
         # otherwise thousands of web_ui_poll lines displace PROCESS_START and
         # the startup configuration banner before the UI ever sees them.
+        log_path = resolve_log_history_file(self._config.log_file, selected_name)
         file_lines = [
             line
-            for line in read_log_tail_lines(self._config.log_file, max_lines=8000)
+            for line in read_log_tail_lines(log_path, max_lines=8000)
             if not should_hide_from_ui_log(line)
         ]
+        if log_path != self._config.log_file:
+            return self._encode(file_lines[-800:])
         lines = merge_recent_lines(
             file_lines,
             self._log_handler.snapshot_lines(),
             max_lines=800,
         )
         return self._encode(lines)
+
+    @Slot(result=str)
+    def logFiles(self) -> str:
+        return self._encode(list_log_history_files(self._config.log_file))
 
     @Slot()
     def openLogFolder(self) -> None:
@@ -366,7 +390,10 @@ class WebControllerBridge(QObject):
             if method == "initialState":
                 result: object = json.loads(self.initialState())
             elif method == "logs":
-                result = json.loads(self.logs())
+                selected_name = str(values[0]) if values else ""
+                result = json.loads(self.logs(selected_name))
+            elif method == "logFiles":
+                result = json.loads(self.logFiles())
             elif method == "refresh":
                 self.refresh()
                 result = {"ok": True}
@@ -449,8 +476,17 @@ class WebControllerBridge(QObject):
                               lock=self._poll_lock, log=self._controller.log)
 
     def _on_polled_state(self, input_source: object, volume: object, speaker_on: object) -> None:
+        normalized_input = normalize_input_source(str(input_source)) if input_source else None
+        wake_confirmed = _wake_is_confirmed(speaker_on, normalized_input)
+        if self._awaiting_wake_confirmation:
+            if wake_confirmed:
+                self._awaiting_wake_confirmation = False
+            elif speaker_on is not None:
+                # The wake request was accepted, but the speaker is not ready
+                # for controls until a real poll can read a live input source.
+                speaker_on = False
         if input_source:
-            self._input = normalize_input_source(str(input_source))
+            self._input = normalized_input or self._input
         if isinstance(volume, int):
             self._volume = volume
         if speaker_on is not None:
@@ -461,6 +497,7 @@ class WebControllerBridge(QObject):
         self._on_polled_state(input_source, volume, speaker_on)
 
     def _on_power_action_started(self, action: str, _reason: str) -> None:
+        self._awaiting_wake_confirmation = str(action).upper() == "WAKE"
         self._last_action_started = time.monotonic()
         self._notify("info", "Speaker action", f"{action.replace('_', ' ').title()} is running.")
         self.publish_state()
@@ -468,10 +505,11 @@ class WebControllerBridge(QObject):
     def _on_power_action_finished(self, action: str, _reason: str, success: bool, outcome: str) -> None:
         elapsed = int((time.monotonic() - self._last_action_started) * 1000) if self._last_action_started else 0
         normalized_action = str(action or "").upper()
-        if success and normalized_action == "WAKE":
-            self._speaker_on = True
-            self._input = normalize_input_source(self._config.kef_input)
+        if normalized_action == "WAKE":
+            if not success:
+                self._awaiting_wake_confirmation = False
         elif success and normalized_action.endswith("STANDBY"):
+            self._awaiting_wake_confirmation = False
             self._speaker_on = False
             self._input = "standby"
         # Publish the confirmed action result before the slower live poll. The

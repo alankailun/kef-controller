@@ -92,6 +92,11 @@ class KefPowerController(
         self._prewarmed_standby_failures = 0
         self._prewarmed_standby_ready_logged = False
         self._speaker_event_poll_failures = 0
+        # UI polling retries quickly so a speaker that just came back online
+        # becomes usable straight away.  Keep the retries, but rate-limit the
+        # matching network-error diagnostics instead of writing one line per
+        # field every poll cycle while the speaker is unreachable.
+        self._last_ui_poll_failure_log_mono = 0.0
         self._speaker_runtime_input_source = ""
         self._speaker_runtime_volume: int | None = None
         self._speaker_runtime_power_on: bool | None = None
@@ -163,9 +168,7 @@ class KefPowerController(
         success = _power_action_outcome_is_success(outcome)
         with self._state_lock:
             self._controller_active_power_actions = max(0, self._controller_active_power_actions - 1)
-        if success and action == "WAKE":
-            self._set_speaker_runtime_state(speaker_on=True, source=f"power_action:{action}")
-        elif (
+        if (
             success
             and action in {"STANDBY", "EARLY_STANDBY", "ENDSESSION_STANDBY"}
             and outcome not in _UNCONFIRMED_STANDBY_OUTCOMES
