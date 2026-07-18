@@ -149,6 +149,7 @@ def save_settings_and_sync_startup(
     task_name: str = TASK_NAME,
     retry_disable_with_uac: Optional[Callable[[], bool]] = None,
     retry_enable_task_with_uac: Optional[Callable[[], bool]] = None,
+    retry_enable_registry_with_uac: Optional[Callable[[], bool]] = None,
 ) -> SettingsSaveResult:
     config_ok = config_store.save(updated)
     startup_ok = True
@@ -203,14 +204,33 @@ def save_settings_and_sync_startup(
 
     if (
         startup_changed
+        and desired_startup
+        and selected_mode == "registry"
+        and not startup_ok
+        and startup_error_suggests_repair(startup_detail)
+        and retry_enable_registry_with_uac
+    ):
+        if retry_enable_registry_with_uac():
+            startup_ok = set_startup_registered(
+                True,
+                task_name=task_name,
+                log=log,
+                mode="registry",
+            )
+            startup_detail = get_last_startup_error()
+        else:
+            startup_detail = get_last_startup_error() or startup_detail
+
+    if (
+        startup_changed
         and not desired_startup
         and not startup_ok
         and startup_error_suggests_repair(startup_detail)
         and retry_disable_with_uac
         and retry_disable_with_uac()
     ):
-        startup_ok = True
-        startup_detail = ""
+        startup_ok = set_startup_registered(False, task_name=task_name, log=log, mode="off")
+        startup_detail = get_last_startup_error()
     elif startup_changed and not desired_startup and not startup_ok and retry_disable_with_uac:
         startup_detail = get_last_startup_error() or startup_detail
 

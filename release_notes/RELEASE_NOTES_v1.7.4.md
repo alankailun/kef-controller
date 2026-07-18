@@ -14,10 +14,17 @@ Release date: 2026-07-18
 - The installer always shows the installation-location page.
 - When Task Scheduler returns Access Denied while enabling startup, the
   settings page now requests UAC elevation and retries the operation.
+- Redesigned the Windows Startup section: its main switch is now the only
+  off control, while Task Scheduler and Registry Run are presented as two
+  clear, mutually exclusive buttons with an actual-registration status.
+- Switching to Registry Run, or disabling startup, now also requests UAC to
+  remove a protected older scheduled task before retrying the operation.
 
 ## Verification
 
 - Added a regression test for the frozen onedir path with `NullLogger`.
 - Added coverage that confirms an onedir installation on another drive is
   used directly for Windows startup registration.
+- Added coverage for the elevated cleanup-and-retry path when moving to
+  Registry Run.
 - Rebuilt the onedir package and ran the complete automated test suite.

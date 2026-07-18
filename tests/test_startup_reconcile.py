@@ -274,6 +274,40 @@ class StartupReconcileTests(unittest.TestCase):
         retry_enable.assert_called_once()
         self.assertEqual(result.actual_startup_mode, "task")
 
+    def test_settings_save_registry_mode_retries_after_elevated_task_cleanup(self):
+        config = AppConfig().with_updates(startup_registration_mode="registry")
+        config_store = Mock()
+        config_store.save.return_value = True
+        retry_cleanup = Mock(return_value=True)
+
+        with (
+            patch(
+                "kef_app.ui.settings.settings_service.set_startup_registered",
+                side_effect=[False, True],
+            ) as set_startup,
+            patch("kef_app.ui.settings.settings_service.get_last_startup_error", side_effect=["ERROR: Access is denied.", ""]),
+            patch("kef_app.ui.settings.settings_service.is_startup_registered", side_effect=[False, True]),
+            patch("kef_app.ui.settings.settings_service.get_effective_startup_registration_mode", return_value="registry"),
+            patch(
+                "kef_app.ui.settings.settings_service.describe_startup_registration_status",
+                return_value=("Disabled", "No Windows startup entry is currently registered.", False, False),
+            ),
+        ):
+            result = save_settings_and_sync_startup(
+                config,
+                config_store=config_store,
+                desired_startup=True,
+                startup_initial_checked=False,
+                startup_mode_changed=True,
+                log=Mock(),
+                retry_enable_registry_with_uac=retry_cleanup,
+            )
+
+        self.assertTrue(result.startup_ok)
+        self.assertEqual(set_startup.call_count, 2)
+        self.assertEqual(set_startup.call_args.kwargs["mode"], "registry")
+        retry_cleanup.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

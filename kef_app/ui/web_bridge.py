@@ -14,7 +14,12 @@ from PySide6.QtCore import QUrl
 from ..config import AppConfig
 from ..devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source, normalize_mac
 from ..storage import UserConfigStore
-from ..platform.windows import is_startup_registered, repair_task_startup_with_uac
+from ..platform.windows import (
+    get_effective_startup_registration_mode,
+    is_startup_registered,
+    remove_startup_task_with_uac,
+    repair_task_startup_with_uac,
+)
 from .background_tasks import start_background_task
 from .controller_events import ControllerEventBridge
 from .logs import UILogHandler
@@ -98,6 +103,11 @@ class WebControllerBridge(QObject):
         self._input = normalize_input_source(config.kef_input)
         self._volume: int | None = None
         self._startup_registered = is_startup_registered("KEF Controller")
+        self._startup_mode = (
+            get_effective_startup_registration_mode("KEF Controller", log=controller.log)
+            if self._startup_registered
+            else "none"
+        )
         self._poll_lock = threading.Lock()
         self._last_action_started = 0.0
         self._last_action: dict[str, object] | None = None
@@ -285,10 +295,17 @@ class WebControllerBridge(QObject):
             retry_enable_task_with_uac=lambda: repair_task_startup_with_uac(
                 "KEF Controller", self._controller.log
             )[0],
+            retry_enable_registry_with_uac=lambda: remove_startup_task_with_uac(
+                "KEF Controller", self._controller.log
+            )[0],
+            retry_disable_with_uac=lambda: remove_startup_task_with_uac(
+                "KEF Controller", self._controller.log
+            )[0],
         )
         for field_name in self._config_store.USER_EDITABLE_FIELDS:
             setattr(self._config, field_name, getattr(result.updated, field_name))
         self._startup_registered = result.actual_startup_registered
+        self._startup_mode = result.actual_startup_mode
         if result.config_ok and result.startup_ok:
             self._notify("success", "Startup settings saved", "Windows startup registration is up to date.")
         else:
@@ -477,7 +494,7 @@ class WebControllerBridge(QObject):
             },
             "inputs": [{"label": label, "value": value} for label, value in INPUT_SOURCE_OPTIONS],
             "settings": asdict(self._config.user),
-            "startup": {"registered": self._startup_registered},
+            "startup": {"registered": self._startup_registered, "mode": self._startup_mode},
             "health": {
                 "last_heartbeat_age_s": prewarmed_health["last_heartbeat_age_s"],
                 "heartbeat_failures": prewarmed_health["failures"],
