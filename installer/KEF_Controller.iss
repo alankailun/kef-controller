@@ -8,6 +8,9 @@ AppName=KEF Controller
 AppVersion={#AppVersion}
 AppVerName=KEF Controller {#AppVersion}
 DefaultDirName={autopf}\KEF Controller
+; Keep the location page available so a per-user installation can be placed
+; on another drive (for example F:\KEF Controller).
+DisableDirPage=no
 DefaultGroupName=KEF Controller
 DisableProgramGroupPage=yes
 OutputDir=output

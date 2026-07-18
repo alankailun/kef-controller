@@ -40,29 +40,22 @@ def make_state(**updates) -> StartupRegistrationState:
 
 
 class StartupReconcileTests(unittest.TestCase):
-    def test_onedir_launch_outside_the_install_folder_is_not_self_copied(self):
+    def test_onedir_launch_on_another_drive_is_used_without_copying(self):
         logger = Mock()
         source = r"F:\Downloads\KEF Controller.exe"
-        expected = r"C:\Users\alan\AppData\Local\Programs\KEF Controller\KEF Controller.exe"
         with (
             patch("kef_app.platform.windows.startup.launch.is_frozen_runtime", return_value=True),
             patch("kef_app.platform.windows.startup.launch.sys.executable", source),
-            patch("kef_app.platform.windows.startup.launch.preferred_executable_path", return_value=expected),
         ):
             spec = startup_launch.ensure_preferred_executable(TASK_NAME, logger)
 
         self.assertEqual(spec.command, source)
-        logger.info.assert_called_once()
-        self.assertIn("no files were copied", logger.info.call_args.args[0])
+        logger.info.assert_not_called()
 
-    def test_onedir_launch_outside_the_install_folder_accepts_null_logger(self):
+    def test_onedir_launch_on_another_drive_accepts_null_logger(self):
         with (
             patch("kef_app.platform.windows.startup.launch.is_frozen_runtime", return_value=True),
             patch("kef_app.platform.windows.startup.launch.sys.executable", r"F:\Downloads\KEF Controller.exe"),
-            patch(
-                "kef_app.platform.windows.startup.launch.preferred_executable_path",
-                return_value=r"C:\Users\alan\AppData\Local\Programs\KEF Controller\KEF Controller.exe",
-            ),
         ):
             spec = startup_launch.ensure_preferred_executable(TASK_NAME, NullLogger())
 

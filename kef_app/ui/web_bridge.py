@@ -14,7 +14,7 @@ from PySide6.QtCore import QUrl
 from ..config import AppConfig
 from ..devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source, normalize_mac
 from ..storage import UserConfigStore
-from ..platform.windows import is_startup_registered
+from ..platform.windows import is_startup_registered, repair_task_startup_with_uac
 from .background_tasks import start_background_task
 from .controller_events import ControllerEventBridge
 from .logs import UILogHandler
@@ -282,6 +282,9 @@ class WebControllerBridge(QObject):
             startup_initial_checked=was_enabled,
             startup_mode_changed=(updated.startup_registration_mode != self._config.startup_registration_mode),
             log=self._controller.log,
+            retry_enable_task_with_uac=lambda: repair_task_startup_with_uac(
+                "KEF Controller", self._controller.log
+            )[0],
         )
         for field_name in self._config_store.USER_EDITABLE_FIELDS:
             setattr(self._config, field_name, getattr(result.updated, field_name))

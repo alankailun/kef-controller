@@ -22,7 +22,7 @@ from .startup.elevation import (
     remove_startup_task_with_uac,
     repair_task_startup_with_uac,
 )
-from .startup.launch import ensure_preferred_executable, preferred_executable_path, runtime_launch_spec
+from .startup.launch import ensure_preferred_executable, runtime_launch_spec
 from .startup.service import ensure_startup_registration, set_startup_registered
 from .startup.status import (
     describe_startup_registration,
@@ -51,7 +51,6 @@ __all__ = [
     "is_task_startup_current",
     "maybe_handle_startup_task_repair",
     "normalize_startup_mode",
-    "preferred_executable_path",
     "remove_startup_task_with_uac",
     "repair_task_startup_with_uac",
     "runtime_launch_spec",
