@@ -59,6 +59,58 @@ class StartupReconcileTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertFalse(read_state.call_args.kwargs["include_related_tasks"])
 
+    def test_failed_disable_preserves_task_before_registry_entries(self):
+        state = make_state(
+            registry_command=DESIRED.run_value,
+            registry_entries=(RegistryStartupEntry(TASK_NAME, DESIRED.run_value),),
+            task_present=True,
+            task_spec=DESIRED,
+            task_entries=(ScheduledTaskEntry(TASK_NAME, DESIRED),),
+        )
+        with (
+            patch(
+                "kef_app.platform.windows.startup.service.read_startup_registration_state",
+                return_value=state,
+            ),
+            patch("kef_app.platform.windows.startup.service.delete_task", return_value=(False, "Access is denied.")),
+            patch("kef_app.platform.windows.startup.service.delete_registry_commands") as delete_registry,
+        ):
+            ok = startup_service.set_startup_registered(
+                False,
+                task_name=TASK_NAME,
+                launch_spec=DESIRED,
+                mode="off",
+            )
+
+        self.assertFalse(ok)
+        delete_registry.assert_not_called()
+
+    def test_cancelled_registry_change_removes_the_new_registry_entry(self):
+        state = make_state(
+            task_present=True,
+            task_spec=DESIRED,
+            task_entries=(ScheduledTaskEntry(TASK_NAME, DESIRED),),
+            task_is_current=True,
+        )
+        with (
+            patch(
+                "kef_app.platform.windows.startup.service.read_startup_registration_state",
+                return_value=state,
+            ),
+            patch("kef_app.platform.windows.startup.service.write_registry_command", return_value=(True, "")),
+            patch("kef_app.platform.windows.startup.service.delete_task", return_value=(False, "Access is denied.")),
+            patch("kef_app.platform.windows.startup.service.delete_registry_commands") as delete_registry,
+        ):
+            ok = startup_service.set_startup_registered(
+                True,
+                task_name=TASK_NAME,
+                launch_spec=DESIRED,
+                mode="registry",
+            )
+
+        self.assertFalse(ok)
+        delete_registry.assert_called_once_with((TASK_NAME,))
+
     def test_onedir_launch_on_another_drive_is_used_without_copying(self):
         logger = Mock()
         source = r"F:\Downloads\KEF Controller.exe"
@@ -261,6 +313,38 @@ class StartupReconcileTests(unittest.TestCase):
         self.assertFalse(set_startup.call_args.args[0])
         self.assertEqual(set_startup.call_args.kwargs["mode"], "off")
         self.assertEqual(result.actual_startup_mode, "none")
+
+    def test_cancelled_disable_restores_the_actual_task_scheduler_mode(self):
+        config = AppConfig().with_updates(startup_registration_mode="registry")
+        config_store = Mock()
+        config_store.save.return_value = True
+        retry_disable = Mock(return_value=False)
+
+        with (
+            patch("kef_app.ui.settings.settings_service.set_startup_registered", return_value=False),
+            patch("kef_app.ui.settings.settings_service.get_last_startup_error", return_value="ERROR: Access is denied."),
+            patch("kef_app.ui.settings.settings_service.is_startup_registered", side_effect=[True, True]),
+            patch("kef_app.ui.settings.settings_service.get_effective_startup_registration_mode", return_value="task"),
+            patch(
+                "kef_app.ui.settings.settings_service.describe_startup_registration_status",
+                return_value=("Task Scheduler / At log on", "Task Scheduler startup is active.", False, True),
+            ),
+        ):
+            result = save_settings_and_sync_startup(
+                config,
+                config_store=config_store,
+                desired_startup=False,
+                startup_initial_checked=True,
+                startup_mode_changed=True,
+                log=Mock(),
+                retry_disable_with_uac=retry_disable,
+            )
+
+        self.assertFalse(result.startup_ok)
+        self.assertTrue(result.actual_startup_registered)
+        self.assertEqual(result.actual_startup_mode, "task")
+        self.assertEqual(result.updated.startup_registration_mode, "task")
+        retry_disable.assert_called_once()
 
     def test_settings_save_task_mode_retries_with_uac_when_access_denied(self):
         config = AppConfig().with_updates(startup_registration_mode="task")

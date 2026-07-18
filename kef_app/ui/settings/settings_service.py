@@ -238,21 +238,26 @@ def save_settings_and_sync_startup(
     next_startup_initial_checked = actual_startup_registered
     actual_startup_mode = (
         get_effective_startup_registration_mode(task_name, log=log)
-        if actual_startup_registered and startup_ok
+        if actual_startup_registered
         else "none"
     )
 
     if (
         actual_startup_registered
-        and startup_ok
-        and actual_startup_mode == "registry"
-        and startup_mode_for_ui(updated.startup_registration_mode) != "registry"
+        and actual_startup_mode in {"task", "registry"}
+        and startup_mode_for_ui(updated.startup_registration_mode) != actual_startup_mode
     ):
-        updated = updated.with_updates(startup_registration_mode="registry")
+        # A failed change (including a cancelled UAC prompt) must show the
+        # startup method that Windows actually retained, not the requested
+        # method.  This also restores the master switch after a failed disable.
+        updated = updated.with_updates(startup_registration_mode=actual_startup_mode)
         if config_ok:
             config_ok = config_store.save(updated)
         if config_ok:
-            log.info("Windows startup was enabled with Registry Run; updated the preferred startup mode to registry")
+            log.info(
+                "Windows startup retained its active registration after an update attempt | "
+                f"method={actual_startup_mode}"
+            )
 
     return SettingsSaveResult(
         updated=updated,

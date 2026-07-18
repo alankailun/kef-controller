@@ -50,11 +50,16 @@ def _cleanup_for_task_mode(state: StartupRegistrationState, logger) -> bool:
 
 
 def _cleanup_for_registry_mode(state: StartupRegistrationState, logger) -> bool:
+    # Keep the existing task until it is known to be removable.  If Windows
+    # rejects the deletion (or the user cancels UAC), the prior Task Scheduler
+    # registration remains the sole effective startup method.
+    if not _delete_tasks(state.task_entries, logger, action="cleanup_registry_mode", extra_names=(state.task_name,)):
+        return False
     extra_registry_entries = tuple(
         entry for entry in state.stale_registry_entries if entry.name.lower() != state.task_name.lower()
     )
     _delete_registry_entries(extra_registry_entries)
-    return _delete_tasks(state.task_entries, logger, action="cleanup_registry_mode", extra_names=(state.task_name,))
+    return True
 
 
 def _needs_reconcile(mode: str, state: StartupRegistrationState) -> bool:
@@ -100,8 +105,13 @@ def set_startup_registered(
     state = read_startup_registration_state(task_name, spec, include_related_tasks=False)
 
     if not enable or normalized_mode == "off":
+        # Task deletion can require elevation.  Do it first so a cancelled UAC
+        # request leaves every existing startup entry untouched and the UI can
+        # faithfully return to the currently active method.
+        if not _delete_tasks(state.task_entries, logger, action="disable", extra_names=(task_name,)):
+            return False
         _delete_registry_entries(state.registry_entries, task_name)
-        return _delete_tasks(state.task_entries, logger, action="disable", extra_names=(task_name,))
+        return True
 
     if normalized_mode == "registry":
         if state.registry_is_current:
@@ -111,7 +121,18 @@ def set_startup_registered(
             set_last_startup_error(f"Could not write the registry startup entry: {registry_detail}")
             log_startup_failure(logger, "enable_registry", task_name, get_last_startup_error())
             return False
-        return _cleanup_for_registry_mode(state, logger)
+        cleanup_ok = _cleanup_for_registry_mode(state, logger)
+        if cleanup_ok:
+            return True
+
+        # The Registry entry was just written, but the older scheduled task
+        # could not be removed.  Restore the prior Registry value (or remove
+        # the new one) so cancelling elevation does not silently switch modes.
+        if state.registry_command:
+            write_registry_command(task_name, state.registry_command)
+        else:
+            delete_registry_commands((task_name,))
+        return False
 
     if state.task_is_current:
         cleanup_ok = _cleanup_for_task_mode(state, logger)

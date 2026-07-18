@@ -27,6 +27,13 @@ Release date: 2026-07-18
   startup mode, which could produce an unsupported-mode error.
 - Interactive startup changes no longer enumerate every scheduled task; the
   broader scan remains in the startup migration/self-heal path.
+- Cancelling a UAC request while disabling startup now leaves the existing
+  registration untouched. For example, a previously verified Task Scheduler
+  entry stays enabled and the Settings page returns to Task Scheduler instead
+  of incorrectly showing Registry Run or Off.
+- Changing from Task Scheduler to Registry Run is now transactional: if the
+  scheduled task cannot be removed, the newly written Registry Run entry is
+  rolled back and the original task remains active.
 - Switching to Registry Run, or disabling startup, now also requests UAC to
   remove a protected older scheduled task before retrying the operation.
 - During an upgrade, Setup now offers to close every running KEF Controller
@@ -42,5 +49,7 @@ Release date: 2026-07-18
   Registry Run.
 - Added coverage for the Registry Run default, button ordering, non-blocking
   registration update, and fast canonical-task lookup.
+- Added regression coverage for cancelled disable and cancelled method-change
+  flows, ensuring the actual Windows registration is restored in the UI.
 - Rebuilt the onedir package and ran the complete automated test suite.
 - Compiled the installer with the new running-application handoff flow.
