@@ -1,6 +1,5 @@
 #define AppExeName "KEF Controller.exe"
-#define StableAppDir "{localappdata}\Programs\KEF Controller"
-#define AppVersion "1.7.2"
+#define AppVersion "1.7.3"
 #define WebView2RuntimeKey "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 
 [Setup]
@@ -20,6 +19,7 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#AppExeName}
+AppMutex=KEFController_SingleInstance_Mutex
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -28,17 +28,21 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
 
 [Files]
-Source: "..\dist\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dist\{#AppExeName}"; DestDir: "{#StableAppDir}"; Flags: ignoreversion
+Source: "..\dist\KEF Controller\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "assets\MicrosoftEdgeWebView2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall ignoreversion
 
 [Icons]
-Name: "{autoprograms}\KEF Controller"; Filename: "{#StableAppDir}\{#AppExeName}"; WorkingDir: "{#StableAppDir}"; IconFilename: "{#StableAppDir}\{#AppExeName}"; IconIndex: 0
-Name: "{autodesktop}\KEF Controller"; Filename: "{#StableAppDir}\{#AppExeName}"; WorkingDir: "{#StableAppDir}"; IconFilename: "{#StableAppDir}\{#AppExeName}"; IconIndex: 0; Check: ShouldCreateDesktopIcon
+Name: "{autoprograms}\KEF Controller"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#AppExeName}"; IconIndex: 0
+Name: "{autodesktop}\KEF Controller"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#AppExeName}"; IconIndex: 0; Check: ShouldCreateDesktopIcon
 
 [Run]
 Filename: "{tmp}\MicrosoftEdgeWebView2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "Installing Microsoft Edge WebView2 Runtime..."; Flags: waituntilterminated skipifdoesntexist; Check: NeedsWebView2Runtime
-Filename: "{#StableAppDir}\{#AppExeName}"; WorkingDir: "{#StableAppDir}"; Description: "Launch KEF Controller"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Description: "Launch KEF Controller"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+; pywebview normally stores its profile in AppData. This only removes a
+; profile if a future build explicitly places it beneath the app runtime.
+Type: filesandordirs; Name: "{app}\runtime\pywebview"
 
 [Code]
 procedure RunTaskKill(Args: String);

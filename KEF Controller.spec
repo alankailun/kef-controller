@@ -118,24 +118,36 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='KEF Controller',
     debug=False,
     icon='installer/assets/setup-icon.ico',
     bootloader_ignore_signals=False,
     strip=False,
-    # UPX saves little here but materially increases antivirus false positives
-    # for an unsigned desktop executable.
+    # Inno Setup's solid LZMA compression handles the onedir payload as a
+    # whole.  UPX gives unsigned desktop software an unnecessary antivirus
+    # false-positive risk and is deliberately disabled.
     upx=False,
     upx_exclude=[],
     version='installer/version_info.txt',
-    runtime_tmpdir=None,
+    # COLLECT inherits this setting from EXE in PyInstaller 6.
+    contents_directory='runtime',
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='KEF Controller',
 )

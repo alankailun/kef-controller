@@ -2,8 +2,8 @@
 __pycache__/
 *.pyc
 *.pyo
+# PyInstaller onedir output: launcher plus the runtime payload directory.
 dist/
-dist-web/
 build/
 output/
 *.egg-info/

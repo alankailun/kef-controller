@@ -178,7 +178,7 @@ class KefMainWindow(QObject):
         self._launch_host()
 
     def _terminate_host_tree(self) -> None:
-        """End the PyInstaller parent and its WebView/WinForms child processes."""
+        """End the native host and any WebView2 child processes it owns."""
         process = self._host_process
         if process is None or process.poll() is not None:
             return
@@ -200,8 +200,8 @@ class KefMainWindow(QObject):
         except (OSError, subprocess.TimeoutExpired):
             self._log.warning("Unable to end native Edge WebView2 host process tree", exc_info=True)
         # A direct terminate is only a fallback for an unavailable or failed
-        # taskkill; under normal Windows operation /T removes the entire
-        # PyInstaller process tree and prevents orphan windows.
+        # taskkill; under normal Windows operation /T removes the native host
+        # and its WebView2 children in one operation.
         try:
             process.terminate()
         except OSError:

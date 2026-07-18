@@ -13,6 +13,7 @@ from kef_app.platform.windows.startup.reconcile import (
 from kef_app.platform.windows.startup.registry import RegistryStartupEntry
 from kef_app.platform.windows.startup.task_scheduler import ScheduledTaskEntry
 from kef_app.platform.windows.startup import service as startup_service
+from kef_app.platform.windows.startup import launch as startup_launch
 
 
 TASK_NAME = "KEF Controller"
@@ -39,6 +40,21 @@ def make_state(**updates) -> StartupRegistrationState:
 
 
 class StartupReconcileTests(unittest.TestCase):
+    def test_onedir_launch_outside_the_install_folder_is_not_self_copied(self):
+        logger = Mock()
+        source = r"F:\Downloads\KEF Controller.exe"
+        expected = r"C:\Users\alan\AppData\Local\Programs\KEF Controller\KEF Controller.exe"
+        with (
+            patch("kef_app.platform.windows.startup.launch.is_frozen_runtime", return_value=True),
+            patch("kef_app.platform.windows.startup.launch.sys.executable", source),
+            patch("kef_app.platform.windows.startup.launch.preferred_executable_path", return_value=expected),
+        ):
+            spec = startup_launch.ensure_preferred_executable(TASK_NAME, logger)
+
+        self.assertEqual(spec.command, source)
+        logger.warning.assert_called_once()
+        self.assertIn("no files were copied", logger.warning.call_args.args[0])
+
     def test_state_finds_old_registry_entry_next_to_healthy_task(self):
         with (
             patch(

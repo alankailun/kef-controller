@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 7, 2, 0),
-    prodvers=(1, 7, 2, 0),
+    filevers=(1, 7, 3, 0),
+    prodvers=(1, 7, 3, 0),
     mask=0x3F,
     flags=0x0,
     OS=0x40004,
@@ -17,11 +17,11 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'Zhongwen Law Firm'),
             StringStruct('FileDescription', 'KEF Controller'),
-            StringStruct('FileVersion', '1.7.2.0'),
+            StringStruct('FileVersion', '1.7.3.0'),
             StringStruct('InternalName', 'KEF Controller'),
             StringStruct('OriginalFilename', 'KEF Controller.exe'),
             StringStruct('ProductName', 'KEF Controller'),
-            StringStruct('ProductVersion', '1.7.2'),
+            StringStruct('ProductVersion', '1.7.3'),
           ],
         ),
       ],
