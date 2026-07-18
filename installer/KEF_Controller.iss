@@ -22,7 +22,6 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#AppExeName}
-AppMutex=KEFController_SingleInstance_Mutex
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -60,6 +59,36 @@ begin
   RunTaskKill('/IM "{#AppExeName}" /T');
   Sleep(1500);
   RunTaskKill('/F /IM "{#AppExeName}" /T');
+end;
+
+function CloseRunningAppForInstall(): Boolean;
+begin
+  Result := True;
+  if not CheckForMutexes('KEFController_SingleInstance_Mutex') then
+    exit;
+
+  if MsgBox(
+    'KEF Controller is currently running.' + #13#10 + #13#10 +
+    'Click OK to close all running instances and continue installation, or Cancel to return to Setup.',
+    mbConfirmation,
+    MB_OKCANCEL
+  ) <> IDOK then
+  begin
+    Result := False;
+    exit;
+  end;
+
+  CloseRunningApp();
+  Sleep(500);
+  if CheckForMutexes('KEFController_SingleInstance_Mutex') then
+  begin
+    MsgBox(
+      'KEF Controller could not be closed. Please close it manually, then try again.',
+      mbError,
+      MB_OK
+    );
+    Result := False;
+  end;
 end;
 
 function WebView2VersionIsSupported(const Version: String): Boolean; forward;
@@ -134,10 +163,11 @@ begin
   Result := WizardIsTaskSelected('desktopicon') or DesktopShortcutExists();
 end;
 
-function PrepareToInstall(var NeedsRestart: Boolean): String;
+function NextButtonClick(CurPageID: Integer): Boolean;
 begin
-  CloseRunningApp();
-  Result := '';
+  Result := True;
+  if CurPageID = wpReady then
+    Result := CloseRunningAppForInstall();
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

@@ -19,6 +19,9 @@ Release date: 2026-07-18
   clear, mutually exclusive buttons with an actual-registration status.
 - Switching to Registry Run, or disabling startup, now also requests UAC to
   remove a protected older scheduled task before retrying the operation.
+- During an upgrade, Setup now offers to close every running KEF Controller
+  instance automatically. Choosing OK terminates the application process tree
+  and continues installation; choosing Cancel leaves Setup unchanged.
 
 ## Verification
 
@@ -28,3 +31,4 @@ Release date: 2026-07-18
 - Added coverage for the elevated cleanup-and-retry path when moving to
   Registry Run.
 - Rebuilt the onedir package and ran the complete automated test suite.
+- Compiled the installer with the new running-application handoff flow.
