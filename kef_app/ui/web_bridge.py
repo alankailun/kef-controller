@@ -108,6 +108,9 @@ class WebControllerBridge(QObject):
             if self._startup_registered
             else "none"
         )
+        self._startup_busy = False
+        self._startup_requested_mode: str | None = None
+        self._startup_requested_enabled: bool | None = None
         self._poll_lock = threading.Lock()
         self._last_action_started = 0.0
         self._last_action: dict[str, object] | None = None
@@ -284,33 +287,68 @@ class WebControllerBridge(QObject):
         except (TypeError, ValueError) as exc:
             self._notify("error", "Startup setting was not saved", str(exc))
             return
-        was_enabled = is_startup_registered("KEF Controller")
-        result = save_settings_and_sync_startup(
-            updated,
-            config_store=self._config_store,
-            desired_startup=bool(enabled),
-            startup_initial_checked=was_enabled,
-            startup_mode_changed=(updated.startup_registration_mode != self._config.startup_registration_mode),
-            log=self._controller.log,
-            retry_enable_task_with_uac=lambda: repair_task_startup_with_uac(
-                "KEF Controller", self._controller.log
-            )[0],
-            retry_enable_registry_with_uac=lambda: remove_startup_task_with_uac(
-                "KEF Controller", self._controller.log
-            )[0],
-            retry_disable_with_uac=lambda: remove_startup_task_with_uac(
-                "KEF Controller", self._controller.log
-            )[0],
-        )
-        for field_name in self._config_store.USER_EDITABLE_FIELDS:
-            setattr(self._config, field_name, getattr(result.updated, field_name))
-        self._startup_registered = result.actual_startup_registered
-        self._startup_mode = result.actual_startup_mode
-        if result.config_ok and result.startup_ok:
-            self._notify("success", "Startup settings saved", "Windows startup registration is up to date.")
-        else:
-            self._notify("warning", "Startup settings need attention", result.startup_detail or "The setting could not be fully applied.")
+        if self._startup_busy:
+            self._notify("info", "Startup update in progress", "Wait for the current Windows startup update to finish.")
+            return
+
+        desired_startup = bool(enabled)
+        startup_mode_changed = updated.startup_registration_mode != self._config.startup_registration_mode
+        self._startup_busy = True
+        self._startup_requested_mode = normalized_mode
+        self._startup_requested_enabled = desired_startup
         self.publish_state()
+
+        def work():
+            was_enabled = is_startup_registered("KEF Controller")
+            return save_settings_and_sync_startup(
+                updated,
+                config_store=self._config_store,
+                desired_startup=desired_startup,
+                startup_initial_checked=was_enabled,
+                startup_mode_changed=startup_mode_changed,
+                log=self._controller.log,
+                retry_enable_task_with_uac=lambda: repair_task_startup_with_uac(
+                    "KEF Controller", self._controller.log
+                )[0],
+                retry_enable_registry_with_uac=lambda: remove_startup_task_with_uac(
+                    "KEF Controller", self._controller.log
+                )[0],
+                retry_disable_with_uac=lambda: remove_startup_task_with_uac(
+                    "KEF Controller", self._controller.log
+                )[0],
+            )
+
+        def done(result) -> None:
+            for field_name in self._config_store.USER_EDITABLE_FIELDS:
+                setattr(self._config, field_name, getattr(result.updated, field_name))
+            self._startup_registered = result.actual_startup_registered
+            self._startup_mode = result.actual_startup_mode
+            if result.config_ok and result.startup_ok:
+                self._notify("success", "Startup settings saved", "Windows startup registration is up to date.")
+            else:
+                self._notify(
+                    "warning",
+                    "Startup settings need attention",
+                    result.startup_detail or "The setting could not be fully applied.",
+                )
+
+        def failed(exc: Exception) -> None:
+            self._notify("error", "Startup setting was not saved", str(exc))
+
+        def finished() -> None:
+            self._startup_busy = False
+            self._startup_requested_mode = None
+            self._startup_requested_enabled = None
+            self.publish_state()
+
+        start_background_task(
+            "WebUpdateStartup",
+            work,
+            on_success=done,
+            on_error=failed,
+            on_finished=finished,
+            log=self._controller.log,
+        )
 
     @Slot()
     def scanSpeakers(self) -> None:
@@ -494,7 +532,13 @@ class WebControllerBridge(QObject):
             },
             "inputs": [{"label": label, "value": value} for label, value in INPUT_SOURCE_OPTIONS],
             "settings": asdict(self._config.user),
-            "startup": {"registered": self._startup_registered, "mode": self._startup_mode},
+            "startup": {
+                "registered": self._startup_registered,
+                "mode": self._startup_mode,
+                "busy": self._startup_busy,
+                "requested_mode": self._startup_requested_mode,
+                "requested_enabled": self._startup_requested_enabled,
+            },
             "health": {
                 "last_heartbeat_age_s": prewarmed_health["last_heartbeat_age_s"],
                 "heartbeat_failures": prewarmed_health["failures"],

@@ -442,6 +442,7 @@
     .startup-method-btn:disabled { cursor: not-allowed; }
     .startup-status { display: flex; align-items: center; gap: 7px; margin-top: 12px; padding: 9px 11px; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--panel-flat); color: var(--muted); font-size: 12.5px; }
     .startup-status.active { color: var(--teal-ink); background: var(--teal-soft); border-color: rgba(13,148,136,.25); }
+    .startup-status.busy { color: var(--muted); background: var(--panel-flat); border-color: var(--line); }
 
     /* ── Toast：与参考稿一致固定在右下角，同频道只保留最新一条 ── */
     .toast-area {
@@ -538,7 +539,7 @@
     trigger_event: ["触发事件", "Trigger Event"], wake: ["唤醒", "Wake"], standby: ["待机", "Standby"], test: ["模拟", "Test"], run_once: ["触发一次", "Run once"], all_off: ["全部关闭", "Turn all off"], all_on: ["全部开启", "Turn all on"], not_applicable: ["不适用", "N/A"], rule_disabled_simulation: ["规则已关闭，模拟不会有动作", "This rule is off; simulation will take no action."],
     screen_warning: ["屏幕熄灭会让扬声器待机，但屏幕点亮不会唤醒它。你需要手动开机，或同时勾上「屏幕开关 · 唤醒」。", "Display-off puts the speaker in standby, but display-on will not wake it. Turn it on manually, or also enable Display Power · Wake."],
     table_foot: ["点击列标题可整列开关。改动即时生效。", "Click a column header to toggle the whole column. Changes save instantly."], table_foot_test: ["模拟会真实控制扬声器，当前状态见主页。", "Simulations control the real speaker; see current state on Home."],
-    windows_startup: ["Windows 启动", "Windows Startup"], start_on_login: ["登录时自动运行", "Run when I sign in"], start_on_login_desc: ["关闭后会同时移除任务计划和注册表项", "Turning this off removes both the scheduled task and the registry entry"], startup_method: ["注册方式", "Registration method"], startup_task: ["任务计划程序", "Task Scheduler"], startup_registry: ["注册表 Run", "Registry Run"], startup_task_desc: ["任务计划程序会在登录时启动。首次创建或清理旧任务时可能需要管理员批准。", "Runs at sign-in through Task Scheduler. Creating or cleaning up a task may need administrator approval."], startup_registry_desc: ["最简单的当前用户开机自启方式，不需要额外权限。", "The simplest per-user startup method; no additional permission is needed."], startup_active: ["已生效 · $", "Active · $"], startup_inactive: ["未注册开机自启", "Not registered to run at startup"],
+    windows_startup: ["Windows 启动", "Windows Startup"], start_on_login: ["登录时自动运行", "Run when I sign in"], start_on_login_desc: ["关闭后会同时移除任务计划和注册表项；再次开启时默认使用无需管理员权限的注册表 Run", "Turning this off removes both entries; enabling it again defaults to Registry Run, which needs no administrator permission"], startup_method: ["注册方式", "Registration method"], startup_task: ["任务计划程序", "Task Scheduler"], startup_registry: ["注册表 Run", "Registry Run"], startup_task_desc: ["任务计划程序会在登录时启动。首次创建或清理旧任务时可能需要管理员批准。", "Runs at sign-in through Task Scheduler. Creating or cleaning up a task may need administrator approval."], startup_registry_desc: ["最简单的当前用户开机自启方式，不需要额外权限。", "The simplest per-user startup method; no additional permission is needed."], startup_active: ["已生效 · $", "Active · $"], startup_inactive: ["未注册开机自启", "Not registered to run at startup"], startup_applying: ["正在应用 · $", "Applying · $"], startup_disabling: ["正在关闭开机启动…", "Disabling startup…"],
     dlg_sub: ["选择这个 App 要控制的 KEF 扬声器。", "Choose the KEF speaker this app should control."], scanning: ["正在扫描局域网…", "Scanning your network…"], checked_devices: ["已检查 $ 台设备", "checked $ devices"], scan_complete: ["扫描完成，找到 $ 台。", "Scan complete, found $."], current_included: ["已包含你当前的扬声器。", "Your current speaker is included."], rescan: ["重新扫描", "Rescan"], no_speaker: ["没有扫描到扬声器", "No speakers found"], manual_link: ["没找到？手动输入 IP 地址", "Not listed? Enter an IP manually"], manual_entry: ["手动指定", "Manual entry"], ip_placeholder: ["IP 地址，如 10.0.0.222", "IP address, e.g. 10.0.0.222"], mac_placeholder: ["MAC（可选）", "MAC (optional)"], cancel: ["取消", "Cancel"], apply: ["应用", "Apply"], close: ["关闭", "Close"], in_use: ["使用中", "In use"], select: ["选择", "Select"], scan_failed: ["扫描请求失败，请重试。", "Scan request failed. Please retry."],
     volume_updated: ["音量 $", "Volume $"], muted: ["已静音", "Muted"], input_changed: ["已切换到 $", "Switched to $"], settings_saved: ["设置已保存", "Settings saved"], controller_error: ["控制器错误", "Controller error"], request_failed: ["请求失败。", "Request failed."], controller_unavailable: ["控制器不可用", "Controller unavailable"], controller_unavailable_desc: ["本地控制接口未能启动，请重启应用。", "The local control interface could not start. Please restart the app."],
   };
@@ -1430,8 +1431,8 @@
             <div id="startup-method-desc" class="set-desc"></div>
           </div>
           <div id="set-startup-mode" class="startup-segment" role="group" aria-label="${t("startup_method")}">
-            <button class="startup-method-btn" data-startup-mode="task">${t("startup_task")}</button>
             <button class="startup-method-btn" data-startup-mode="registry">${t("startup_registry")}</button>
+            <button class="startup-method-btn" data-startup-mode="task">${t("startup_task")}</button>
           </div>
         </div>
         <div id="startup-status" class="startup-status"></div>
@@ -1506,22 +1507,25 @@
       }
     });
 
-    $("#set-startup-enabled").addEventListener("change", pushStartup);
+    $("#set-startup-enabled").addEventListener("change", e => {
+      pushStartup("registry", e.currentTarget.checked);
+    });
     $("#set-startup-mode").addEventListener("click", e => {
       const button = e.target.closest("[data-startup-mode]");
       if (!button || button.disabled) return;
-      pushStartup(button.dataset.startupMode);
+      pushStartup(button.dataset.startupMode, true);
     });
   }
 
   function startupMode() {
+    const requested = (state?.startup || {}).requested_mode;
+    if (requested === "task" || requested === "registry") return requested;
     const configured = ((state?.settings || {}).startup || {}).startup_registration_mode;
     return configured === "task" ? "task" : "registry";
   }
 
-  function pushStartup(mode = startupMode()) {
-    bridge.updateStartup(mode, $("#set-startup-enabled").checked)
-      .then(flashSaved).catch(() => {});
+  function pushStartup(mode = startupMode(), enabled = $("#set-startup-enabled").checked) {
+    bridge.updateStartup(mode, enabled).catch(() => {});
   }
 
   // ── 选择扬声器弹窗 ──
@@ -1705,8 +1709,13 @@
       !(ruleOn("standby_on_display_off") && !ruleOn("wake_on_display_on")));
 
     const startupSwitch = $("#set-startup-enabled");
-    const startupEnabled = !!(state.startup || {}).registered;
+    const startupState = state.startup || {};
+    const startupBusy = !!startupState.busy;
+    const startupEnabled = startupBusy && typeof startupState.requested_enabled === "boolean"
+      ? startupState.requested_enabled
+      : !!startupState.registered;
     if (document.activeElement !== startupSwitch) startupSwitch.checked = startupEnabled;
+    startupSwitch.disabled = startupBusy;
     const selectedStartupMode = startupMode();
     const methodRow = $("#startup-method-row");
     methodRow.classList.toggle("disabled", !startupEnabled);
@@ -1715,15 +1724,20 @@
       const active = button.dataset.startupMode === selectedStartupMode;
       button.classList.toggle("active", active);
       button.setAttribute("aria-pressed", String(active));
-      button.disabled = !startupEnabled;
+      button.disabled = !startupEnabled || startupBusy;
     }
-    const actualStartupMode = (state.startup || {}).mode;
+    const actualStartupMode = startupState.mode;
     const startupStatus = $("#startup-status");
     const activeStartup = startupEnabled && (actualStartupMode === "task" || actualStartupMode === "registry");
-    startupStatus.classList.toggle("active", activeStartup);
-    startupStatus.innerHTML = `${icon(activeStartup ? "check" : "info", 14)}<span>${activeStartup
-      ? t("startup_active", t(actualStartupMode === "task" ? "startup_task" : "startup_registry"))
-      : t("startup_inactive")}</span>`;
+    startupStatus.classList.toggle("active", activeStartup && !startupBusy);
+    startupStatus.classList.toggle("busy", startupBusy);
+    startupStatus.innerHTML = startupBusy
+      ? `${icon("loader", 14, "spin")}<span>${startupEnabled
+        ? t("startup_applying", t(selectedStartupMode === "task" ? "startup_task" : "startup_registry"))
+        : t("startup_disabling")}</span>`
+      : `${icon(activeStartup ? "check" : "info", 14)}<span>${activeStartup
+        ? t("startup_active", t(actualStartupMode === "task" ? "startup_task" : "startup_registry"))
+        : t("startup_inactive")}</span>`;
   }
 
   // 模拟事件结果 → 行内结果条

@@ -17,6 +17,16 @@ Release date: 2026-07-18
 - Redesigned the Windows Startup section: its main switch is now the only
   off control, while Task Scheduler and Registry Run are presented as two
   clear, mutually exclusive buttons with an actual-registration status.
+- Registry Run is now the frictionless default when startup is enabled. It is
+  shown on the left, needs no administrator approval, and Task Scheduler
+  remains available on the right as an explicit advanced choice.
+- Startup registration changes now run in the background with one consistent
+  applying state, preventing the settings page from appearing frozen or
+  showing a saved message before a later failure.
+- Fixed the startup switch passing its browser event object as the selected
+  startup mode, which could produce an unsupported-mode error.
+- Interactive startup changes no longer enumerate every scheduled task; the
+  broader scan remains in the startup migration/self-heal path.
 - Switching to Registry Run, or disabling startup, now also requests UAC to
   remove a protected older scheduled task before retrying the operation.
 - During an upgrade, Setup now offers to close every running KEF Controller
@@ -30,5 +40,7 @@ Release date: 2026-07-18
   used directly for Windows startup registration.
 - Added coverage for the elevated cleanup-and-retry path when moving to
   Registry Run.
+- Added coverage for the Registry Run default, button ordering, non-blocking
+  registration update, and fast canonical-task lookup.
 - Rebuilt the onedir package and ran the complete automated test suite.
 - Compiled the installer with the new running-application handoff flow.

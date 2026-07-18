@@ -40,6 +40,25 @@ def make_state(**updates) -> StartupRegistrationState:
 
 
 class StartupReconcileTests(unittest.TestCase):
+    def test_interactive_startup_update_skips_global_task_enumeration(self):
+        with (
+            patch(
+                "kef_app.platform.windows.startup.service.read_startup_registration_state",
+                return_value=make_state(),
+            ) as read_state,
+            patch("kef_app.platform.windows.startup.service.write_registry_command", return_value=(True, "")),
+            patch("kef_app.platform.windows.startup.service.delete_task", return_value=(True, "")),
+        ):
+            ok = startup_service.set_startup_registered(
+                True,
+                task_name=TASK_NAME,
+                launch_spec=DESIRED,
+                mode="registry",
+            )
+
+        self.assertTrue(ok)
+        self.assertFalse(read_state.call_args.kwargs["include_related_tasks"])
+
     def test_onedir_launch_on_another_drive_is_used_without_copying(self):
         logger = Mock()
         source = r"F:\Downloads\KEF Controller.exe"

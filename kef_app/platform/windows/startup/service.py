@@ -94,7 +94,10 @@ def set_startup_registered(
     clear_last_startup_error()
 
     spec = launch_spec or (ensure_preferred_executable(task_name, logger) if is_frozen_runtime() else runtime_launch_spec())
-    state = read_startup_registration_state(task_name, spec, include_related_tasks=True)
+    # UI changes only need the canonical task plus matching registry entries.
+    # Enumerating every scheduled task can take seconds on some machines and is
+    # reserved for the startup self-heal/migration path below.
+    state = read_startup_registration_state(task_name, spec, include_related_tasks=False)
 
     if not enable or normalized_mode == "off":
         _delete_registry_entries(state.registry_entries, task_name)
