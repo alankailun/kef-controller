@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 from kef_app.config import AppConfig
 from kef_app.ui.settings.settings_service import save_settings_and_sync_startup, startup_mode_for_ui
-from kef_app.platform.windows.startup.common import StartupLaunchSpec
+from kef_app.platform.windows.startup.common import NullLogger, StartupLaunchSpec
 from kef_app.platform.windows.startup.reconcile import (
     StartupRegistrationState,
     read_startup_registration_state,
@@ -52,8 +52,21 @@ class StartupReconcileTests(unittest.TestCase):
             spec = startup_launch.ensure_preferred_executable(TASK_NAME, logger)
 
         self.assertEqual(spec.command, source)
-        logger.warning.assert_called_once()
-        self.assertIn("no files were copied", logger.warning.call_args.args[0])
+        logger.info.assert_called_once()
+        self.assertIn("no files were copied", logger.info.call_args.args[0])
+
+    def test_onedir_launch_outside_the_install_folder_accepts_null_logger(self):
+        with (
+            patch("kef_app.platform.windows.startup.launch.is_frozen_runtime", return_value=True),
+            patch("kef_app.platform.windows.startup.launch.sys.executable", r"F:\Downloads\KEF Controller.exe"),
+            patch(
+                "kef_app.platform.windows.startup.launch.preferred_executable_path",
+                return_value=r"C:\Users\alan\AppData\Local\Programs\KEF Controller\KEF Controller.exe",
+            ),
+        ):
+            spec = startup_launch.ensure_preferred_executable(TASK_NAME, NullLogger())
+
+        self.assertEqual(spec.command, r"F:\Downloads\KEF Controller.exe")
 
     def test_state_finds_old_registry_entry_next_to_healthy_task(self):
         with (

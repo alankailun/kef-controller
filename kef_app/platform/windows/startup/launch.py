@@ -52,10 +52,11 @@ def ensure_preferred_executable(app_name: str, log) -> StartupLaunchSpec:
     source_exe = os.path.abspath(sys.executable)
     target_exe = os.path.abspath(preferred_executable_path(app_name))
     if os.path.normcase(source_exe) != os.path.normcase(target_exe):
-        log.warning(
+        # Status checks use NullLogger, whose deliberately small interface is
+        # limited to info().  This remains a visible startup diagnostic for
+        # the real application logger without making read-only checks fail.
+        log.info(
             "Running outside the Inno Setup installation directory; no files were copied | "
-            "source=%s | expected=%s",
-            source_exe,
-            target_exe,
+            f"source={source_exe} | expected={target_exe}"
         )
     return StartupLaunchSpec(command=source_exe)
