@@ -47,7 +47,7 @@ def _run_webview_host(url: str) -> None:
 
     import webview
 
-    webview.create_window(
+    window = webview.create_window(
         "KEF Controller",
         url,
         # Keep the normal launch compact.  The window remains resizable and
@@ -56,9 +56,24 @@ def _run_webview_host(url: str) -> None:
         width=1120,
         height=760,
         min_size=(840, 620),
+        # Do not expose the WinForms/WebView2 placeholder while the one-file
+        # host is starting.  The page is still loaded in the hidden window and
+        # becomes visible as soon as WebView2 reports it is ready.
+        hidden=True,
         background_color="#f4f5f6",
         text_select=True,
     )
+
+    def hide_instead_of_close() -> bool:
+        """Keep the warm host alive when the native close button is pressed."""
+        window.hide()
+        return False
+
+    def show_after_page_load() -> None:
+        window.show()
+
+    window.events.closing += hide_instead_of_close
+    window.events.loaded += show_after_page_load
     webview.start(gui="edgechromium", debug=False)
 
 

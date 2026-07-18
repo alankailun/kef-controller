@@ -22,6 +22,7 @@ class KefMainWindowHostTests(unittest.TestCase):
         window._server = Mock()
         window._host_ready_mono = 0.0
         window._last_host_restart_mono = 0.0
+        window._log = Mock()
         return window
 
     def test_show_does_not_launch_another_host_while_one_is_starting(self) -> None:
@@ -72,14 +73,46 @@ class KefMainWindowHostTests(unittest.TestCase):
         window._host_hwnd = 100
         window._host_ready_mono = 100.0
         window._server.client_activity_age_s = 61.0
-        window._log = Mock()
+        window._terminate_host_tree = Mock()
 
         with patch("kef_app.ui.main_window.time.monotonic", return_value=161.0):
             self.assertTrue(window._host_needs_restart(True))
             window._restart_unresponsive_host()
 
-        process.terminate.assert_called_once_with()
+        window._terminate_host_tree.assert_called_once_with()
         window._launch_host.assert_called_once_with()
+
+    def test_show_refreshes_the_ui_heartbeat_before_restoring_a_hidden_host(self) -> None:
+        window = self._window()
+        window._host_hwnd = 100
+
+        with (
+            patch("kef_app.ui.main_window.win32gui.IsWindow", return_value=True),
+            patch("kef_app.ui.main_window.win32gui.ShowWindow"),
+            patch("kef_app.ui.main_window.win32gui.SetForegroundWindow"),
+        ):
+            window.show()
+
+        window._server._touch_client_activity.assert_called_once_with()
+
+    def test_terminate_host_tree_uses_taskkill_tree_mode(self) -> None:
+        window = self._window()
+        process = Mock(pid=4321)
+        process.poll.return_value = None
+        window._host_process = process
+
+        with patch("kef_app.ui.main_window.subprocess.run") as run:
+            run.return_value.returncode = 0
+            KefMainWindow._terminate_host_tree(window)
+
+        run.assert_called_once_with(
+            ["taskkill.exe", "/PID", "4321", "/T", "/F"],
+            check=False,
+            capture_output=True,
+            creationflags=getattr(__import__("subprocess"), "CREATE_NO_WINDOW", 0),
+            timeout=5,
+        )
+        process.terminate.assert_not_called()
 
 
 if __name__ == "__main__":

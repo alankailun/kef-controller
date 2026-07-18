@@ -68,6 +68,11 @@ class KefMainWindow(QObject):
         return bool(self._host_hwnd and win32gui.IsWindow(self._host_hwnd) and win32gui.IsWindowVisible(self._host_hwnd))
 
     def show(self) -> None:
+        # A hidden document intentionally stops its long-poll request.  Mark
+        # the UI active before restoring the native window so the watchdog
+        # cannot race the browser's visibilitychange handler and restart a
+        # perfectly healthy WebView2 host.
+        self._server._touch_client_activity()
         if self._host_hwnd and win32gui.IsWindow(self._host_hwnd):
             win32gui.ShowWindow(self._host_hwnd, win32con.SW_RESTORE)
             win32gui.SetForegroundWindow(self._host_hwnd)
@@ -95,10 +100,11 @@ class KefMainWindow(QObject):
 
     def dispose(self) -> None:
         self._monitor.stop()
-        if self._host_hwnd and win32gui.IsWindow(self._host_hwnd):
-            win32gui.PostMessage(self._host_hwnd, win32con.WM_CLOSE, 0, 0)
-        elif self._host_is_alive():
-            self._host_process.terminate()
+        # WM_CLOSE now means "hide" for the user-facing window, so shutdown
+        # must explicitly tear down the one-file host's complete process tree.
+        self._terminate_host_tree()
+        self._host_process = None
+        self._host_hwnd = 0
         self._server.stop()
 
     def _host_is_alive(self) -> bool:
@@ -136,8 +142,7 @@ class KefMainWindow(QObject):
             if not self._host_hwnd:
                 if self._find_attempts == 20:
                     self._log.error("Native Edge WebView2 host window was not found after 10 seconds")
-                    if self._host_is_alive():
-                        self._host_process.terminate()
+                    self._terminate_host_tree()
                     self._host_process = None
                     self._monitor.stop()
                     self.visibility_changed.emit(False)
@@ -165,13 +170,42 @@ class KefMainWindow(QObject):
         """Recover a hung Edge renderer without restarting the controller."""
         self._last_host_restart_mono = time.monotonic()
         self._log.warning("Native Edge WebView2 host stopped sending UI heartbeats; restarting it")
-        if self._host_is_alive():
-            self._host_process.terminate()
+        self._terminate_host_tree()
         self._host_process = None
         self._host_hwnd = 0
         self._host_ready_mono = 0.0
         self.visibility_changed.emit(False)
         self._launch_host()
+
+    def _terminate_host_tree(self) -> None:
+        """End the PyInstaller parent and its WebView/WinForms child processes."""
+        process = self._host_process
+        if process is None or process.poll() is not None:
+            return
+        try:
+            result = subprocess.run(
+                ["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return
+            self._log.warning(
+                "taskkill could not end native Edge WebView2 host tree | pid=%s | exit=%s",
+                process.pid,
+                result.returncode,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            self._log.warning("Unable to end native Edge WebView2 host process tree", exc_info=True)
+        # A direct terminate is only a fallback for an unavailable or failed
+        # taskkill; under normal Windows operation /T removes the entire
+        # PyInstaller process tree and prevents orphan windows.
+        try:
+            process.terminate()
+        except OSError:
+            self._log.debug("Native Edge WebView2 host already exited", exc_info=True)
 
     @classmethod
     def _find_host_window(cls, host_pid: int | None = None) -> int:

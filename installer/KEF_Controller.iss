@@ -1,6 +1,6 @@
 #define AppExeName "KEF Controller.exe"
 #define StableAppDir "{localappdata}\Programs\KEF Controller"
-#define AppVersion "1.7.1"
+#define AppVersion "1.7.2"
 #define WebView2RuntimeKey "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 
 [Setup]
