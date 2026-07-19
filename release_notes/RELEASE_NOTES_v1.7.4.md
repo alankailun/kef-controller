@@ -34,6 +34,11 @@ Release date: 2026-07-18
 - Changing from Task Scheduler to Registry Run is now transactional: if the
   scheduled task cannot be removed, the newly written Registry Run entry is
   rolled back and the original task remains active.
+- Fixed a WebView2 watchdog false positive while the controller is minimized.
+  Minimized now has the same semantics as hidden for the watchdog, speaker
+  polling, and tray toggle; restoring the window refreshes the heartbeat
+  before watchdog evaluation. This prevents repeating taskbar attention
+  flashes and unexpected window pop-ups every roughly 60 seconds.
 - Switching to Registry Run, or disabling startup, now also requests UAC to
   remove a protected older scheduled task before retrying the operation.
 - During an upgrade, Setup now offers to close every running KEF Controller
@@ -51,5 +56,7 @@ Release date: 2026-07-18
   registration update, and fast canonical-task lookup.
 - Added regression coverage for cancelled disable and cancelled method-change
   flows, ensuring the actual Windows registration is restored in the UI.
+- Added coverage for minimized-host visibility, watchdog pausing, and the
+  restore-heartbeat race.
 - Rebuilt the onedir package and ran the complete automated test suite.
 - Compiled the installer with the new running-application handoff flow.

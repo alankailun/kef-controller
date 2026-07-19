@@ -53,6 +53,7 @@ class KefMainWindow(QObject):
         self._find_attempts = 0
         self._host_ready_mono = 0.0
         self._last_host_restart_mono = 0.0
+        self._was_effectively_visible = False
         self._monitor = QTimer(self)
         self._monitor.setInterval(500)
         self._monitor.timeout.connect(self._monitor_host)
@@ -65,7 +66,33 @@ class KefMainWindow(QObject):
         return Path(__file__).resolve().parent / "web"
 
     def isVisible(self) -> bool:
-        return bool(self._host_hwnd and win32gui.IsWindow(self._host_hwnd) and win32gui.IsWindowVisible(self._host_hwnd))
+        return self._effectively_visible()
+
+    def _effectively_visible(self) -> bool:
+        """Return whether the UI is actually usable, not merely unhidden.
+
+        Win32 reports a minimized window as visible, while Chromium marks its
+        document hidden.  Treating those states differently used to make the
+        heartbeat watchdog restart a healthy minimized WebView2 window.
+        """
+        return bool(
+            self._host_hwnd
+            and win32gui.IsWindow(self._host_hwnd)
+            and win32gui.IsWindowVisible(self._host_hwnd)
+            and not win32gui.IsIconic(self._host_hwnd)
+        )
+
+    def _set_effective_visibility(self, visible: bool, *, refresh_heartbeat: bool = True) -> None:
+        visible = bool(visible)
+        if visible == self._was_effectively_visible:
+            return
+        if visible and refresh_heartbeat:
+            # Give the browser's visibilitychange request time to arrive after
+            # a restore instead of letting the next 500 ms watchdog tick race
+            # a heartbeat that was intentionally paused while minimized.
+            self._server._touch_client_activity()
+        self._was_effectively_visible = visible
+        self.visibility_changed.emit(visible)
 
     def show(self) -> None:
         # A hidden document intentionally stops its long-poll request.  Mark
@@ -74,9 +101,9 @@ class KefMainWindow(QObject):
         # perfectly healthy WebView2 host.
         self._server._touch_client_activity()
         if self._host_hwnd and win32gui.IsWindow(self._host_hwnd):
+            self._set_effective_visibility(True, refresh_heartbeat=False)
             win32gui.ShowWindow(self._host_hwnd, win32con.SW_RESTORE)
             win32gui.SetForegroundWindow(self._host_hwnd)
-            self.visibility_changed.emit(True)
             return
 
         # Creating an Edge WebView2 window takes a moment.  Until its HWND is
@@ -90,7 +117,7 @@ class KefMainWindow(QObject):
     def hide(self) -> None:
         if self._host_hwnd and win32gui.IsWindow(self._host_hwnd):
             win32gui.ShowWindow(self._host_hwnd, win32con.SW_HIDE)
-        self.visibility_changed.emit(False)
+        self._set_effective_visibility(False)
 
     def toggle(self) -> None:
         if self.isVisible():
@@ -105,6 +132,7 @@ class KefMainWindow(QObject):
         self._terminate_host_tree()
         self._host_process = None
         self._host_hwnd = 0
+        self._set_effective_visibility(False)
         self._server.stop()
 
     def _host_is_alive(self) -> bool:
@@ -126,6 +154,7 @@ class KefMainWindow(QObject):
         self._host_hwnd = 0
         self._find_attempts = 0
         self._host_ready_mono = 0.0
+        self._set_effective_visibility(False)
         self._monitor.start()
 
     def _monitor_host(self) -> None:
@@ -133,7 +162,7 @@ class KefMainWindow(QObject):
             self._host_process = None
             self._host_hwnd = 0
             self._monitor.stop()
-            self.visibility_changed.emit(False)
+            self._set_effective_visibility(False)
             return
         if not self._host_hwnd or not win32gui.IsWindow(self._host_hwnd):
             host_pid = self._host_process.pid if self._host_process is not None else None
@@ -145,16 +174,16 @@ class KefMainWindow(QObject):
                     self._terminate_host_tree()
                     self._host_process = None
                     self._monitor.stop()
-                    self.visibility_changed.emit(False)
+                    self._set_effective_visibility(False)
                 return
             self._apply_native_window_effects(self._host_hwnd)
             self._host_ready_mono = time.monotonic()
             self._log.info("Native Edge WebView2 host is ready | hwnd=%s", self._host_hwnd)
-        visible = bool(win32gui.IsWindowVisible(self._host_hwnd))
+        visible = self._effectively_visible()
+        self._set_effective_visibility(visible)
         if self._host_needs_restart(visible):
             self._restart_unresponsive_host()
             return
-        self.visibility_changed.emit(visible)
 
     def _host_needs_restart(self, visible: bool) -> bool:
         if not visible or not self._host_ready_mono:
@@ -174,7 +203,7 @@ class KefMainWindow(QObject):
         self._host_process = None
         self._host_hwnd = 0
         self._host_ready_mono = 0.0
-        self.visibility_changed.emit(False)
+        self._set_effective_visibility(False)
         self._launch_host()
 
     def _terminate_host_tree(self) -> None:
