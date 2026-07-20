@@ -37,7 +37,9 @@ from ..platform.windows import (
     WTS_SESSION_DESKTOP_READY,
     WTS_SESSION_LOCK,
     WTS_SESSION_UNLOCK,
+    create_shutdown_block_reason,
     decode_power_setting_change,
+    destroy_shutdown_block_reason,
     get_process_image_path,
     get_raw_command_line,
     guess_launch_source,
@@ -248,7 +250,31 @@ class HeadlessRuntime:
         def wnd_proc(hwnd_, msg, wparam, lparam):
             try:
                 if msg == win32con.WM_QUERYENDSESSION:
-                    should_post_self_close = self.controller.on_query_end_session(wparam, lparam)
+                    shutdown_block_active = False
+                    try:
+                        create_shutdown_block_reason(hwnd_, "Putting the KEF speaker into standby")
+                        shutdown_block_active = True
+                        self.log.info(
+                            f"Created shutdown block reason while sending speaker standby | hwnd={hwnd_}"
+                        )
+                    except Exception as exc:
+                        self.log.info(
+                            f"Could not create shutdown block reason; continuing with bounded standby | hwnd={hwnd_} | {exc}"
+                        )
+
+                    try:
+                        should_post_self_close = self.controller.on_query_end_session(wparam, lparam)
+                    finally:
+                        if shutdown_block_active:
+                            try:
+                                destroy_shutdown_block_reason(hwnd_)
+                                self.log.info(
+                                    f"Destroyed shutdown block reason after speaker standby | hwnd={hwnd_}"
+                                )
+                            except Exception as exc:
+                                self.log.info(
+                                    f"Could not destroy shutdown block reason | hwnd={hwnd_} | {exc}"
+                                )
                     if should_post_self_close:
                         try:
                             win32gui.PostMessage(hwnd_, win32con.WM_CLOSE, 0, 0)

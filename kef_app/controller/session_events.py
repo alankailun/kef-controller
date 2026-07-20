@@ -540,7 +540,10 @@ class ControllerSessionEventsMixin:
         if desired_state or desired_reason:
             fields["desired_state"] = desired_state or "<empty>"
             fields["desired_reason"] = desired_reason or "<empty>"
-        self._log_structured("SKIP", **fields)
+        # Display events are sparse, and this branch explains why an enabled
+        # wake rule did not run.  Keep it in the normal diagnostic log instead
+        # of hiding the only useful evidence at DEBUG level.
+        self._log_structured("SKIP", log_level="info", **fields)
 
     def on_display_on(self, event_mono: float, reason: str = "DISPLAY_ON") -> bool:
         if not self.config.wake_on_display_on:
@@ -580,6 +583,7 @@ class ControllerSessionEventsMixin:
         self._mark_wake_scheduled()
         self._log_structured(
             "STEP",
+            log_level="info",
             action="WAKE",
             gen=generation,
             reason=reason,

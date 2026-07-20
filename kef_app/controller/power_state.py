@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import time
 
-from ..platform.windows import has_best_route_to_ipv4
-
-
 class ControllerStateMixin:
     def _new_generation(self, desired_state: str, reason: str, *, mono: str | None = None) -> int:
         with self._state_lock:
@@ -51,15 +48,12 @@ class ControllerStateMixin:
         *,
         deadline_mono: float | None,
         generation: int | None,
-        target_ip: str = "",
         check_deadline: bool = True,
     ) -> str:
         if check_deadline and deadline_mono is not None and self.mono() >= deadline_mono:
             return "deadline_exceeded"
         if generation is not None and self._should_abort_generation(generation):
             return "stale_generation"
-        if deadline_mono is not None and target_ip and has_best_route_to_ipv4(target_ip) is False:
-            return "local_route_unavailable"
         return ""
 
     def _interruptible_sleep(self, seconds: float, generation: int, label: str, step: float = 0.05) -> bool:

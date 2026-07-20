@@ -9,6 +9,8 @@ from ...devices.transport import FireAndForgetShutdownResult, fire_and_forget_st
 _FAST_STANDBY_FIRE_AND_FORGET_ATTEMPTS = 3
 _FAST_STANDBY_FIRE_AND_FORGET_SOCKET_TIMEOUT = 0.18
 _FAST_STANDBY_FIRE_AND_FORGET_JOIN_TIMEOUT = 0.25
+_BOUNDED_PREWARM_BUDGET_FRACTION = 0.40
+_BOUNDED_FIRE_AND_FORGET_RESERVE_S = 0.15
 
 
 def _outcome_is_success(outcome: str) -> bool:
@@ -48,27 +50,49 @@ class ControllerFastStandbyMixin:
                 self._send_fire_and_forget_shutdown,
             )
 
+        # Do not query the Windows route table from the transport's should_send
+        # callback.  The callback is evaluated several times and the networking
+        # stack can stall while Windows is suspending or ending the session;
+        # the bounded socket attempt itself is the authoritative reachability
+        # check on this time-critical path.
         def should_send() -> bool:
             return not self._bounded_standby_abort_reason(
                 deadline_mono=deadline_mono,
                 generation=generation,
-                target_ip=current_ip,
                 check_deadline=False,
+            )
+
+        now = self.mono()
+        remaining_s = max(0.0, deadline_mono - now)
+        prewarm_budget_s = max(
+            0.0,
+            (remaining_s - _BOUNDED_FIRE_AND_FORGET_RESERVE_S) * _BOUNDED_PREWARM_BUDGET_FRACTION,
+        )
+        prewarm_deadline_mono = min(deadline_mono, now + prewarm_budget_s)
+
+        def send_fire_and_forget_with_reserve(ip: str) -> FireAndForgetShutdownResult:
+            # A frozen/slow prewarmed attempt must never starve the independent
+            # TCP fallback.  If the shared deadline elapsed while the first
+            # stage was running, grant the fallback its small reserved window.
+            fallback_deadline_mono = max(
+                deadline_mono,
+                self.mono() + _BOUNDED_FIRE_AND_FORGET_RESERVE_S,
+            )
+            return self._send_fire_and_forget_shutdown(
+                ip,
+                deadline_mono=fallback_deadline_mono,
+                should_send=should_send,
             )
 
         return send_fast_standby(
             current_ip,
             lambda ip: self.try_send_prewarmed_standby(
                 ip,
-                deadline_mono=deadline_mono,
+                deadline_mono=prewarm_deadline_mono,
                 generation=generation,
                 reason=reason,
             ),
-            lambda ip: self._send_fire_and_forget_shutdown(
-                ip,
-                deadline_mono=deadline_mono,
-                should_send=should_send,
-            ),
+            send_fire_and_forget_with_reserve,
             should_continue=should_send,
         )
 
@@ -115,7 +139,7 @@ class ControllerFastStandbyMixin:
             fields["host_unreachable"] = True
 
         self._log_structured(
-            "STEP" if prewarmed_result.success else "WARN",
+            "STEP" if prewarmed_result.success or not prewarmed_result.attempted else "WARN",
             log_level="info",
             **fields,
         )

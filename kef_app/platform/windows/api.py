@@ -54,6 +54,23 @@ UnregisterPowerSettingNotification = user32.UnregisterPowerSettingNotification
 UnregisterPowerSettingNotification.argtypes = [wintypes.HANDLE]
 UnregisterPowerSettingNotification.restype = wintypes.BOOL
 
+ShutdownBlockReasonCreate = user32.ShutdownBlockReasonCreate
+ShutdownBlockReasonCreate.argtypes = [wintypes.HWND, wintypes.LPCWSTR]
+ShutdownBlockReasonCreate.restype = wintypes.BOOL
+ShutdownBlockReasonDestroy = user32.ShutdownBlockReasonDestroy
+ShutdownBlockReasonDestroy.argtypes = [wintypes.HWND]
+ShutdownBlockReasonDestroy.restype = wintypes.BOOL
+
+
+def create_shutdown_block_reason(hwnd: int, reason: str) -> None:
+    if not ShutdownBlockReasonCreate(hwnd, reason):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def destroy_shutdown_block_reason(hwnd: int) -> None:
+    if not ShutdownBlockReasonDestroy(hwnd):
+        raise ctypes.WinError(ctypes.get_last_error())
+
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 GetCommandLineW = kernel32.GetCommandLineW
 GetCommandLineW.restype = wintypes.LPWSTR

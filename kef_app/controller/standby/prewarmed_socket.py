@@ -16,6 +16,8 @@ _PREWARM_FAILURE_BACKOFF_STEP_S = 30.0
 _PREWARM_FAILURE_BACKOFF_MAX_S = 60.0
 _PREWARM_PERSISTENT_SOCKET_POOL_SIZE = 2
 _KEEPALIVE_REQUEST_PATH = "/api/getData?path=settings%3A%2Freleasetext&roles=value"
+_KEEPALIVE_MAX_HEADER_BYTES = 16 * 1024
+_KEEPALIVE_MAX_BODY_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,9 +93,91 @@ def _build_keepalive_request_bytes(host: str) -> bytes:
         f"GET {_KEEPALIVE_REQUEST_PATH} HTTP/1.1\r\n"
         f"Host: {host}\r\n"
         "User-Agent: kef-controller/prewarmed-standby\r\n"
-        "Connection: close\r\n"
+        "Connection: keep-alive\r\n"
         "\r\n"
     ).encode("ascii")
+
+
+def _read_limited_line(stream, *, remaining_header_bytes: list[int]) -> bytes:
+    line = stream.readline(remaining_header_bytes[0] + 1)
+    remaining_header_bytes[0] -= len(line)
+    if remaining_header_bytes[0] < 0 or not line.endswith(b"\n"):
+        raise ConnectionError("prewarmed keepalive response headers were incomplete or too large")
+    return line
+
+
+def _read_exact(stream, size: int) -> bytes:
+    data = stream.read(size)
+    if data is None or len(data) != size:
+        raise ConnectionError("prewarmed keepalive response ended before its body was complete")
+    return data
+
+
+def _drain_keepalive_http_response(sock: socket.socket, timeout: float) -> None:
+    """Read one complete HTTP response so the connection is safe to reuse."""
+    sock.settimeout(timeout)
+    stream = sock.makefile("rb")
+    try:
+        remaining_header_bytes = [_KEEPALIVE_MAX_HEADER_BYTES]
+        status_line = _read_limited_line(stream, remaining_header_bytes=remaining_header_bytes).strip()
+        parts = status_line.split(None, 2)
+        if len(parts) < 2 or not parts[0].startswith(b"HTTP/"):
+            raise ConnectionError(f"invalid prewarmed keepalive HTTP status: {status_line!r}")
+        try:
+            status_code = int(parts[1])
+        except ValueError as exc:
+            raise ConnectionError(f"invalid prewarmed keepalive status code: {status_line!r}") from exc
+
+        headers: dict[bytes, bytes] = {}
+        while True:
+            line = _read_limited_line(stream, remaining_header_bytes=remaining_header_bytes)
+            if line in {b"\r\n", b"\n"}:
+                break
+            if b":" not in line:
+                raise ConnectionError(f"invalid prewarmed keepalive header: {line!r}")
+            name, value = line.split(b":", 1)
+            headers[name.strip().lower()] = value.strip().lower()
+
+        if not 200 <= status_code < 300:
+            raise ConnectionError(f"prewarmed keepalive returned HTTP {status_code}")
+
+        transfer_encoding = headers.get(b"transfer-encoding", b"")
+        if b"chunked" in transfer_encoding:
+            body_bytes = 0
+            while True:
+                size_line = _read_limited_line(stream, remaining_header_bytes=remaining_header_bytes)
+                size_token = size_line.split(b";", 1)[0].strip()
+                try:
+                    chunk_size = int(size_token, 16)
+                except ValueError as exc:
+                    raise ConnectionError(f"invalid prewarmed keepalive chunk size: {size_line!r}") from exc
+                if chunk_size < 0 or body_bytes + chunk_size > _KEEPALIVE_MAX_BODY_BYTES:
+                    raise ConnectionError("prewarmed keepalive response body was too large")
+                if chunk_size == 0:
+                    while True:
+                        trailer = _read_limited_line(stream, remaining_header_bytes=remaining_header_bytes)
+                        if trailer in {b"\r\n", b"\n"}:
+                            break
+                    break
+                _read_exact(stream, chunk_size)
+                if _read_exact(stream, 2) != b"\r\n":
+                    raise ConnectionError("invalid prewarmed keepalive chunk terminator")
+                body_bytes += chunk_size
+        elif b"content-length" in headers:
+            try:
+                content_length = int(headers[b"content-length"])
+            except ValueError as exc:
+                raise ConnectionError("invalid prewarmed keepalive Content-Length") from exc
+            if not 0 <= content_length <= _KEEPALIVE_MAX_BODY_BYTES:
+                raise ConnectionError("prewarmed keepalive response body was too large")
+            _read_exact(stream, content_length)
+        else:
+            raise ConnectionError("prewarmed keepalive response had no reusable body framing")
+
+        if b"close" in headers.get(b"connection", b""):
+            raise ConnectionError("prewarmed keepalive server requested Connection: close")
+    finally:
+        stream.close()
 
 
 def _open_tcp_socket(ip: str, *, port: int, timeout: float) -> socket.socket:
@@ -176,7 +260,7 @@ class PrewarmedStandbySocketMonitorMixin:
         for holder in holders:
             holder.close()
 
-    def _take_prewarmed_socket_holder(self, target_ip: str) -> socket.socket | None:
+    def _take_prewarmed_holder(self, target_ip: str) -> PrewarmedSocketHolder | None:
         selected = None
         stale = []
         with self._prewarmed_standby_lock:
@@ -192,9 +276,22 @@ class PrewarmedStandbySocketMonitorMixin:
 
         for holder in stale:
             holder.close()
-        if selected is None:
-            return None
-        return selected.take()
+        return selected
+
+    def _take_prewarmed_socket_holder(self, target_ip: str) -> socket.socket | None:
+        holder = self._take_prewarmed_holder(target_ip)
+        return None if holder is None else holder.take()
+
+    def _return_prewarmed_holder(self, holder: PrewarmedSocketHolder) -> bool:
+        should_keep = False
+        with self._prewarmed_standby_lock:
+            matching_count = sum(1 for current in self._prewarmed_standby_holders if current.ip == holder.ip)
+            if holder.sock is not None and matching_count < _PREWARM_PERSISTENT_SOCKET_POOL_SIZE:
+                self._prewarmed_standby_holders.append(holder)
+                should_keep = True
+        if not should_keep:
+            holder.close()
+        return should_keep
 
     def _run_prewarmed_standby_socket_monitor(self, reason: str) -> None:
         self._log_structured(
@@ -258,7 +355,24 @@ class PrewarmedStandbySocketMonitorMixin:
             if self.config.prewarmed_persist_socket:
                 self._ensure_persistent_prewarmed_socket(target_ip)
         except OSError as exc:
-            return self._record_prewarmed_keepalive_failure(reason, target_ip, exc)
+            if self.config.prewarmed_persist_socket:
+                try:
+                    self._ensure_persistent_prewarmed_socket(target_ip)
+                except OSError as replenish_exc:
+                    return self._record_prewarmed_keepalive_failure(reason, target_ip, replenish_exc)
+                self._log_structured(
+                    "STEP",
+                    log_level="info",
+                    action="PREWARMED_STANDBY_SOCKET",
+                    reason=reason,
+                    step="keepalive",
+                    status="replaced_failed_connection",
+                    target_ip=target_ip,
+                    error=repr(exc),
+                    mono=f"{self.mono():.3f}",
+                )
+            else:
+                return self._record_prewarmed_keepalive_failure(reason, target_ip, exc)
 
         finished = self.mono()
         duration_ms = int(max(0.0, finished - started) * 1000)
@@ -303,25 +417,28 @@ class PrewarmedStandbySocketMonitorMixin:
 
     def _probe_prewarmed_keepalive(self, target_ip: str) -> None:
         request = _build_keepalive_request_bytes(target_ip)
-        sock = self._take_prewarmed_socket_holder(target_ip) if self.config.prewarmed_persist_socket else None
-        if sock is None:
+        holder = self._take_prewarmed_holder(target_ip) if self.config.prewarmed_persist_socket else None
+        if holder is None:
             sock = _open_tcp_socket(
                 target_ip,
                 port=int(self.config.mac_discovery_tcp_port),
                 timeout=float(self.config.prewarmed_socket_timeout_s),
             )
+            holder = PrewarmedSocketHolder(sock, target_ip, self.mono())
+        sock = holder.sock
+        if sock is None:
+            raise ConnectionError("prewarmed keepalive selected an empty socket holder")
         try:
-            sock.settimeout(float(self.config.prewarmed_socket_timeout_s))
             sock.sendall(request)
-            try:
-                sock.shutdown(socket.SHUT_WR)
-            except OSError:
-                pass
-            response_prefix = sock.recv(4)
-            if not response_prefix:
-                raise ConnectionResetError("prewarmed keepalive got an empty response")
-        finally:
-            _close_socket(sock)
+            _drain_keepalive_http_response(sock, float(self.config.prewarmed_socket_timeout_s))
+        except OSError:
+            holder.close()
+            raise
+
+        if not self.config.prewarmed_persist_socket:
+            holder.close()
+            return
+        self._return_prewarmed_holder(holder)
 
     def _record_prewarmed_keepalive_success(self, reason: str, target_ip: str, duration_ms: int) -> None:
         with self._prewarmed_standby_lock:
@@ -358,7 +475,6 @@ class PrewarmedStandbySocketMonitorMixin:
         return max(base_interval, _PREWARM_FAILURE_BACKOFF_MAX_S)
 
     def _record_prewarmed_keepalive_failure(self, reason: str, target_ip: str, exc: OSError) -> float:
-        self._close_prewarmed_socket_holders()
         with self._prewarmed_standby_lock:
             self._prewarmed_standby_failures += 1
             failures = self._prewarmed_standby_failures
@@ -424,7 +540,6 @@ class PrewarmedStandbySocketMonitorMixin:
             abort_reason = self._bounded_standby_abort_reason(
                 deadline_mono=deadline_mono,
                 generation=generation,
-                target_ip=target_ip,
             )
             if abort_reason:
                 finished = self.mono()
@@ -499,7 +614,6 @@ class PrewarmedStandbySocketMonitorMixin:
         abort_reason = self._bounded_standby_abort_reason(
             deadline_mono=deadline_mono,
             generation=generation,
-            target_ip=current_ip,
         )
         if abort_reason:
             return PrewarmedStandbySendResult(False, False, f"skipped_{abort_reason}", target_ip=current_ip)
@@ -532,7 +646,6 @@ class PrewarmedStandbySocketMonitorMixin:
             abort_reason = self._bounded_standby_abort_reason(
                 deadline_mono=deadline_mono,
                 generation=generation,
-                target_ip=current_ip,
             )
             if abort_reason:
                 return PrewarmedStandbySendResult(
@@ -625,7 +738,6 @@ class PrewarmedStandbySocketMonitorMixin:
         abort_reason = self._bounded_standby_abort_reason(
             deadline_mono=deadline_mono,
             generation=generation,
-            target_ip=snapshot.target_ip,
         )
         if abort_reason:
             return CachedPrewarmedStandbySendResult(

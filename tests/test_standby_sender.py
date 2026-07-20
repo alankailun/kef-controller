@@ -84,6 +84,8 @@ class FastStandbySendTests(unittest.TestCase):
 
         self.assertEqual(result.status, "host_unreachable")
         self.assertEqual(result.source, "fire_and_forget")
+        self.assertIsNotNone(result.prewarmed)
+        self.assertFalse(result.prewarmed.attempted)
 
     def test_does_not_fall_through_after_send_gate_closes(self):
         send_fire_and_forget = Mock()

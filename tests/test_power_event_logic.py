@@ -472,6 +472,7 @@ class PowerEventLogicTests(unittest.TestCase):
             any(
                 call.args[:1] == ("SKIP",)
                 and call.kwargs.get("cause") == "display_on_wake_disabled"
+                and call.kwargs.get("log_level") == "info"
                 for call in controller._log_structured.mock_calls
             )
         )
@@ -721,8 +722,8 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._request_shutdown = Mock()
         controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
 
-        with patch("kef_app.controller.power_state.has_best_route_to_ipv4", return_value=True):
-            result = controller.standby_kef_end_session("WM_QUERYENDSESSION", "NONE")
+        started_mono = controller.mono()
+        result = controller.standby_kef_end_session("WM_QUERYENDSESSION", "NONE")
 
         self.assertTrue(result)
         controller.resolve_target.assert_not_called()
@@ -732,6 +733,7 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertEqual(args, ("192.168.1.10",))
         self.assertIn("deadline_mono", kwargs)
         self.assertIsNotNone(kwargs["deadline_mono"])
+        self.assertGreaterEqual(kwargs["deadline_mono"], started_mono + 1.9)
         self.assertIn("should_send", kwargs)
         controller._request_shutdown.assert_not_called()
 
@@ -742,8 +744,7 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._request_shutdown = Mock()
         controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(False))
 
-        with patch("kef_app.controller.power_state.has_best_route_to_ipv4", return_value=True):
-            result = controller.standby_kef_end_session("WM_QUERYENDSESSION", "NONE")
+        result = controller.standby_kef_end_session("WM_QUERYENDSESSION", "NONE")
 
         self.assertFalse(result)
         controller.resolve_target.assert_not_called()
@@ -751,7 +752,7 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown.assert_called_once()
         controller._request_shutdown.assert_not_called()
 
-    def test_end_session_standby_treats_missing_local_route_as_best_effort(self):
+    def test_end_session_standby_skips_blocking_route_preflight_and_uses_transport_result(self):
         controller = self.make_controller(kef_ip="192.168.1.10", endsession_standby_on_shutdown=True)
         events = self.capture_events(controller)
         controller.resolve_target = Mock(return_value=True)
@@ -759,15 +760,16 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._request_shutdown = Mock()
         controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
 
-        with patch("kef_app.controller.power_state.has_best_route_to_ipv4", return_value=False):
+        with patch("kef_app.platform.windows.api.has_best_route_to_ipv4", return_value=False) as route_check:
             result = controller.standby_kef_end_session("WM_QUERYENDSESSION", "NONE")
 
         self.assertTrue(result)
         controller.resolve_target.assert_not_called()
         controller._ensure_target_identity.assert_not_called()
-        controller._send_fire_and_forget_shutdown.assert_not_called()
+        route_check.assert_not_called()
+        controller._send_fire_and_forget_shutdown.assert_called_once()
         controller._request_shutdown.assert_not_called()
-        self.assertTrue(self.emitted_outcome(events, "sent_skipped_host_unreachable"))
+        self.assertTrue(self.emitted_outcome(events, "sent_unconfirmed_fire_and_forget"))
 
     def test_end_session_standby_fire_and_forget_bypasses_busy_action_lock(self):
         controller = self.make_controller(kef_ip="192.168.1.10", endsession_standby_on_shutdown=True)
@@ -777,8 +779,7 @@ class PowerEventLogicTests(unittest.TestCase):
 
         self.assertTrue(controller._action_lock.acquire(blocking=False))
         try:
-            with patch("kef_app.controller.power_state.has_best_route_to_ipv4", return_value=True):
-                result = controller.standby_kef_end_session("WM_QUERYENDSESSION", "NONE")
+            result = controller.standby_kef_end_session("WM_QUERYENDSESSION", "NONE")
         finally:
             controller._action_lock.release()
 
@@ -795,8 +796,7 @@ class PowerEventLogicTests(unittest.TestCase):
 
         self.assertTrue(controller._action_lock.acquire(blocking=False))
         try:
-            with patch("kef_app.controller.power_state.has_best_route_to_ipv4", return_value=True):
-                result = controller.standby_kef_end_session("WM_QUERYENDSESSION", "NONE")
+            result = controller.standby_kef_end_session("WM_QUERYENDSESSION", "NONE")
         finally:
             controller._action_lock.release()
 
@@ -910,18 +910,20 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertTrue(check_deadline_values)
         self.assertTrue(all(value is False for value in check_deadline_values))
 
-    def test_bounded_preemptive_standby_skips_when_route_preflight_is_unavailable(self):
+    def test_bounded_preemptive_standby_skips_blocking_route_preflight(self):
         controller = self.make_controller(
             kef_ip="192.168.1.10",
             kef_mac="AA:BB:CC:DD:EE:01",
         )
         generation = controller._new_generation("sleep", "WTS_SESSION_LOCK")
-        controller.try_send_prewarmed_standby = Mock()
-        controller._send_fire_and_forget_shutdown = Mock()
+        controller.try_send_prewarmed_standby = Mock(
+            return_value=PrewarmedStandbySendResult(False, False, "no_recent_keepalive")
+        )
+        controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
         controller._request_shutdown = Mock()
         controller._log_structured = Mock()
 
-        with patch("kef_app.controller.power_state.has_best_route_to_ipv4", return_value=False):
+        with patch("kef_app.platform.windows.api.has_best_route_to_ipv4", return_value=False) as route_check:
             result = controller.standby_kef_preemptive(
                 generation,
                 "WTS_SESSION_LOCK",
@@ -929,17 +931,49 @@ class PowerEventLogicTests(unittest.TestCase):
             )
 
         self.assertTrue(result)
-        controller.try_send_prewarmed_standby.assert_not_called()
-        controller._send_fire_and_forget_shutdown.assert_not_called()
+        route_check.assert_not_called()
+        controller.try_send_prewarmed_standby.assert_called_once()
+        controller._send_fire_and_forget_shutdown.assert_called_once()
         controller._request_shutdown.assert_not_called()
-        self.assertTrue(
-            any(
-                call.args[:1] == ("STEP",)
-                and call.kwargs.get("cause") == "local_route_preflight_unavailable"
-                and call.kwargs.get("status") == "local_network_unavailable_before_suspend"
-                for call in controller._log_structured.mock_calls
-            )
+
+    def test_bounded_fast_send_reserves_time_for_fire_and_forget_after_slow_prewarm(self):
+        controller = self.make_controller(
+            kef_ip="192.168.1.10",
+            kef_mac="AA:BB:CC:DD:EE:01",
         )
+        clock = {"now": 100.0}
+        controller.mono = lambda: clock["now"]
+        generation = controller._new_generation("sleep", "PBT_APMSUSPEND")
+
+        def slow_prewarm(_ip: str, **kwargs) -> PrewarmedStandbySendResult:
+            self.assertEqual(kwargs["deadline_mono"], 100.0)
+            clock["now"] = 100.30
+            return PrewarmedStandbySendResult(
+                attempted=True,
+                success=False,
+                status="frozen_during_send",
+                duration_ms=300,
+                target_ip="192.168.1.10",
+                frozen_s="0.300",
+            )
+
+        def fire_and_forget(_ip: str, **kwargs) -> FireAndForgetShutdownResult:
+            self.assertGreaterEqual(kwargs["deadline_mono"], 100.45)
+            self.assertTrue(kwargs["should_send"]())
+            return self.fire_and_forget_result(True)
+
+        controller.try_send_prewarmed_standby = Mock(side_effect=slow_prewarm)
+        controller._send_fire_and_forget_shutdown = Mock(side_effect=fire_and_forget)
+
+        result = controller._send_fast_standby(
+            "192.168.1.10",
+            deadline_mono=100.10,
+            generation=generation,
+            reason="PBT_APMSUSPEND",
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.source, "fire_and_forget")
 
     def test_bounded_preemptive_standby_does_not_use_standard_fallback(self):
         controller = self.make_controller(
@@ -953,12 +987,11 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(False))
         controller._request_shutdown = Mock()
 
-        with patch("kef_app.controller.power_state.has_best_route_to_ipv4", return_value=True):
-            result = controller.standby_kef_preemptive(
-                generation,
-                "WTS_SESSION_LOCK",
-                deadline_mono=controller.mono() + 1.0,
-            )
+        result = controller.standby_kef_preemptive(
+            generation,
+            "WTS_SESSION_LOCK",
+            deadline_mono=controller.mono() + 1.0,
+        )
 
         self.assertFalse(result)
         controller.try_send_prewarmed_standby.assert_called_once()
@@ -1458,8 +1491,7 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._request_shutdown = Mock()
         controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
 
-        with patch("kef_app.controller.power_state.has_best_route_to_ipv4", return_value=True):
-            result = controller.standby_kef_end_session("unit_test", "flags")
+        result = controller.standby_kef_end_session("unit_test", "flags")
 
         self.assertTrue(result)
         controller.resolve_target.assert_not_called()

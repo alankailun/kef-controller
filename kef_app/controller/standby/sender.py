@@ -55,6 +55,9 @@ def send_fast_standby(
     return FastStandbySendResult(
         status,
         "fire_and_forget",
-        prewarmed=prewarmed if prewarmed.attempted else None,
+        # Retain skipped/unavailable prewarm results as well.  They explain
+        # which stage was bypassed during a time-critical shutdown and make
+        # the fallback path diagnosable from an INFO-level log.
+        prewarmed=prewarmed,
         fire_and_forget=fire_and_forget,
     )

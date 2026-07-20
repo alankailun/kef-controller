@@ -13,9 +13,11 @@ from kef_app.controller.standby.prewarmed_socket import PrewarmedSocketHolder
 
 
 class _LoopbackHttpSpeaker:
-    def __init__(self):
+    def __init__(self, *, close_after_get: bool = False):
         self._stop = threading.Event()
+        self._close_after_get = close_after_get
         self._requests: list[bytes] = []
+        self._connection_count = 0
         self._lock = threading.Lock()
         self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -29,6 +31,11 @@ class _LoopbackHttpSpeaker:
     def requests(self) -> list[bytes]:
         with self._lock:
             return list(self._requests)
+
+    @property
+    def connection_count(self) -> int:
+        with self._lock:
+            return self._connection_count
 
     def __enter__(self):
         self._thread.start()
@@ -53,31 +60,69 @@ class _LoopbackHttpSpeaker:
             except OSError:
                 return
 
-            with conn:
-                conn.settimeout(0.10)
+            threading.Thread(
+                target=self._handle_connection,
+                args=(conn,),
+                daemon=True,
+                name="PrewarmedStandbyLoopbackClient",
+            ).start()
+
+    def _handle_connection(self, conn: socket.socket) -> None:
+        with conn:
+            conn.settimeout(0.10)
+            counted_connection = False
+            while not self._stop.is_set():
                 data = self._read_request(conn)
+                if not data:
+                    break
                 with self._lock:
+                    if not counted_connection:
+                        self._connection_count += 1
+                        counted_connection = True
                     self._requests.append(data)
-                if data.startswith(b"GET "):
-                    try:
-                        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n[]")
-                    except OSError:
-                        pass
+                try:
+                    if data.startswith(b"GET "):
+                        connection_header = b"Connection: close\r\n" if self._close_after_get else b""
+                        conn.sendall(
+                            b"HTTP/1.1 200 OK\r\n"
+                            b"Transfer-Encoding: chunked\r\n"
+                            b"Content-Type: application/json\r\n"
+                            + connection_header
+                            + b"\r\n2\r\n[]\r\n0\r\n\r\n"
+                        )
+                    else:
+                        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                except OSError:
+                    break
+                if not data.startswith(b"GET ") or self._close_after_get:
+                    break
 
     @staticmethod
     def _read_request(conn: socket.socket) -> bytes:
-        chunks: list[bytes] = []
+        data = bytearray()
         try:
-            while True:
+            while b"\r\n\r\n" not in data:
                 chunk = conn.recv(4096)
                 if not chunk:
                     break
-                chunks.append(chunk)
-                if b"\r\n\r\n" in b"".join(chunks):
+                data.extend(chunk)
+            if b"\r\n\r\n" not in data:
+                return bytes(data)
+            header, body = bytes(data).split(b"\r\n\r\n", 1)
+            content_length = 0
+            for line in header.split(b"\r\n")[1:]:
+                if line.lower().startswith(b"content-length:"):
+                    content_length = int(line.split(b":", 1)[1].strip())
                     break
+            while len(body) < content_length:
+                chunk = conn.recv(content_length - len(body))
+                if not chunk:
+                    break
+                body += chunk
+            return header + b"\r\n\r\n" + body[:content_length]
         except OSError:
             pass
-        return b"".join(chunks)
+        return bytes(data)
 
 
 def _percentile(values: list[float], percentile: float) -> float:
@@ -163,6 +208,53 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
             2,
         )
 
+    def test_persistent_keepalive_reuses_both_pool_connections_without_reconnecting(self):
+        with _LoopbackHttpSpeaker() as speaker:
+            controller = self.make_controller(speaker.port, prewarmed_persist_socket=True)
+
+            controller._prewarmed_standby_tick("unit_test")
+            controller._prewarmed_standby_tick("unit_test")
+            controller._prewarmed_standby_tick("unit_test")
+
+            deadline = time.monotonic() + 1.0
+            while len(speaker.requests) < 3 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            with controller._prewarmed_standby_lock:
+                holders = list(controller._prewarmed_standby_holders)
+
+            self.assertEqual(len(holders), 2)
+            self.assertTrue(all(holder.sock is not None for holder in holders))
+            self.assertEqual(speaker.connection_count, 2)
+            self.assertEqual(
+                sum(1 for request in speaker.requests if request.startswith(b"GET /api/getData")),
+                3,
+            )
+            self.assertTrue(
+                all(b"Connection: keep-alive\r\n" in request for request in speaker.requests[:3])
+            )
+            controller._close_prewarmed_socket_holders()
+
+    def test_persistent_keepalive_replaces_only_connection_closed_by_server(self):
+        with _LoopbackHttpSpeaker(close_after_get=True) as speaker:
+            controller = self.make_controller(speaker.port, prewarmed_persist_socket=True)
+            controller._log_structured = Mock()
+
+            delay = controller._prewarmed_standby_tick("unit_test")
+
+            with controller._prewarmed_standby_lock:
+                holders = list(controller._prewarmed_standby_holders)
+            self.assertEqual(delay, 20.0)
+            self.assertEqual(len(holders), 2)
+            self.assertTrue(all(holder.sock is not None for holder in holders))
+            self.assertTrue(
+                any(
+                    call.kwargs.get("status") == "replaced_failed_connection"
+                    and "Connection: close" in call.kwargs.get("error", "")
+                    for call in controller._log_structured.mock_calls
+                )
+            )
+            controller._close_prewarmed_socket_holders()
+
     def test_monitor_stop_keeps_holder_for_pending_suspend_worker(self):
         controller = self.make_controller(80, prewarmed_persist_socket=True)
         controller._log_structured = Mock()
@@ -218,9 +310,8 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
             self.assertEqual(controller._prewarmed_standby_failures, 0)
 
     def test_keepalive_failures_back_off_until_success_resets_counter(self):
-        controller = self.make_controller(80, prewarmed_persist_socket=True, prewarmed_keepalive_interval_s=5.0)
+        controller = self.make_controller(80, prewarmed_persist_socket=False, prewarmed_keepalive_interval_s=5.0)
         controller._log_structured = Mock()
-        controller._ensure_persistent_prewarmed_socket = Mock()
         controller._probe_prewarmed_keepalive = Mock(side_effect=OSError(10065, "host unreachable"))
 
         delays = [controller._prewarmed_standby_tick("unit_test") for _ in range(7)]
@@ -250,6 +341,25 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         self.assertGreaterEqual(health["last_heartbeat_age_s"], 2.0)
         self.assertEqual(health["failures"], 1)
         self.assertEqual(health["last_error"], "TimeoutError('timed out')")
+
+    def test_keepalive_failure_does_not_discard_other_hot_connection(self):
+        controller = self.make_controller(80, prewarmed_persist_socket=True)
+        healthy_socket = Mock()
+        healthy_holder = PrewarmedSocketHolder(healthy_socket, "127.0.0.1", controller.mono())
+        with controller._prewarmed_standby_lock:
+            controller._prewarmed_standby_holders = [healthy_holder]
+
+        delay = controller._record_prewarmed_keepalive_failure(
+            "unit_test",
+            "127.0.0.1",
+            TimeoutError("timed out"),
+        )
+
+        self.assertEqual(delay, 20.0)
+        with controller._prewarmed_standby_lock:
+            self.assertEqual(controller._prewarmed_standby_holders, [healthy_holder])
+            self.assertEqual(controller._prewarmed_standby_failures, 1)
+        healthy_socket.close.assert_not_called()
 
     def test_cached_prewarmed_send_uses_snapshot_bytes_and_matching_socket(self):
         with _LoopbackHttpSpeaker() as speaker:

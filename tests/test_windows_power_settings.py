@@ -12,7 +12,9 @@ from kef_app.platform.windows.api import (
     MONITOR_DISPLAY_OFF,
     MONITOR_DISPLAY_ON,
     POWERBROADCAST_SETTING,
+    create_shutdown_block_reason,
     decode_power_setting_change,
+    destroy_shutdown_block_reason,
     has_best_route_to_ipv4,
 )
 
@@ -65,6 +67,17 @@ class WindowsPowerSettingsTests(unittest.TestCase):
     def test_best_route_preflight_fails_open_for_unknown_error(self):
         with patch("kef_app.platform.windows.api.GetBestInterfaceEx", return_value=87):
             self.assertIsNone(has_best_route_to_ipv4("10.0.0.222"))
+
+    def test_shutdown_block_reason_wrappers_use_the_hidden_message_window(self):
+        with (
+            patch("kef_app.platform.windows.api.ShutdownBlockReasonCreate", return_value=True) as create,
+            patch("kef_app.platform.windows.api.ShutdownBlockReasonDestroy", return_value=True) as destroy,
+        ):
+            create_shutdown_block_reason(1234, "Putting the KEF speaker into standby")
+            destroy_shutdown_block_reason(1234)
+
+        create.assert_called_once_with(1234, "Putting the KEF speaker into standby")
+        destroy.assert_called_once_with(1234)
 
 
 if __name__ == "__main__":

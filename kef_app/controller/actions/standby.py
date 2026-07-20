@@ -7,7 +7,7 @@ from .device_common import _STANDBY_VERIFY_TIMEOUT, StandbyVerificationError
 from .fast_standby import ControllerFastStandbyMixin, _outcome_is_success
 
 
-_ENDSESSION_FAST_STANDBY_BUDGET_S = 0.30
+_ENDSESSION_FAST_STANDBY_BUDGET_S = 2.00
 _ENDSESSION_FAST_STANDBY_BUDGET_MS = int(_ENDSESSION_FAST_STANDBY_BUDGET_S * 1000)
 
 
@@ -204,25 +204,9 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         abort_reason = self._bounded_standby_abort_reason(
             deadline_mono=deadline_mono,
             generation=generation,
-            target_ip=target_ip,
         )
         if not abort_reason:
             return None
-
-        if abort_reason == "local_route_unavailable":
-            outcome = policy.host_unreachable_outcome
-            self._log_standby(
-                "STEP",
-                policy,
-                generation,
-                reason,
-                step=step,
-                status=policy.host_unreachable_status,
-                cause="local_route_preflight_unavailable",
-                target_ip=target_ip,
-                deadline_mono=f"{deadline_mono:.3f}",
-            )
-            return outcome
 
         outcome = f"aborted_bounded_{abort_reason}"
         self._log_standby(
@@ -331,24 +315,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         abort_reason = self._bounded_standby_abort_reason(
             deadline_mono=deadline_mono,
             generation=None,
-            target_ip=current_ip,
         )
-        if abort_reason == "local_route_unavailable":
-            outcome = "sent_skipped_host_unreachable"
-            self._log_standby(
-                "STEP",
-                policy,
-                None,
-                reason,
-                step="before_fast_send",
-                status="host_unreachable_best_effort",
-                cause="local_route_preflight_unavailable",
-                flags=flags,
-                target_ip=current_ip,
-                deadline_mono=f"{deadline_mono:.3f}",
-                budget_ms=_ENDSESSION_FAST_STANDBY_BUDGET_MS,
-            )
-            return True, outcome
         if abort_reason:
             outcome = f"aborted_bounded_{abort_reason}"
             self._log_standby(
