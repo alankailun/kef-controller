@@ -4,6 +4,8 @@ Release date: 2026-07-25
 
 ## Fixed
 
+- Normal `PROCESS_START` lifecycle entries remain informational even when an
+  optional parent-process diagnostic contains the word `failed`.
 - New WebView2 windows now bootstrap from one current controller-state snapshot
   and the current event cursor. They no longer replay stale state changes and
   notifications accumulated while the controller window was hidden.
@@ -17,6 +19,10 @@ Release date: 2026-07-25
 
 ## Reliability
 
+- Installing while KEF Controller is not running now proceeds directly to file
+  replacement. When it is running, Setup force-closes its process tree after
+  confirmation, then waits only for Windows to release its file handles;
+  uninstall uses the same no-wait-if-closed behavior.
 - Keeps the proven 1.7.6 startup behavior: the hidden native window is shown
   after WebView2's browser control has loaded. It does not wait for a
   JavaScript-ready signal before becoming visible.

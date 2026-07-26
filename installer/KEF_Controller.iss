@@ -57,17 +57,38 @@ begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), Args, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
+function IsControllerRunning(): Boolean;
+begin
+  Result := CheckForMutexes('KEFController_SingleInstance_Mutex');
+end;
+
+function WaitForControllerExit(MaxMilliseconds: Integer): Boolean;
+var
+  Elapsed: Integer;
+begin
+  Elapsed := 0;
+  while IsControllerRunning() and (Elapsed < MaxMilliseconds) do
+  begin
+    Sleep(100);
+    Elapsed := Elapsed + 100;
+  end;
+  Result := not IsControllerRunning();
+end;
+
 procedure CloseRunningApp();
 begin
-  RunTaskKill('/IM "{#AppExeName}" /T');
-  Sleep(1500);
+  if not IsControllerRunning() then
+    exit;
+
   RunTaskKill('/F /IM "{#AppExeName}" /T');
+  { Wait only long enough for Windows to release loaded EXE/DLL handles. }
+  WaitForControllerExit(500);
 end;
 
 function CloseRunningAppForInstall(): Boolean;
 begin
   Result := True;
-  if not CheckForMutexes('KEFController_SingleInstance_Mutex') then
+  if not IsControllerRunning() then
     exit;
 
   if MsgBox(
@@ -82,8 +103,7 @@ begin
   end;
 
   CloseRunningApp();
-  Sleep(500);
-  if CheckForMutexes('KEFController_SingleInstance_Mutex') then
+  if IsControllerRunning() then
   begin
     MsgBox(
       'KEF Controller could not be closed. Please close it manually, then try again.',

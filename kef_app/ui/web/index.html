@@ -1180,7 +1180,13 @@
       && /\bSTEP=KEEPALIVE\b/.test(upper)
       && /\bSTATUS=FAILED\b/.test(upper)
       && /\bFAILURES=\d+\b/.test(upper);
-    if (isPrewarmRetry) lvl = "WARN";
+    // PROCESS_* lifecycle records are emitted by the backend at INFO level.
+    // Their optional parent-process diagnostic may contain "failed" (for
+    // example, when a short-lived launcher can no longer be inspected), which
+    // must not turn a normal startup record into a red error in the UI.
+    const isProcessLifecycle = /^PROCESS_(?:START|EXIT|CONTEXT|COMMAND_LINE|ARGV)\b/.test(upper);
+    if (isProcessLifecycle) lvl = "INFO";
+    else if (isPrewarmRetry) lvl = "WARN";
     else if (/\b(ERROR|EXCEPTION|TRACEBACK|FAILED|FAILURE)\b/.test(upper)) lvl = "ERROR";
     else if (/\b(WARN|WARNING)\b|COULD NOT|IS DISABLED/.test(upper)) lvl = "WARN";
     else if (/\bEVENT\b|\bKIND=/.test(upper)) lvl = "EVENT";
