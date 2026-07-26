@@ -692,6 +692,7 @@
     return payload.result;
   };
   const bridge = {
+    bootstrap: () => api("bootstrap"),
     initialState: () => api("initialState"),
     updates: (cursor, signal) => api("updates", [cursor], { signal, silent: true }),
     logs: name => api("logs", [name || ""]),
@@ -1785,8 +1786,11 @@
     if (powerPending && prevOn !== undefined && state.speaker && state.speaker.on !== prevOn) {
       clearPowerPending();
     }
-    syncHome();
-    syncSettings();
+    // Updating hidden pages for every state event needlessly makes a burst of
+    // controller events expensive. The destination page is refreshed once in
+    // setPage(), so only repaint the page the user can currently see.
+    if (page === "home") syncHome();
+    else if (page === "settings") syncSettings();
   }
 
   const POWER_ACTION_TITLES = new Set(["Wake", "Standby", "Early Standby", "Endsession Standby", "Speaker action failed"]);
@@ -1843,11 +1847,20 @@
     try {
       const batch = await bridge.updates(updateCursor, controller.signal);
       updateCursor = batch.cursor;
+      // A state is a snapshot, so applying every historical one is redundant.
+      // Coalesce a batch to its latest state, while preserving all new logs and
+      // notifications in order.
+      let latestState = null;
+      const messages = [];
+      const lines = [];
       for (const item of batch.updates) {
-        if (item.channel === "state") applyState(JSON.parse(item.payload));
-        else if (item.channel === "toast") handleToast(JSON.parse(item.payload));
-        else if (item.channel === "log") appendLogLine(item.payload);
+        if (item.channel === "state") latestState = item.payload;
+        else if (item.channel === "toast") messages.push(item.payload);
+        else if (item.channel === "log") lines.push(item.payload);
       }
+      if (latestState) applyState(JSON.parse(latestState));
+      for (const payload of messages) handleToast(JSON.parse(payload));
+      for (const line of lines) appendLogLine(line);
     } catch (error) {
       if (error.name !== "AbortError") updateRetryTimer = setTimeout(() => {
         updateRetryTimer = null;
@@ -1869,14 +1882,14 @@
     pollUpdates();
   }
 
-  bridge.initialState().then(value => {
-    state = value;
+  bridge.bootstrap().then(boot => {
+    state = boot.state;
+    updateCursor = Number(boot.cursor) || 0;
     uiLanguage = state?.settings?.general?.ui_language === "en" ? "en" : "zh";
     document.documentElement.lang = uiLanguage === "en" ? "en" : "zh-CN";
-    lastStateJson = JSON.stringify(value);
+    lastStateJson = JSON.stringify(state);
     buildShell();
     syncHome();
-    syncSettings();
     document.addEventListener("keydown", e => {
       if (e.key === "Escape" && dlg) closeSpeakerDialog();
     });

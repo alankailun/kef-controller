@@ -97,6 +97,20 @@ class WebApiServer:
             latest = self._next_event_id - 1
         return {"cursor": latest, "updates": updates}
 
+    def _bootstrap(self) -> dict[str, object]:
+        """Return one current state snapshot and the matching event baseline.
+
+        A newly-created WebView2 host already receives the current state from
+        ``initialState``. Replaying every state and toast accumulated while the
+        window was hidden only creates a large burst of redundant DOM work.
+        Taking the cursor before the snapshot keeps events produced during the
+        snapshot available to the first long-poll request.
+        """
+        with self._events_condition:
+            cursor = self._next_event_id - 1
+        state = self._bridge.invoke_api("initialState", [])
+        return {"state": state, "cursor": cursor}
+
     def _serve_static(self, handler: BaseHTTPRequestHandler) -> None:
         path = unquote(urlparse(handler.path).path)
         relative = "index.html" if path in {"", "/"} else path.lstrip("/")
@@ -121,14 +135,19 @@ class WebApiServer:
             self._send_error(handler, HTTPStatus.NOT_FOUND, "Not found")
             return
         try:
-            self._touch_client_activity()
             size = int(handler.headers.get("Content-Length", "0"))
             payload = json.loads(handler.rfile.read(size).decode("utf-8") or "{}")
             args = payload.get("args", []) if isinstance(payload, dict) else []
             if not isinstance(args, list):
                 raise ValueError("args must be a list")
             method = path.rsplit("/", 1)[-1]
-            if method == "updates":
+            if method == "bootstrap":
+                result = self._bootstrap()
+            elif method == "updates":
+                # Only the long-poll represents a live browser renderer.
+                # Loading logs or opening a folder must not mask a stalled UI
+                # from the host monitor.
+                self._touch_client_activity()
                 cursor = int(args[0]) if args else 0
                 result = self._updates_since(max(0, cursor))
             else:

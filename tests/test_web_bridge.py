@@ -19,6 +19,14 @@ class WebBridgeTests(unittest.TestCase):
         task_button = html.index('data-startup-mode="task"')
         self.assertLess(registry_button, task_button)
 
+    def test_web_ui_bootstraps_from_current_state_and_coalesces_updates(self) -> None:
+        html = (Path(__file__).parents[1] / "kef_app" / "ui" / "web" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('bootstrap: () => api("bootstrap")', html)
+        self.assertIn("bridge.bootstrap().then(boot =>", html)
+        self.assertIn("let latestState = null;", html)
+        self.assertIn('else if (page === "settings") syncSettings();', html)
+
     def test_startup_update_is_scheduled_without_blocking_the_ui_thread(self) -> None:
         bridge = WebControllerBridge.__new__(WebControllerBridge)
         bridge._config = AppConfig()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from collections import deque
 from unittest.mock import Mock, patch
 
 from PySide6.QtCore import QObject
@@ -21,7 +22,9 @@ class KefMainWindowHostTests(unittest.TestCase):
         window._launch_host = Mock()
         window._server = Mock()
         window._host_ready_mono = 0.0
-        window._last_host_restart_mono = 0.0
+        window._heartbeat_suspect_mono = 0.0
+        window._host_restart_times = deque()
+        window._restart_limit_reported = False
         window._was_effectively_visible = False
         window._log = Mock()
         return window
@@ -66,19 +69,22 @@ class KefMainWindowHostTests(unittest.TestCase):
 
         self.assertEqual(hwnd, 200)
 
-    def test_restarts_a_visible_host_when_the_ui_heartbeat_has_stalled(self) -> None:
+    def test_restarts_a_visible_host_after_a_confirmed_heartbeat_stall(self) -> None:
         window = self._window()
         process = Mock()
         process.poll.return_value = None
         window._host_process = process
         window._host_hwnd = 100
         window._host_ready_mono = 100.0
-        window._server.client_activity_age_s = 61.0
+        window._server.client_activity_age_s = 91.0
         window._terminate_host_tree = Mock()
+        window._host_window_responds = Mock(return_value=True)
 
-        with patch("kef_app.ui.main_window.time.monotonic", return_value=161.0):
-            self.assertTrue(window._host_needs_restart(True))
-            window._restart_unresponsive_host()
+        with patch("kef_app.ui.main_window.time.monotonic", side_effect=[191.0, 206.1, 206.1]):
+            self.assertIsNone(window._host_restart_reason(True))
+            reason = window._host_restart_reason(True)
+            self.assertEqual(reason, "stopped sending UI heartbeats for 91.0s")
+            window._restart_unresponsive_host(reason)
 
         window._terminate_host_tree.assert_called_once_with()
         window._launch_host.assert_called_once_with()
@@ -115,7 +121,7 @@ class KefMainWindowHostTests(unittest.TestCase):
         window._host_hwnd = 100
         window._host_ready_mono = 100.0
         window._server.client_activity_age_s = 600.0
-        window._host_needs_restart = Mock(return_value=False)
+        window._host_restart_reason = Mock(return_value=None)
 
         with (
             patch("kef_app.ui.main_window.win32gui.IsWindow", return_value=True),
@@ -124,7 +130,7 @@ class KefMainWindowHostTests(unittest.TestCase):
             window._monitor_host()
 
         window._server._touch_client_activity.assert_called_once_with()
-        window._host_needs_restart.assert_called_once_with(True)
+        window._host_restart_reason.assert_called_once_with(True)
         self.assertTrue(window._was_effectively_visible)
 
     def test_minimized_host_skips_watchdog_and_pauses_ui_visibility(self) -> None:
@@ -135,7 +141,7 @@ class KefMainWindowHostTests(unittest.TestCase):
         window._host_hwnd = 100
         window._host_ready_mono = 100.0
         window._was_effectively_visible = True
-        window._host_needs_restart = Mock()
+        window._host_restart_reason = Mock(return_value=None)
         visibility: list[bool] = []
         window.visibility_changed.connect(visibility.append)
 
@@ -145,7 +151,7 @@ class KefMainWindowHostTests(unittest.TestCase):
         ):
             window._monitor_host()
 
-        window._host_needs_restart.assert_called_once_with(False)
+        window._host_restart_reason.assert_called_once_with(False)
         self.assertEqual(visibility, [False])
         self.assertFalse(window._was_effectively_visible)
 

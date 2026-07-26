@@ -9,6 +9,18 @@ from kef_app.ui.web_api_server import WebApiServer
 
 
 class WebApiServerTests(unittest.TestCase):
+    def test_bootstrap_uses_current_state_without_replaying_old_events(self) -> None:
+        bridge = type("Bridge", (), {"invoke_api": lambda _self, method, args: {"method": method, "args": args}})()
+        server = WebApiServer(Path("."), bridge)
+        server.publish("state", '{"old": true}')
+        server.publish("log", "old log line")
+
+        result = server._bootstrap()
+
+        self.assertEqual(result["cursor"], 2)
+        self.assertEqual(result["state"], {"method": "initialState", "args": []})
+        self.assertEqual(server._updates_since(int(result["cursor"]), timeout_s=0.0)["updates"], [])
+
     def test_updates_returns_immediately_when_an_event_is_already_available(self) -> None:
         server = WebApiServer(Path("."), object())
         server.publish("state", "{}")

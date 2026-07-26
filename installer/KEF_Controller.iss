@@ -1,6 +1,9 @@
 #define AppExeName "KEF Controller.exe"
-#define AppVersion "1.7.6"
+#define AppVersion "1.7.7"
 #define WebView2RuntimeKey "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+#ifndef BuildSource
+  #define BuildSource "..\dist\KEF Controller"
+#endif
 
 [Setup]
 AppId={{8D6C2E54-89C6-4B9F-AE63-8F8A2A814101}
@@ -30,7 +33,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
 
 [Files]
-Source: "..\dist\KEF Controller\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#BuildSource}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "assets\MicrosoftEdgeWebView2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall ignoreversion
 
 [Icons]

@@ -4,6 +4,7 @@ import ctypes
 import subprocess
 import sys
 import time
+from collections import deque
 from pathlib import Path
 
 import win32con
@@ -26,7 +27,10 @@ class KefMainWindow(QObject):
     visibility_changed = Signal(bool)
     _WINDOW_TITLE = "KEF Controller"
     _HOST_HEARTBEAT_GRACE_S = 20.0
-    _HOST_HEARTBEAT_TIMEOUT_S = 60.0
+    _HOST_HEARTBEAT_TIMEOUT_S = 90.0
+    _HOST_HEARTBEAT_CONFIRMATION_S = 15.0
+    _HOST_RESTART_WINDOW_S = 300.0
+    _HOST_MAX_RESTARTS_PER_WINDOW = 2
 
     def __init__(
         self,
@@ -52,7 +56,9 @@ class KefMainWindow(QObject):
         self._host_hwnd = 0
         self._find_attempts = 0
         self._host_ready_mono = 0.0
-        self._last_host_restart_mono = 0.0
+        self._heartbeat_suspect_mono = 0.0
+        self._host_restart_times: deque[float] = deque()
+        self._restart_limit_reported = False
         self._was_effectively_visible = False
         self._monitor = QTimer(self)
         self._monitor.setInterval(500)
@@ -100,6 +106,12 @@ class KefMainWindow(QObject):
         # cannot race the browser's visibilitychange handler and restart a
         # perfectly healthy WebView2 host.
         self._server._touch_client_activity()
+        if self._restart_limit_reported:
+            # A deliberate tray restore is a sensible manual recovery point.
+            # Allow it to make a new limited recovery attempt instead of
+            # leaving a previous automatic-restart cap permanently sticky.
+            self._host_restart_times.clear()
+            self._restart_limit_reported = False
         if self._host_hwnd and win32gui.IsWindow(self._host_hwnd):
             self._set_effective_visibility(True, refresh_heartbeat=False)
             win32gui.ShowWindow(self._host_hwnd, win32con.SW_RESTORE)
@@ -154,6 +166,7 @@ class KefMainWindow(QObject):
         self._host_hwnd = 0
         self._find_attempts = 0
         self._host_ready_mono = 0.0
+        self._heartbeat_suspect_mono = 0.0
         self._set_effective_visibility(False)
         self._monitor.start()
 
@@ -181,24 +194,80 @@ class KefMainWindow(QObject):
             self._log.info("Native Edge WebView2 host is ready | hwnd=%s", self._host_hwnd)
         visible = self._effectively_visible()
         self._set_effective_visibility(visible)
-        if self._host_needs_restart(visible):
-            self._restart_unresponsive_host()
+        restart_reason = self._host_restart_reason(visible)
+        if restart_reason:
+            self._restart_unresponsive_host(restart_reason)
             return
 
-    def _host_needs_restart(self, visible: bool) -> bool:
+    def _host_restart_reason(self, visible: bool) -> str | None:
         if not visible or not self._host_ready_mono:
-            return False
+            self._heartbeat_suspect_mono = 0.0
+            return None
         now = time.monotonic()
         if now - self._host_ready_mono < self._HOST_HEARTBEAT_GRACE_S:
-            return False
-        if now - self._last_host_restart_mono < self._HOST_HEARTBEAT_TIMEOUT_S:
-            return False
-        return self._server.client_activity_age_s > self._HOST_HEARTBEAT_TIMEOUT_S
+            return None
+        activity_age = self._server.client_activity_age_s
+        if activity_age <= self._HOST_HEARTBEAT_TIMEOUT_S:
+            self._heartbeat_suspect_mono = 0.0
+            return None
 
-    def _restart_unresponsive_host(self) -> None:
+        # A missed JavaScript heartbeat alone is not enough evidence to kill a
+        # healthy native window. Record the first miss, give the renderer a
+        # short recovery window, and only then rebuild it. If the WinForms
+        # message pump itself is hung, that is independent confirmation and we
+        # can recover immediately.
+        if not self._host_window_responds():
+            return "native window stopped responding"
+        if not self._heartbeat_suspect_mono:
+            self._heartbeat_suspect_mono = now
+            self._log.warning(
+                "Native Edge WebView2 host missed UI heartbeats; waiting %.0fs before recovery | age_s=%.1f",
+                self._HOST_HEARTBEAT_CONFIRMATION_S,
+                activity_age,
+            )
+            return None
+        if now - self._heartbeat_suspect_mono < self._HOST_HEARTBEAT_CONFIRMATION_S:
+            return None
+
+        while self._host_restart_times and now - self._host_restart_times[0] > self._HOST_RESTART_WINDOW_S:
+            self._host_restart_times.popleft()
+        if len(self._host_restart_times) >= self._HOST_MAX_RESTARTS_PER_WINDOW:
+            if not self._restart_limit_reported:
+                self._restart_limit_reported = True
+                self._log.error(
+                    "Native Edge WebView2 host recovery paused after %s restarts in %.0fs; hide and reopen the window to retry",
+                    self._HOST_MAX_RESTARTS_PER_WINDOW,
+                    self._HOST_RESTART_WINDOW_S,
+                )
+            return None
+        return f"stopped sending UI heartbeats for {activity_age:.1f}s"
+
+    def _host_window_responds(self) -> bool:
+        """Check the native message pump without waiting indefinitely."""
+        if not self._host_hwnd or not win32gui.IsWindow(self._host_hwnd):
+            return False
+        result = ctypes.c_size_t()
+        try:
+            sent = ctypes.windll.user32.SendMessageTimeoutW(
+                self._host_hwnd,
+                win32con.WM_NULL,
+                0,
+                0,
+                0x0002,  # SMTO_ABORTIFHUNG
+                250,
+                ctypes.byref(result),
+            )
+            return bool(sent)
+        except (AttributeError, OSError):
+            # Keep the heartbeat's confirmed timeout as the fallback on an
+            # unusual Windows API failure.
+            return True
+
+    def _restart_unresponsive_host(self, reason: str) -> None:
         """Recover a hung Edge renderer without restarting the controller."""
-        self._last_host_restart_mono = time.monotonic()
-        self._log.warning("Native Edge WebView2 host stopped sending UI heartbeats; restarting it")
+        self._host_restart_times.append(time.monotonic())
+        self._heartbeat_suspect_mono = 0.0
+        self._log.warning("Native Edge WebView2 host %s; restarting it", reason)
         self._terminate_host_tree()
         self._host_process = None
         self._host_hwnd = 0
