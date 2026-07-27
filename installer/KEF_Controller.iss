@@ -16,8 +16,8 @@ DefaultDirName={autopf}\KEF Controller
 DisableDirPage=no
 DefaultGroupName=KEF Controller
 DisableProgramGroupPage=yes
-; Keep all release artifacts together under the repository's single dist folder.
-OutputDir=..\dist
+; Inno Setup packages are kept in the conventional installer/output folder.
+OutputDir=output
 OutputBaseFilename=KEF_Controller_Setup
 SetupIconFile=assets\setup-icon.ico
 Compression=lzma

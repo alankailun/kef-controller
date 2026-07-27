@@ -35,6 +35,6 @@ Release date: 2026-07-26
 
 - Added coverage for structured live log formatting and updated web UI source
   checks for the new structured log parser.
-- The final onedir executable and Inno Setup installer are emitted into the
-  repository's `dist/` folder; PyInstaller's temporary work files stay outside
-  the repository.
+- The final onedir executable is emitted into `dist/`, while the Inno Setup
+  installer is emitted into `installer/output/`; PyInstaller's temporary work
+  files stay outside the repository.
