@@ -36,6 +36,10 @@ class RuntimeLoggingSetupTests(unittest.TestCase):
 
                     log_text = Path(config.log_file).read_text(encoding="utf-8")
                     self.assertIn("queued logging smoke test", log_text)
+                    self.assertRegex(
+                        log_text,
+                        r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\[MainThread\]\[INFO\] queued logging smoke test",
+                    )
                     self.assertIn("queued logging smoke test", extra_handler.messages)
                 finally:
                     shutdown_logger(logger)

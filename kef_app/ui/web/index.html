@@ -7,7 +7,7 @@
   <style>
     :root {
       color-scheme: light dark;
-      --teal: #0d9488; --teal-ink: #0f766e; --teal-soft: #f0fdfa;
+      --teal: #0d9488; --teal-ink: #0f766e; --teal-soft: #f0fdfa; --teal-line: #99f6e4;
       --bg: #f3f3f3; --panel: #ffffff; --panel-flat: #fafafa; --panel-alt: #fcfcfc;
       --line: #e5e5e5; --line-soft: #f0f0f0; --line-faint: #f5f5f5;
       --ink: #1a1a1a; --muted: #616161; --faint: #8a8a8a; --ghost: #a0a0a0; --hair: #c4c4c4;
@@ -15,18 +15,18 @@
       --danger: #dc2626;
       --warn-bg: #fffbeb; --warn-line: #fde68a; --warn-ink: #92400e;
       --test: #6d28d9; --test-bg: #f5f3ff; --test-line: #ddd6fe;
-      --ok-bg: #f0fdfa; --ok-ink: #0f766e;
+      --ok-bg: #f0fdfa; --ok-ink: #0f766e; --ok-line: #99f6e4;
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --teal-soft: #10322e;
+        --teal-soft: #10322e; --teal-line: #246158;
         --bg: #202324; --panel: #2b2f30; --panel-flat: #272b2c; --panel-alt: #2e3233;
         --line: rgba(255,255,255,.12); --line-soft: rgba(255,255,255,.08); --line-faint: rgba(255,255,255,.05);
         --ink: #f1f4f3; --muted: #b7c0be; --faint: #93a09d; --ghost: #7d8a87; --hair: #5a6663;
         --btn-line: rgba(255,255,255,.22); --btn-line-soft: rgba(255,255,255,.14);
         --warn-bg: #372a10; --warn-line: #6b5518; --warn-ink: #fcd34d;
         --test: #c4b5fd; --test-bg: #2e2450; --test-line: #4c3d85;
-        --ok-bg: #123430; --ok-ink: #5eead4;
+        --ok-bg: #123430; --ok-ink: #5eead4; --ok-line: #246158;
       }
     }
     * { box-sizing: border-box; }
@@ -73,9 +73,15 @@
       display: flex; align-items: center; gap: 12px; padding: 13px 16px; margin-bottom: 14px;
       background: var(--panel-flat); border: 1px solid var(--line); border-radius: 10px;
     }
+    .connection-note {
+      display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 9px 12px;
+      color: var(--warn-ink); background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 8px; font-size: 12.5px;
+    }
+    .connection-note.hidden { display: none; }
     .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; background: #94a3b8; }
     .dot.on { background: #10b981; }
     .status-name { font-size: 14px; font-weight: 600; }
+    .status-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .status-sub { font-size: 12px; color: var(--faint); margin-top: 2px; }
     .power-switch {
       margin-left: auto; display: flex; align-items: center; gap: 7px; padding: 8px 16px; flex-shrink: 0;
@@ -89,7 +95,7 @@
       color: #475569; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 12.5px;
     }
     .standby-note.hidden { display: none; }
-    .setup-note { color: #0f766e; background: #f0fdfa; border-color: #99f6e4; }
+    .setup-note { color: var(--ok-ink); background: var(--ok-bg); border-color: var(--ok-line); }
     .setup-note button { margin-left: auto; white-space: nowrap; }
     @media (prefers-color-scheme: dark) {
       .standby-note { color: #cbd5e1; background: #27313b; border-color: #3b4754; }
@@ -150,6 +156,7 @@
 
     /* ── 输入源 ── */
     .input-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 10px; }
+    .input-btn:last-child:nth-child(3n + 1) { grid-column: 2; }
     .input-btn {
       display: flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 8px;
       border: 1px solid var(--btn-line-soft); background: var(--panel); border-radius: 8px; font-size: 13px;
@@ -182,11 +189,12 @@
     }
     .ghost-btn:hover { border-color: var(--faint); }
     .search-box {
-      display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin-bottom: 8px;
+      position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin-bottom: 8px;
       border: 1px solid var(--btn-line); background: var(--panel); border-radius: 7px; color: var(--faint);
     }
     .search-box:focus-within { border-color: var(--teal); }
     .search-box input { flex: 1; border: 0; outline: none; font-size: 13.5px; background: transparent; color: var(--ink); }
+    .search-box input[type="search"]::-webkit-search-cancel-button { display: none; }
     .log-toolbar { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
     .severity-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .severity-hint { font-size: 12px; color: var(--faint); }
@@ -197,14 +205,22 @@
     }
     .severity-btn:hover:not(:disabled) { border-color: var(--teal); color: var(--ink); }
     .severity-btn:disabled { opacity: .38; cursor: default; }
-    .severity-btn.active.ERROR { color: #fca5a5; border-color: #7f1d1d; background: #450a0a; }
-    .severity-btn.active.WARN  { color: #fcd34d; border-color: #78350f; background: #451a03; }
-    .severity-btn.active.EVENT { color: #c4b5fd; border-color: #4c1d95; background: #2e1065; }
-    .severity-btn.active.STATE { color: #67e8f9; border-color: #155e75; background: #083344; }
-    .severity-btn.active.STEP  { color: #86efac; border-color: #14532d; background: #052e16; }
-    .severity-btn.active.INFO  { color: #cbd5e1; border-color: #334155; background: #1e293b; }
+    .severity-btn.active.ERROR { color: #991b1b; border-color: #fecaca; background: #fef2f2; }
+    .severity-btn.active.WARN  { color: #92400e; border-color: #fde68a; background: #fffbeb; }
+    .severity-btn.active.EVENT { color: #5b21b6; border-color: #ddd6fe; background: #f5f3ff; }
+    .severity-btn.active.STATE { color: #155e75; border-color: #a5f3fc; background: #ecfeff; }
+    .severity-btn.active.STEP  { color: #166534; border-color: #bbf7d0; background: #f0fdf4; }
+    .severity-btn.active.INFO  { color: #334155; border-color: #cbd5e1; background: #f8fafc; }
+    @media (prefers-color-scheme: dark) {
+      .severity-btn.active.ERROR { color: #fca5a5; border-color: #7f1d1d; background: #450a0a; }
+      .severity-btn.active.WARN  { color: #fcd34d; border-color: #78350f; background: #451a03; }
+      .severity-btn.active.EVENT { color: #c4b5fd; border-color: #4c1d95; background: #2e1065; }
+      .severity-btn.active.STATE { color: #67e8f9; border-color: #155e75; background: #083344; }
+      .severity-btn.active.STEP  { color: #86efac; border-color: #14532d; background: #052e16; }
+      .severity-btn.active.INFO  { color: #cbd5e1; border-color: #334155; background: #1e293b; }
+    }
     .log-box {
-      background: #0f172a; border-radius: 10px; padding: 12px; height: calc(100vh - 286px); min-height: 320px;
+      background: #0f172a; border-radius: 10px; padding: 12px; flex: 1; min-height: 0;
       overflow-y: auto; font: 12px/1.65 ui-monospace, "Cascadia Mono", Consolas, monospace;
       overscroll-behavior: contain; scrollbar-color: #475569 transparent;
     }
@@ -329,7 +345,6 @@
     .dlg-foot { display: flex; justify-content: flex-end; margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line-soft); }
 
     /* ── 日志辅助控件 ── */
-    .search-box { position: relative; }
     .search-clear {
       border: 0; background: transparent; color: var(--faint); display: none;
       width: 22px; height: 22px; border-radius: 5px; padding: 0; flex-shrink: 0;
@@ -339,7 +354,9 @@
     .search-clear:hover { background: rgba(127,127,127,.14); color: var(--ink); }
     .lvl-link { border: 0; background: transparent; color: var(--teal); font-size: 12px; font-weight: 600; padding: 4px 6px; }
     .lvl-link:hover { text-decoration: underline; }
-    .log-wrap { position: relative; }
+    .log-page:not(.hidden) { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+    .log-page .page-head, .log-page .log-toolbar, .log-page .log-foot { flex: 0 0 auto; }
+    .log-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
     .to-bottom {
       position: absolute; right: 14px; bottom: 12px; display: none; align-items: center; gap: 5px;
       padding: 6px 12px; border: 1px solid #334155; background: #1e293b; color: #cbd5e1;
@@ -479,14 +496,24 @@
       nav { width: 132px; }
       .page { width: 100%; padding: 22px 24px 32px; }
       .input-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .input-btn:last-child:nth-child(3n + 1) { grid-column: auto; }
+      .input-btn:last-child:nth-child(odd) { grid-column: 1 / -1; }
       .matrix { overflow-x: auto; }
       .mx-head, .mx-row { min-width: 650px; }
     }
-    @media (max-height: 700px) {
-      .log-box { height: calc(100vh - 260px); min-height: 280px; }
-    }
-
     .boot-error { padding: 40px; color: var(--muted); }
+    .boot-skeleton { display: flex; flex-direction: column; gap: 14px; }
+    .boot-status, .boot-card { border: 1px solid var(--line); border-radius: 10px; background: var(--panel-flat); }
+    .boot-status { height: 68px; }
+    .boot-card { height: 146px; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+      }
+    }
   </style>
 </head>
 <body>
@@ -497,9 +524,11 @@
       <div class="nav-spacer"></div>
       <button class="nav-btn" data-nav="settings"></button>
     </nav>
-    <main id="main"></main>
+    <main id="main" aria-busy="true">
+      <div class="page boot-skeleton" aria-hidden="true"><div class="boot-status"></div><div class="boot-card"></div><div class="boot-card"></div></div>
+    </main>
   </div>
-  <div id="toasts" class="toast-area"></div>
+  <div id="toasts" class="toast-area" aria-live="polite" aria-atomic="false"></div>
 
   <script>
   "use strict";
@@ -541,7 +570,7 @@
     table_foot: ["点击列标题可整列开关。改动即时生效。", "Click a column header to toggle the whole column. Changes save instantly."], table_foot_test: ["模拟会真实控制扬声器，当前状态见主页。", "Simulations control the real speaker; see current state on Home."],
     windows_startup: ["Windows 启动", "Windows Startup"], start_on_login: ["登录时自动运行", "Run when I sign in"], start_on_login_desc: ["关闭后会同时移除任务计划和注册表项；再次开启时默认使用无需管理员权限的注册表 Run", "Turning this off removes both entries; enabling it again defaults to Registry Run, which needs no administrator permission"], startup_method: ["注册方式", "Registration method"], startup_task: ["任务计划程序", "Task Scheduler"], startup_registry: ["注册表 Run", "Registry Run"], startup_task_desc: ["任务计划程序会在登录时启动。首次创建或清理旧任务时可能需要管理员批准。", "Runs at sign-in through Task Scheduler. Creating or cleaning up a task may need administrator approval."], startup_registry_desc: ["最简单的当前用户开机自启方式，不需要额外权限。", "The simplest per-user startup method; no additional permission is needed."], startup_active: ["已生效 · $", "Active · $"], startup_inactive: ["未注册开机自启", "Not registered to run at startup"], startup_applying: ["正在应用 · $", "Applying · $"], startup_disabling: ["正在关闭开机启动…", "Disabling startup…"],
     dlg_sub: ["选择这个 App 要控制的 KEF 扬声器。", "Choose the KEF speaker this app should control."], scanning: ["正在扫描局域网…", "Scanning your network…"], checked_devices: ["已检查 $ 台设备", "checked $ devices"], scan_complete: ["扫描完成，找到 $ 台。", "Scan complete, found $."], current_included: ["已包含你当前的扬声器。", "Your current speaker is included."], rescan: ["重新扫描", "Rescan"], no_speaker: ["没有扫描到扬声器", "No speakers found"], manual_link: ["没找到？手动输入 IP 地址", "Not listed? Enter an IP manually"], manual_entry: ["手动指定", "Manual entry"], ip_placeholder: ["IP 地址，如 10.0.0.222", "IP address, e.g. 10.0.0.222"], mac_placeholder: ["MAC（可选）", "MAC (optional)"], cancel: ["取消", "Cancel"], apply: ["应用", "Apply"], close: ["关闭", "Close"], in_use: ["使用中", "In use"], select: ["选择", "Select"], scan_failed: ["扫描请求失败，请重试。", "Scan request failed. Please retry."],
-    volume_updated: ["音量 $", "Volume $"], muted: ["已静音", "Muted"], input_changed: ["已切换到 $", "Switched to $"], settings_saved: ["设置已保存", "Settings saved"], controller_error: ["控制器错误", "Controller error"], request_failed: ["请求失败。", "Request failed."], controller_unavailable: ["控制器不可用", "Controller unavailable"], controller_unavailable_desc: ["本地控制接口未能启动，请重启应用。", "The local control interface could not start. Please restart the app."],
+    volume_updated: ["音量 $", "Volume $"], muted: ["已静音", "Muted"], input_changed: ["已切换到 $", "Switched to $"], settings_saved: ["设置已保存", "Settings saved"], controller_error: ["控制器错误", "Controller error"], request_failed: ["请求失败。", "Request failed."], controller_unavailable: ["控制器不可用", "Controller unavailable"], controller_unavailable_desc: ["本地控制接口未能启动，请重启应用。", "The local control interface could not start. Please restart the app."], controller_reconnecting: ["与控制器失去连接，正在重连…", "Connection to the controller was lost. Reconnecting…"],
   };
   let uiLanguage = "zh";
   const t = (key, ...args) => {
@@ -667,7 +696,7 @@
     [/^No action was scheduled( ·.*)?$/, "未调度任何动作$1"],
     [/^Waiting for the controller to respond…$/, "等待控制器响应…"],
   ];
-  const zhTitle = t => TOAST_ZH[t] || t;
+  const zhTitle = title => TOAST_ZH[title] || title;
   const zhDetail = d => {
     let out = String(d || "");
     for (const [re, rep] of DETAIL_ZH) if (re.test(out)) { out = out.replace(re, rep); break; }
@@ -714,12 +743,12 @@
   // ═════════════════════════════════════════════════════════
   let state = null, lastStateJson = "";
   let page = "home";
-  let muted = false, lastAudible = 40, volumeTimer = null, editingVol = false, draggingVol = false;
+  let muted = false, lastAudible = 40, volumeTimer = null, editingVol = false, draggingVol = false, activeVolumePointer = null, lastMuteIcon = null;
   let volumeHoldUntil = 0; // 用户刚改过音量时，短暂忽略远端快照，避免被旧值覆盖
   let powerPending = false, powerPendingTarget = null, powerPendingStage = "", powerPendingTimer = null;
   let infoOpen = false;
   let testMode = false, runningTest = null;
-  let dlg = null; // 选择扬声器弹窗：{ phase: "scanning"|"done", found: [], checked: 0, failed: "" }
+  let dlg = null, dialogReturnFocus = null; // 选择扬声器弹窗：{ phase: "scanning"|"done", found: [], checked: 0, failed: "" }
   let inputHoldUntil = 0, localInput = null; // 与音量同理：刚点过的输入源短暂优先于远端快照
   let logItems = [], logQuery = "", logSearchTimer = null, logFiles = [], selectedLogFile = "";
   let pendingLogItems = [], logFlushFrame = 0;
@@ -795,13 +824,14 @@
       }
       el = document.createElement("div");
       el.dataset.channel = channel;
-      el.innerHTML = `<span class="toast-icon"></span><div class="toast-body"><b></b><small></small></div><button class="toast-close" title="${t("close")}">×</button>`;
+      el.innerHTML = `<span class="toast-icon"></span><div class="toast-body"><b></b><small></small></div><button class="toast-close" title="${t("close")}" aria-label="${t("close")}">${icon("x", 13)}</button>`;
       el.querySelector(".toast-close").addEventListener("click", () => dismissToast(channel));
       area.append(el);
       toastNodes.set(channel, el);
     }
     const kind = visualKind || toastKind(level, title, detail, channel);
     el.className = `toast ${level || "info"} kind-${kind}`;
+    el.setAttribute("role", level === "error" ? "alert" : "status");
     $(".toast-icon", el).innerHTML = icon(toastIcon(kind), 17);
     $("b", el).textContent = localTitle(title);
     const small = $("small", el);
@@ -828,9 +858,10 @@
       const [ic, label] = navMeta[btn.dataset.nav];
       btn.innerHTML = `${icon(ic, 17)}<span>${label}</span>`;
     }
+    $("#main").removeAttribute("aria-busy");
     $("#main").innerHTML = `
       <div id="page-home" class="page">${homeSkeleton()}</div>
-      <div id="page-log" class="page hidden">${logSkeleton()}</div>
+      <div id="page-log" class="page log-page hidden">${logSkeleton()}</div>
       <div id="page-settings" class="page hidden">${settingsSkeleton()}</div>`;
     bindHome();
     bindLog();
@@ -842,6 +873,7 @@
     const inputs = [...(state.inputs || [])]
       .sort((a, b) => INPUT_ORDER.indexOf(a.value) - INPUT_ORDER.indexOf(b.value));
     return `
+      <div id="connection-note" class="connection-note hidden" role="status">${icon("alert", 15)}<span>${t("controller_reconnecting")}</span></div>
       <div class="status-bar">
         <span id="dot" class="dot"></span>
         <div style="min-width:0">
@@ -857,14 +889,14 @@
       <section id="vol-card" class="card">
         <div class="vol-head">
           <span class="card-label">${t("volume")}</span>
-          <button id="vol-display" class="vol-display" title="${t("direct_volume")}">—</button>
+          <button id="vol-display" class="vol-display" title="${t("direct_volume")}" aria-label="${t("direct_volume")}">—</button>
           <input id="vol-edit" class="vol-edit" style="display:none" inputmode="numeric">
         </div>
         <div class="vol-row">
           <button id="mute-btn" class="vol-icon-btn" title="${t("mute")}">${icon("volume", 19)}</button>
           <button id="vol-down" class="nudge-btn" title="${t("volume_down")}">${icon("minus", 15)}</button>
           <div class="slider-wrap">
-            <input id="vol-slider" class="slider" type="range" min="0" max="100" step="1" value="0">
+            <input id="vol-slider" class="slider" type="range" min="0" max="100" step="1" value="0" aria-label="${t("volume")}">
             <div class="ticks"><span>0</span><span>25</span><span>50</span><span>75</span><span>100</span></div>
           </div>
           <button id="vol-up" class="nudge-btn" title="${t("volume_up")}">${icon("plus", 15)}</button>
@@ -910,8 +942,18 @@
     });
 
     const slider = $("#vol-slider");
-    slider.addEventListener("pointerdown", () => { draggingVol = true; });
-    slider.addEventListener("pointerup", () => { draggingVol = false; });
+    slider.addEventListener("pointerdown", e => {
+      draggingVol = true;
+      activeVolumePointer = e.pointerId;
+      if (slider.setPointerCapture) slider.setPointerCapture(e.pointerId);
+    });
+    const finishDragging = e => finishVolumeDrag(e.pointerId);
+    slider.addEventListener("pointerup", finishDragging);
+    slider.addEventListener("pointercancel", finishDragging);
+    slider.addEventListener("lostpointercapture", finishDragging);
+    window.addEventListener("pointerup", finishDragging);
+    window.addEventListener("pointercancel", finishDragging);
+    window.addEventListener("blur", () => finishVolumeDrag());
     slider.addEventListener("input", () => {
       muted = false;
       previewVolume(+slider.value);
@@ -935,6 +977,7 @@
     });
     const commitVol = () => {
       if (!editingVol) return;
+      if (!state?.speaker?.on) { cancelVolumeEdit(); return; }
       editingVol = false;
       const edit = $("#vol-edit");
       const n = Math.max(0, Math.min(100, parseInt(edit.value, 10) || 0));
@@ -947,7 +990,7 @@
     $("#vol-edit").addEventListener("blur", commitVol);
     $("#vol-edit").addEventListener("keydown", e => {
       if (e.key === "Enter") commitVol();
-      if (e.key === "Escape") { editingVol = false; $("#vol-edit").style.display = "none"; $("#vol-display").style.display = ""; }
+      if (e.key === "Escape") cancelVolumeEdit();
     });
     $("#vol-edit").addEventListener("input", e => {
       e.target.value = e.target.value.replace(/\D/g, "").slice(0, 3);
@@ -974,6 +1017,17 @@
     });
   }
 
+  function finishVolumeDrag(pointerId = null) {
+    if (pointerId != null && activeVolumePointer != null && pointerId !== activeVolumePointer) return;
+    draggingVol = false;
+    activeVolumePointer = null;
+  }
+  function cancelVolumeEdit() {
+    editingVol = false;
+    const edit = $("#vol-edit"), display = $("#vol-display");
+    if (edit) edit.style.display = "none";
+    if (display) display.style.display = "";
+  }
   const currentVolume = () => {
     const slider = $("#vol-slider");
     return slider ? +slider.value : Number(state?.speaker?.volume || 0);
@@ -984,9 +1038,14 @@
     slider.value = value;
     slider.style.setProperty("--volume", `${value}%`);
     $("#vol-display").textContent = String(value);
-    $("#mute-btn").innerHTML = icon(value <= 0 ? "volumeX" : "volume", 19);
-    $("#mute-btn").title = value <= 0 ? t("unmute") : t("mute");
-    $("#mute-btn").querySelector("svg").style.color = value <= 0 ? "var(--danger)" : "";
+    const mute = $("#mute-btn");
+    const muteIcon = value <= 0 ? "volumeX" : "volume";
+    if (lastMuteIcon !== muteIcon) {
+      mute.innerHTML = icon(muteIcon, 19);
+      lastMuteIcon = muteIcon;
+      mute.querySelector("svg").style.color = value <= 0 ? "var(--danger)" : "";
+    }
+    mute.title = value <= 0 ? t("unmute") : t("mute");
     $("#mute-note").classList.toggle("hidden", !(muted && value <= 0));
     if (value > 0) lastAudible = value;
     return value;
@@ -1054,6 +1113,10 @@
     $("#setup-note").classList.toggle("hidden", configured);
     $("#standby-note").classList.toggle("hidden", !configured || on || powerPendingTarget === true);
 
+    if (!on) {
+      finishVolumeDrag();
+      cancelVolumeEdit();
+    }
     if (!editingVol && !draggingVol && s.volume != null && Date.now() > volumeHoldUntil) {
       if (muted && Number(s.volume) > 0) muted = false;
       paintVolume(s.volume);
@@ -1169,30 +1232,14 @@
 
   function parseLog(line) {
     const raw = String(line || "");
-    const full = raw.match(/^\[([^\]]+)\]\[([^\]]+)\]\s*(.*)$/);
-    const short = full ? null : raw.match(/^\[([^\]]+)\]\s*(.*)$/);
-    const stamp = full ? full[1] : (short ? short[1] : "");
-    const source = full ? full[2] : "";
-    const original = full ? full[3] : (short ? short[2] : raw);
-    const upper = original.toUpperCase();
-    let lvl = "INFO";
-    const isPrewarmRetry = /\bACTION=PREWARMED_STANDBY_SOCKET\b/.test(upper)
-      && /\bSTEP=KEEPALIVE\b/.test(upper)
-      && /\bSTATUS=FAILED\b/.test(upper)
-      && /\bFAILURES=\d+\b/.test(upper);
-    // PROCESS_* lifecycle records are emitted by the backend at INFO level.
-    // Their optional parent-process diagnostic may contain "failed" (for
-    // example, when a short-lived launcher can no longer be inspected), which
-    // must not turn a normal startup record into a red error in the UI.
-    const isProcessLifecycle = /^PROCESS_(?:START|EXIT|CONTEXT|COMMAND_LINE|ARGV)\b/.test(upper);
-    if (isProcessLifecycle) lvl = "INFO";
-    else if (isPrewarmRetry) lvl = "WARN";
-    else if (/\b(ERROR|EXCEPTION|TRACEBACK|FAILED|FAILURE)\b/.test(upper)) lvl = "ERROR";
-    else if (/\b(WARN|WARNING)\b|COULD NOT|IS DISABLED/.test(upper)) lvl = "WARN";
-    else if (/\bEVENT\b|\bKIND=/.test(upper)) lvl = "EVENT";
-    else if (/\bSTATE\b|\bDESIRED=/.test(upper)) lvl = "STATE";
-    else if (/\bSTEP\b|\bSTEP=/.test(upper)) lvl = "STEP";
-    const message = original.replace(/^\s*(ERROR|WARN(?:ING)?|EVENT|STATE|STEP|INFO)\s*[:|-]?\s*/i, "");
+    const structured = raw.match(/^\[([^\]]+)\]\[([^\]]+)\]\[([A-Z]+)\]\s*(.*)$/i);
+    if (!structured) return null;
+    const stamp = structured[1];
+    const source = structured[2];
+    const original = structured[4];
+    const normalizedLevel = { WARNING: "WARN", CRITICAL: "ERROR", FATAL: "ERROR", DEBUG: "INFO" }[(structured?.[3] || "").toUpperCase()];
+    const lvl = normalizedLevel || (SEVERITY.includes(structured[3].toUpperCase()) ? structured[3].toUpperCase() : "INFO");
+    const message = original;
     return { raw, time: stamp.includes(" ") ? stamp.split(" ").pop() : stamp, source, message, lvl };
   }
 
@@ -1260,7 +1307,9 @@
 
   function appendLogLine(line) {
     if (selectedLogFile) return;
-    pendingLogItems.push(parseLog(line));
+    const item = parseLog(line);
+    if (!item) return;
+    pendingLogItems.push(item);
     if (!logFlushFrame) logFlushFrame = requestAnimationFrame(flushLogLines);
   }
 
@@ -1286,7 +1335,7 @@
 
   function loadLogs() {
     bridge.logs(selectedLogFile).then(lines => {
-      logItems = (lines || []).map(parseLog);
+      logItems = (lines || []).map(parseLog).filter(Boolean);
       renderLogList({ stickBottom: true });
     }).catch(() => {});
   }
@@ -1403,13 +1452,13 @@
             ${["wake", "standby"].map(col => `
               <div class="td-cell">
                 ${row[col]
-                  ? `<button class="check" data-rule="${row[col]}" data-checkcol="${col}" role="checkbox">${icon("check", 14)}</button>`
+                  ? `<button class="check" data-rule="${row[col]}" data-checkcol="${col}" role="checkbox" aria-checked="false" aria-label="${esc(`${localized(row.label)} · ${t(col)}`)}">${icon("check", 14)}</button>`
                   : `<span class="na" title="${t("not_applicable")}">${icon("minus", 13)}</span>`}
               </div>`).join("")}
             <div class="td-test">
-              ${row.tests.map(t => `
-                <button class="test-btn" data-test="${t.key}" data-testcol="${t.col === "wake" ? row.wake : row.standby}">
-                  ${icon("play", 11)}<span>${localized(t.label)}</span>
+              ${row.tests.map(test => `
+                <button class="test-btn" data-test="${test.key}" data-testcol="${test.col === "wake" ? row.wake : row.standby}">
+                  ${icon("play", 11)}<span>${localized(test.label)}</span>
                 </button>`).join("") || `<span class="na">${icon("minus", 13)}</span>`}
             </div>
           </div>
@@ -1541,6 +1590,8 @@
 
   function openSpeakerDialog() {
     dlg = { phase: "scanning", found: [], checked: 0, failed: "" };
+    dialogReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    $(".shell").inert = true;
     const el = document.createElement("div");
     el.className = "dlg-backdrop";
     el.id = "dlg-backdrop";
@@ -1549,7 +1600,7 @@
         <div class="dlg-head">
           <div class="dlg-head-icon">${icon("optical", 15)}</div>
           <span class="dlg-title">${t("select_speaker")}</span>
-          <button class="dlg-x" data-dlg="close" title="${t("close")}">${icon("x", 15)}</button>
+          <button class="dlg-x" data-dlg="close" title="${t("close")}" aria-label="${t("close")}">${icon("x", 15)}</button>
         </div>
         <p class="dlg-sub">${t("dlg_sub")}</p>
         <div id="dlg-scan-bar" class="scan-bar"></div>
@@ -1569,6 +1620,17 @@
         <div class="dlg-foot"><button class="ghost-btn" data-dlg="close">${t("close")}</button></div>
       </div>`;
     document.body.append(el);
+    const dialog = $(".dlg", el);
+    const focusable = () => $$("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex=\"-1\"])", dialog)
+      .filter(node => node.getClientRects().length);
+    el.addEventListener("keydown", e => {
+      if (e.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) { e.preventDefault(); return; }
+      const first = items[0], last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
 
     el.addEventListener("click", e => {
       if (e.target === el || e.target.closest("[data-dlg=close]")) { closeSpeakerDialog(); return; }
@@ -1599,6 +1661,7 @@
       closeSpeakerDialog();
     });
 
+    $(".dlg-x", el).focus();
     startDialogScan();
   }
 
@@ -1606,6 +1669,10 @@
     dlg = null;
     const el = $("#dlg-backdrop");
     if (el) el.remove();
+    $(".shell").inert = false;
+    const returnFocus = dialogReturnFocus;
+    dialogReturnFocus = null;
+    if (returnFocus && document.contains(returnFocus) && !returnFocus.disabled) returnFocus.focus();
   }
 
   function startDialogScan() {
@@ -1709,7 +1776,11 @@
       btn.title = on ? t("run_once") : t("rule_disabled_simulation");
       btn.disabled = !!runningTest;
       const running = runningTest === btn.dataset.test;
-      btn.firstElementChild.outerHTML = running ? icon("loader", 11, "spin") : icon("play", 11);
+      const iconState = running ? "running" : "idle";
+      if (btn.dataset.iconState !== iconState) {
+        btn.firstElementChild.outerHTML = running ? icon("loader", 11, "spin") : icon("play", 11);
+        btn.dataset.iconState = iconState;
+      }
     }
 
     $("#screen-warn").classList.toggle("hidden",
@@ -1750,12 +1821,12 @@
   // 模拟事件结果 → 行内结果条
   function showEventResult(msg) {
     if (msg.state !== "running" && runningTest === msg.key) runningTest = null;
-    const row = EVENT_ROWS.find(r => r.tests.some(t => t.key === msg.key));
+    const row = EVENT_ROWS.find(r => r.tests.some(test => test.key === msg.key));
     syncSettings();
     if (!row) return;
     const box = $(`[data-result="${row.id}"]`);
     if (!box) return;
-    const test = row.tests.find(t => t.key === msg.key);
+    const test = row.tests.find(test => test.key === msg.key);
     const iconName = { success: "check", warning: "alert", error: "alert", running: "loader" }[msg.state] || "check";
     box.className = `mx-result show ${esc(msg.state)}`;
     box.innerHTML = `
@@ -1763,7 +1834,7 @@
       <div style="min-width:0">
         <div><strong>${esc(test ? localized(test.label) : msg.key)}</strong> · ${esc(localTitle(msg.title))} · ${esc(localDetail(msg.detail || ""))}</div>
       </div>
-      <button class="close">✕</button>`;
+      <button class="close" title="${t("close")}" aria-label="${t("close")}">${icon("x", 13)}</button>`;
   }
 
   // ═════════════════════════════════════════════════════════
@@ -1844,14 +1915,22 @@
     if (btn) setPage(btn.dataset.nav);
   });
 
-  let updateCursor = 0, polling = false, updateAbort = null, updateRetryTimer = null;
+  let updateCursor = 0, polling = false, updateAbort = null, updateRetryTimer = null, updateFailures = 0;
+  function setControllerConnectionLost(lost) {
+    const note = $("#connection-note");
+    if (note) note.classList.toggle("hidden", !lost);
+  }
   async function pollUpdates() {
     if (polling || document.hidden) return;
     polling = true;
     const controller = new AbortController();
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 20000);
     updateAbort = controller;
     try {
       const batch = await bridge.updates(updateCursor, controller.signal);
+      updateFailures = 0;
+      setControllerConnectionLost(false);
       updateCursor = batch.cursor;
       // A state is a snapshot, so applying every historical one is redundant.
       // Coalesce a batch to its latest state, while preserving all new logs and
@@ -1868,11 +1947,16 @@
       for (const payload of messages) handleToast(JSON.parse(payload));
       for (const line of lines) appendLogLine(line);
     } catch (error) {
-      if (error.name !== "AbortError") updateRetryTimer = setTimeout(() => {
-        updateRetryTimer = null;
-        pollUpdates();
-      }, 1000);
+      if (error.name !== "AbortError" || timedOut) {
+        updateFailures += 1;
+        if (updateFailures >= 3) setControllerConnectionLost(true);
+        updateRetryTimer = setTimeout(() => {
+          updateRetryTimer = null;
+          pollUpdates();
+        }, 1000);
+      }
     } finally {
+      clearTimeout(timeout);
       if (updateAbort === controller) updateAbort = null;
       polling = false;
       if (!document.hidden && !updateRetryTimer) pollUpdates();

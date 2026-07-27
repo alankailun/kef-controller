@@ -24,7 +24,14 @@ class UILogHandler(logging.Handler):
         self.emitter = _Emitter()
         self._history_lock = threading.Lock()
         self._recent_lines: deque[str] = deque(maxlen=400)
-        self.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", datefmt="%H:%M:%S"))
+        # Keep the live UI stream byte-for-byte compatible with the file log.
+        # This lets the history merger recognize its overlap and gives the web
+        # renderer an authoritative severity token instead of guessing it from
+        # message text.
+        self.setFormatter(logging.Formatter(
+            "[%(asctime)s][%(threadName)s][%(levelname)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
 
     def emit(self, record: logging.LogRecord) -> None:
         try:

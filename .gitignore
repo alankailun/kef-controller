@@ -5,6 +5,8 @@ __pycache__/
 # PyInstaller onedir output: launcher plus the runtime payload directory.
 dist/
 build/
+dist_*/
+build_*/
 output/
 *.egg-info/
 .idea/

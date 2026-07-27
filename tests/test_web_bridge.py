@@ -27,13 +27,12 @@ class WebBridgeTests(unittest.TestCase):
         self.assertIn("let latestState = null;", html)
         self.assertIn('else if (page === "settings") syncSettings();', html)
 
-    def test_process_lifecycle_diagnostics_remain_info(self) -> None:
+    def test_web_ui_uses_structured_log_levels_without_keyword_guessing(self) -> None:
         html = (Path(__file__).parents[1] / "kef_app" / "ui" / "web" / "index.html").read_text(encoding="utf-8")
-        lifecycle_rule = 'const isProcessLifecycle = /^PROCESS_(?:START|EXIT|CONTEXT|COMMAND_LINE|ARGV)\\b/.test(upper);'
-        generic_failure_rule = 'else if (/\\b(ERROR|EXCEPTION|TRACEBACK|FAILED|FAILURE)\\b/.test(upper)) lvl = "ERROR";'
-        self.assertIn(lifecycle_rule, html)
-        self.assertIn(generic_failure_rule, html)
-        self.assertLess(html.index(lifecycle_rule), html.index(generic_failure_rule))
+        self.assertIn('const structured = raw.match(/^\\[([^\\]]+)\\]\\[([^\\]]+)\\]\\[([A-Z]+)\\]\\s*(.*)$/i);', html)
+        self.assertIn('if (!structured) return null;', html)
+        self.assertNotIn('const isProcessLifecycle =', html)
+        self.assertNotIn('const isPrewarmRetry =', html)
 
     def test_startup_update_is_scheduled_without_blocking_the_ui_thread(self) -> None:
         bridge = WebControllerBridge.__new__(WebControllerBridge)

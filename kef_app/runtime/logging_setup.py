@@ -40,7 +40,7 @@ def build_logger(config: AppConfig, *, extra_handlers: Iterable[logging.Handler]
     os.makedirs(config.log_dir, exist_ok=True)
 
     file_formatter = logging.Formatter(
-        fmt="[%(asctime)s][%(threadName)s] %(message)s",
+        fmt="[%(asctime)s][%(threadName)s][%(levelname)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
@@ -66,7 +66,7 @@ def build_logger(config: AppConfig, *, extra_handlers: Iterable[logging.Handler]
     # avoid AttributeError on every log call under the GUI entry point.
     if sys.stderr is not None:
         console_formatter = logging.Formatter(
-            fmt="[%(asctime)s][%(threadName)s] %(message)s",
+            fmt="[%(asctime)s][%(threadName)s][%(levelname)s] %(message)s",
             datefmt="%H:%M:%S",
         )
         console_handler = logging.StreamHandler()
