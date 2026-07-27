@@ -15,6 +15,13 @@ if TYPE_CHECKING:
     from .web_bridge import WebControllerBridge
 
 
+_STATIC_CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+}
+
+
 class WebApiServer:
     """Serve the bundled web UI and a loopback-only bridge for QtWebView."""
 
@@ -87,7 +94,11 @@ class WebApiServer:
             self._last_client_activity_mono = time.monotonic()
 
     def _updates_since(self, cursor: int, timeout_s: float = 15.0) -> dict[str, object]:
-        """Wait briefly for UI updates instead of forcing a 400 ms request loop."""
+        """Wait briefly for UI updates instead of forcing a 400 ms request loop.
+
+        Keep this shorter than the browser's 20-second UPDATE_REQUEST_TIMEOUT_MS
+        in ``index.html`` so a quiet but healthy connection is never aborted.
+        """
         with self._events_condition:
             self._events_condition.wait_for(
                 lambda: self._stopping or self._next_event_id - 1 > cursor,
@@ -122,9 +133,12 @@ class WebApiServer:
             self._send_error(handler, HTTPStatus.NOT_FOUND, "Not found")
             return
         content = candidate.read_bytes()
-        content_type, _encoding = mimetypes.guess_type(str(candidate))
+        content_type = _STATIC_CONTENT_TYPES.get(candidate.suffix.lower())
+        if content_type is None:
+            guessed_type, _encoding = mimetypes.guess_type(str(candidate))
+            content_type = guessed_type or "application/octet-stream"
         handler.send_response(HTTPStatus.OK)
-        handler.send_header("Content-Type", content_type or "application/octet-stream")
+        handler.send_header("Content-Type", content_type)
         handler.send_header("Content-Length", str(len(content)))
         handler.end_headers()
         handler.wfile.write(content)

@@ -13,6 +13,9 @@ Release date: 2026-07-26
 - Log records now include an authoritative Python log level in both disk and
   live UI streams. The UI no longer classifies messages by scanning their text
   for words such as `failed` or `could not`.
+- Historical log files remain visible. Their severity defaults to INFO, while
+  their leading lifecycle token still supplies the STEP, EVENT, or STATE
+  category without scanning arbitrary fields such as `error=`.
 
 ## Accessibility and UI
 
@@ -22,6 +25,9 @@ Release date: 2026-07-26
   theme tokens, long speaker-name truncation, and search clear-button handling.
 - Added a launch skeleton and reduced unnecessary icon DOM replacement while
   changing volume or viewing simulated event settings.
+- Moved stylesheet and localization data into independent static assets, with
+  fixed HTML/CSS/JavaScript MIME types so Windows registry associations cannot
+  prevent the UI from loading.
 
 ## Verification
 

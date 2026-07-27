@@ -2,13 +2,34 @@ from __future__ import annotations
 
 import threading
 import time
+import tempfile
 import unittest
 from pathlib import Path
+from urllib.request import urlopen
 
-from kef_app.ui.web_api_server import WebApiServer
+from kef_app.ui.web_api_server import WebApiServer, _STATIC_CONTENT_TYPES
 
 
 class WebApiServerTests(unittest.TestCase):
+    def test_static_web_asset_types_do_not_depend_on_windows_registry_associations(self) -> None:
+        self.assertEqual(_STATIC_CONTENT_TYPES[".html"], "text/html; charset=utf-8")
+        self.assertEqual(_STATIC_CONTENT_TYPES[".css"], "text/css; charset=utf-8")
+        self.assertEqual(_STATIC_CONTENT_TYPES[".js"], "text/javascript; charset=utf-8")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "styles.css").write_text("body {}", encoding="utf-8")
+            (root / "texts.js").write_text("const text = {};", encoding="utf-8")
+            server = WebApiServer(root, object())
+            server.start()
+            try:
+                with urlopen(f"{server.url}styles.css") as response:
+                    self.assertEqual(response.headers.get_content_type(), "text/css")
+                with urlopen(f"{server.url}texts.js") as response:
+                    self.assertEqual(response.headers.get_content_type(), "text/javascript")
+            finally:
+                server.stop()
+
     def test_bootstrap_uses_current_state_without_replaying_old_events(self) -> None:
         bridge = type("Bridge", (), {"invoke_api": lambda _self, method, args: {"method": method, "args": args}})()
         server = WebApiServer(Path("."), bridge)

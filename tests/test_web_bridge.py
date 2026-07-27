@@ -27,10 +27,21 @@ class WebBridgeTests(unittest.TestCase):
         self.assertIn("let latestState = null;", html)
         self.assertIn('else if (page === "settings") syncSettings();', html)
 
-    def test_web_ui_uses_structured_log_levels_without_keyword_guessing(self) -> None:
+    def test_web_ui_loads_static_styles_and_localization_data_before_app_logic(self) -> None:
+        web_root = Path(__file__).parents[1] / "kef_app" / "ui" / "web"
+        html = (web_root / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('<link rel="stylesheet" href="styles.css">', html)
+        self.assertIn('<script src="texts.js"></script>', html)
+        self.assertNotIn("<style>", html)
+        self.assertIn("const TEXT = {", (web_root / "texts.js").read_text(encoding="utf-8"))
+
+    def test_web_ui_uses_authoritative_severity_and_lifecycle_token_categories(self) -> None:
         html = (Path(__file__).parents[1] / "kef_app" / "ui" / "web" / "index.html").read_text(encoding="utf-8")
-        self.assertIn('const structured = raw.match(/^\\[([^\\]]+)\\]\\[([^\\]]+)\\]\\[([A-Z]+)\\]\\s*(.*)$/i);', html)
-        self.assertIn('if (!structured) return null;', html)
+        self.assertIn('const structured = raw.match(/^\\[([^\\]]+)\\]\\[([^\\]]+)\\]\\[([A-Z]+)\\]\\s*(.*)$/);', html)
+        self.assertIn('const legacy = structured ? null : raw.match(/^\\[([^\\]]+)\\]\\[([^\\]]+)\\]\\s*(.*)$/);', html)
+        self.assertIn('const category = original.match(/^(BEGIN|STEP|END|EVENT|STATE|SKIP)\\s/);', html)
+        self.assertIn('const message = category ? original.slice(category[0].length) : original;', html)
         self.assertNotIn('const isProcessLifecycle =', html)
         self.assertNotIn('const isPrewarmRetry =', html)
 

@@ -4,517 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>KEF Controller</title>
-  <style>
-    :root {
-      color-scheme: light dark;
-      --teal: #0d9488; --teal-ink: #0f766e; --teal-soft: #f0fdfa; --teal-line: #99f6e4;
-      --bg: #f3f3f3; --panel: #ffffff; --panel-flat: #fafafa; --panel-alt: #fcfcfc;
-      --line: #e5e5e5; --line-soft: #f0f0f0; --line-faint: #f5f5f5;
-      --ink: #1a1a1a; --muted: #616161; --faint: #8a8a8a; --ghost: #a0a0a0; --hair: #c4c4c4;
-      --btn-line: #d1d1d1; --btn-line-soft: #e0e0e0;
-      --danger: #dc2626;
-      --warn-bg: #fffbeb; --warn-line: #fde68a; --warn-ink: #92400e;
-      --test: #6d28d9; --test-bg: #f5f3ff; --test-line: #ddd6fe;
-      --ok-bg: #f0fdfa; --ok-ink: #0f766e; --ok-line: #99f6e4;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --teal-soft: #10322e; --teal-line: #246158;
-        --bg: #202324; --panel: #2b2f30; --panel-flat: #272b2c; --panel-alt: #2e3233;
-        --line: rgba(255,255,255,.12); --line-soft: rgba(255,255,255,.08); --line-faint: rgba(255,255,255,.05);
-        --ink: #f1f4f3; --muted: #b7c0be; --faint: #93a09d; --ghost: #7d8a87; --hair: #5a6663;
-        --btn-line: rgba(255,255,255,.22); --btn-line-soft: rgba(255,255,255,.14);
-        --warn-bg: #372a10; --warn-line: #6b5518; --warn-ink: #fcd34d;
-        --test: #c4b5fd; --test-bg: #2e2450; --test-line: #4c3d85;
-        --ok-bg: #123430; --ok-ink: #5eead4; --ok-line: #246158;
-      }
-    }
-    * { box-sizing: border-box; }
-    html, body { height: 100%; }
-    body {
-      margin: 0; min-width: 620px; background: var(--bg); color: var(--ink);
-      font: 13.5px/1.5 "Segoe UI Variable Text", "Segoe UI", -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-    }
-    button, input, select { font: inherit; color: inherit; }
-    button { cursor: pointer; }
-    button:disabled { cursor: default; }
-    svg { display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-    .spin { animation: spin 1s linear infinite; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    .shell { display: flex; height: 100vh; }
-    nav { width: 148px; flex-shrink: 0; display: flex; flex-direction: column; gap: 2px; padding: 10px 6px 12px; }
-    .nav-btn {
-      position: relative; display: flex; align-items: center; gap: 11px; padding: 10px 12px;
-      border: 0; background: transparent; border-radius: 6px; font-size: 13.5px; text-align: left;
-    }
-    .nav-btn:hover { background: rgba(127,127,127,.10); }
-    .nav-btn.active { background: rgba(127,127,127,.16); font-weight: 600; }
-    .nav-btn.active::before {
-      content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
-      width: 3px; height: 16px; border-radius: 2px; background: var(--teal);
-    }
-    .nav-spacer { flex: 1; }
-    main {
-      flex: 1; min-width: 0; background: var(--panel); overflow-y: auto;
-      border: 1px solid var(--line); border-right: 0; border-bottom: 0; border-top-left-radius: 8px;
-    }
-    .page {
-      width: 100%; min-height: 100%; margin: 0;
-      padding: clamp(22px, 2.6vw, 36px) clamp(24px, 3.2vw, 48px) 36px;
-    }
-    .page.hidden { display: none; }
-    h1 { margin: 0; font-size: 24px; font-weight: 600; flex: 1; min-width: max-content; }
-    .page-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
-    .page-head h1 { margin-right: auto; }
-
-    /* ── 状态条 ── */
-    .status-bar {
-      display: flex; align-items: center; gap: 12px; padding: 13px 16px; margin-bottom: 14px;
-      background: var(--panel-flat); border: 1px solid var(--line); border-radius: 10px;
-    }
-    .connection-note {
-      display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 9px 12px;
-      color: var(--warn-ink); background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 8px; font-size: 12.5px;
-    }
-    .connection-note.hidden { display: none; }
-    .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; background: #94a3b8; }
-    .dot.on { background: #10b981; }
-    .status-name { font-size: 14px; font-weight: 600; }
-    .status-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .status-sub { font-size: 12px; color: var(--faint); margin-top: 2px; }
-    .power-switch {
-      margin-left: auto; display: flex; align-items: center; gap: 7px; padding: 8px 16px; flex-shrink: 0;
-      border: 1px solid var(--btn-line); background: var(--panel); border-radius: 7px;
-      font-size: 13px; font-weight: 600; color: var(--muted);
-    }
-    .power-switch.on { background: var(--teal); border-color: var(--teal); color: #fff; }
-    .power-switch.pending { opacity: .65; cursor: wait; }
-    .standby-note {
-      display: flex; align-items: center; gap: 8px; margin: -2px 0 12px; padding: 9px 12px;
-      color: #475569; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 12.5px;
-    }
-    .standby-note.hidden { display: none; }
-    .setup-note { color: var(--ok-ink); background: var(--ok-bg); border-color: var(--ok-line); }
-    .setup-note button { margin-left: auto; white-space: nowrap; }
-    @media (prefers-color-scheme: dark) {
-      .standby-note { color: #cbd5e1; background: #27313b; border-color: #3b4754; }
-    }
-
-    /* ── 卡片 ── */
-    .card { padding: 16px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 12px; }
-    .card.dim { background: var(--panel-flat); }
-    .card.dim .vol-row, .card.dim .input-grid { opacity: .52; }
-    .card.dim .card-label, .card.dim .vol-display { opacity: .78; }
-    .card-label { font-size: 12px; font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; }
-
-    /* ── 音量 ── */
-    .vol-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-    .vol-display {
-      border: 0; background: transparent; font-size: 32px; font-weight: 700; padding: 0; line-height: 1;
-      font-variant-numeric: tabular-nums; cursor: text;
-    }
-    .vol-edit {
-      width: 66px; border: 1.5px solid var(--teal); border-radius: 6px; font-size: 26px; font-weight: 700;
-      text-align: right; padding: 2px 6px; outline: none; font-variant-numeric: tabular-nums; background: var(--panel);
-    }
-    .vol-row { display: flex; align-items: center; gap: 10px; }
-    .vol-icon-btn {
-      width: 36px; height: 36px; border: 1px solid var(--btn-line-soft); background: var(--panel);
-      border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-    }
-    .nudge-btn {
-      width: 30px; height: 30px; border: 1px solid var(--btn-line-soft); background: var(--panel);
-      border-radius: 7px; color: var(--muted); display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-    }
-    .nudge-btn:hover:not(:disabled), .vol-icon-btn:hover:not(:disabled) { border-color: var(--teal); }
-    .nudge-btn:disabled, .vol-icon-btn:disabled, .vol-display:disabled, .slider:disabled { cursor: default; }
-    .slider-wrap { flex: 1; min-width: 0; }
-    .slider { --volume: 0%; appearance: none; width: 100%; height: 26px; margin: 0; background: transparent; cursor: pointer; }
-    .slider::-webkit-slider-runnable-track {
-      height: 6px; border-radius: 999px; transition: box-shadow .2s ease;
-      background: linear-gradient(to right, var(--teal) 0, var(--teal) var(--volume), rgba(127,127,127,.25) var(--volume));
-    }
-    .slider::-webkit-slider-thumb {
-      appearance: none; width: 18px; height: 18px; margin-top: -6px; border: 0; border-radius: 50%;
-      background: var(--teal); box-shadow: 0 1px 2px rgba(0,0,0,.2);
-      transition: box-shadow .18s ease, transform .12s ease;
-    }
-    .slider:hover:not(:disabled)::-webkit-slider-thumb {
-      box-shadow: 0 1px 2px rgba(0,0,0,.2), 0 0 0 5px rgba(13,148,136,.16);
-    }
-    .slider:active:not(:disabled)::-webkit-slider-thumb {
-      transform: scale(1.15);
-      box-shadow: 0 1px 3px rgba(0,0,0,.25), 0 0 0 8px rgba(13,148,136,.20), 0 0 16px rgba(13,148,136,.60);
-    }
-    .slider:active:not(:disabled)::-webkit-slider-runnable-track { box-shadow: 0 0 10px rgba(13,148,136,.30); }
-    .slider:focus-visible::-webkit-slider-thumb { outline: 3px solid rgba(13,148,136,.25); outline-offset: 2px; }
-    .ticks { display: flex; justify-content: space-between; margin-top: 4px; }
-    .ticks span { font-size: 10px; color: var(--hair); font-variant-numeric: tabular-nums; }
-    .mute-note { display: flex; align-items: center; gap: 5px; margin-top: 10px; font-size: 12px; color: var(--danger); }
-    .mute-note.hidden { display: none; }
-
-    /* ── 输入源 ── */
-    .input-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 10px; }
-    .input-btn:last-child:nth-child(3n + 1) { grid-column: 2; }
-    .input-btn {
-      display: flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 8px;
-      border: 1px solid var(--btn-line-soft); background: var(--panel); border-radius: 8px; font-size: 13px;
-    }
-    .input-btn:hover:not(:disabled) { border-color: var(--teal); }
-    .input-btn.active {
-      border-color: var(--teal); background: var(--teal-soft); color: var(--teal-ink);
-      font-weight: 600; box-shadow: inset 0 0 0 1px var(--teal);
-    }
-
-    /* ── 设备信息（折叠） ── */
-    .card-flat { background: var(--panel-flat); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-    .info-head {
-      width: 100%; display: flex; align-items: center; gap: 8px; padding: 11px 14px;
-      border: 0; background: transparent; color: var(--muted); text-align: left;
-    }
-    .info-title { font-size: 13px; font-weight: 600; color: var(--ink); }
-    .info-summary { margin-left: auto; font-size: 12px; color: var(--ghost); }
-    .info-grid { margin: 0; padding: 0 14px 14px 36px; }
-    .info-grid.hidden { display: none; }
-    .info-row { display: flex; padding: 5px 0; border-top: 1px solid var(--line-soft); }
-    .info-row dt { width: 96px; font-size: 12.5px; color: var(--faint); margin: 0; flex-shrink: 0; }
-    .info-row dd { font-size: 12.5px; margin: 0; font-family: ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
-    .info-row.health dd { font-family: inherit; }
-
-    /* ── 日志 ── */
-    .ghost-btn {
-      display: flex; align-items: center; gap: 6px; padding: 7px 13px;
-      border: 1px solid var(--btn-line); background: var(--panel); border-radius: 6px; font-size: 13px;
-    }
-    .ghost-btn:hover { border-color: var(--faint); }
-    .search-box {
-      position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin-bottom: 8px;
-      border: 1px solid var(--btn-line); background: var(--panel); border-radius: 7px; color: var(--faint);
-    }
-    .search-box:focus-within { border-color: var(--teal); }
-    .search-box input { flex: 1; border: 0; outline: none; font-size: 13.5px; background: transparent; color: var(--ink); }
-    .search-box input[type="search"]::-webkit-search-cancel-button { display: none; }
-    .log-toolbar { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
-    .severity-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .severity-hint { font-size: 12px; color: var(--faint); }
-    .severity-track { display: flex; gap: 5px; flex-wrap: wrap; }
-    .severity-btn {
-      padding: 4px 9px; border: 1px solid var(--btn-line-soft); background: var(--panel); border-radius: 999px;
-      font: 600 11.5px ui-monospace, Consolas, monospace; color: var(--ghost);
-    }
-    .severity-btn:hover:not(:disabled) { border-color: var(--teal); color: var(--ink); }
-    .severity-btn:disabled { opacity: .38; cursor: default; }
-    .severity-btn.active.ERROR { color: #991b1b; border-color: #fecaca; background: #fef2f2; }
-    .severity-btn.active.WARN  { color: #92400e; border-color: #fde68a; background: #fffbeb; }
-    .severity-btn.active.EVENT { color: #5b21b6; border-color: #ddd6fe; background: #f5f3ff; }
-    .severity-btn.active.STATE { color: #155e75; border-color: #a5f3fc; background: #ecfeff; }
-    .severity-btn.active.STEP  { color: #166534; border-color: #bbf7d0; background: #f0fdf4; }
-    .severity-btn.active.INFO  { color: #334155; border-color: #cbd5e1; background: #f8fafc; }
-    @media (prefers-color-scheme: dark) {
-      .severity-btn.active.ERROR { color: #fca5a5; border-color: #7f1d1d; background: #450a0a; }
-      .severity-btn.active.WARN  { color: #fcd34d; border-color: #78350f; background: #451a03; }
-      .severity-btn.active.EVENT { color: #c4b5fd; border-color: #4c1d95; background: #2e1065; }
-      .severity-btn.active.STATE { color: #67e8f9; border-color: #155e75; background: #083344; }
-      .severity-btn.active.STEP  { color: #86efac; border-color: #14532d; background: #052e16; }
-      .severity-btn.active.INFO  { color: #cbd5e1; border-color: #334155; background: #1e293b; }
-    }
-    .log-box {
-      background: #0f172a; border-radius: 10px; padding: 12px; flex: 1; min-height: 0;
-      overflow-y: auto; font: 12px/1.65 ui-monospace, "Cascadia Mono", Consolas, monospace;
-      overscroll-behavior: contain; scrollbar-color: #475569 transparent;
-    }
-    .log-line { display: flex; gap: 8px; padding: 3px 6px; border-radius: 4px; align-items: flex-start; }
-    .log-line.ERROR { background: rgba(220,38,38,.15); box-shadow: inset 2px 0 0 #dc2626; }
-    .log-line.WARN { background: rgba(217,119,6,.12); box-shadow: inset 2px 0 0 #d97706; }
-    .log-time { color: #64748b; flex-shrink: 0; }
-    .log-lvl {
-      flex-shrink: 0; width: 48px; text-align: center; border-radius: 3px;
-      font-size: 10px; font-weight: 700; padding: 1px 0; border: 1px solid;
-    }
-    .log-lvl.ERROR { color: #fca5a5; border-color: #7f1d1d; background: #450a0a; }
-    .log-lvl.WARN  { color: #fcd34d; border-color: #78350f; background: #451a03; }
-    .log-lvl.EVENT { color: #c4b5fd; border-color: #4c1d95; background: #2e1065; }
-    .log-lvl.STATE { color: #67e8f9; border-color: #155e75; background: #083344; }
-    .log-lvl.STEP  { color: #86efac; border-color: #14532d; background: #052e16; }
-    .log-lvl.INFO  { color: #cbd5e1; border-color: #334155; background: #1e293b; }
-    .log-txt { color: #cbd5e1; word-break: break-all; white-space: pre-wrap; }
-    .log-txt mark { color: #fef3c7; background: #854d0e; border-radius: 2px; padding: 0 1px; }
-    .log-empty { padding: 30px; text-align: center; color: #475569; }
-    .log-foot { margin: 8px 2px 0; font-size: 12px; color: var(--ghost); }
-
-    /* ── 设置 ── */
-    .saved-flash {
-      display: flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 600;
-      color: var(--teal-ink); background: var(--teal-soft); border-radius: 999px; padding: 4px 10px;
-    }
-    .saved-flash.hidden { display: none; }
-    .sec-title { margin: 18px 0 10px; font-size: 16px; font-weight: 600; }
-    .sec-desc { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
-    .set-row { display: flex; align-items: center; gap: 14px; }
-    .set-label { font-size: 14px; font-weight: 600; }
-    .set-desc { font-size: 12px; color: var(--faint); margin-top: 2px; }
-    .divider { height: 1px; background: var(--line-soft); margin: 14px 0; }
-    select, .text-input {
-      padding: 7px 10px; border: 1px solid var(--btn-line); border-radius: 6px; font-size: 13.5px;
-      background: var(--panel); min-width: 130px; outline: none;
-    }
-    select:focus, .text-input:focus { border-color: var(--teal); }
-    .text-input { font-family: ui-monospace, Consolas, monospace; }
-    .target-val { text-align: right; }
-    .target-ip { font-size: 11.5px; color: var(--ghost); font-family: ui-monospace, Consolas, monospace; margin-top: 2px; }
-    .primary-btn {
-      display: flex; align-items: center; gap: 6px; padding: 7px 15px; border: 0; flex-shrink: 0;
-      background: var(--teal); color: #fff; border-radius: 6px; font-size: 13px; font-weight: 600;
-    }
-    .primary-btn:hover:not(:disabled) { background: #0b7f74; }
-    .primary-btn:disabled { opacity: .6; }
-    .lang-switch { display: flex; padding: 3px; border: 1px solid var(--btn-line); border-radius: 7px; background: var(--panel-flat); }
-    .lang-btn { border: 0; background: transparent; border-radius: 5px; padding: 5px 10px; font-size: 12.5px; color: var(--muted); }
-    .lang-btn.active { background: var(--panel); color: var(--teal-ink); box-shadow: 0 1px 3px rgba(0,0,0,.12); font-weight: 600; }
-    /* ── 选择扬声器弹窗 ── */
-    @keyframes fade-in { from { opacity: 0; } }
-    @keyframes pop-in { from { opacity: 0; transform: scale(.97) translateY(6px); } }
-    @keyframes shimmer { to { background-position: -200% 0; } }
-    .dlg-backdrop {
-      position: fixed; inset: 0; background: rgba(15,23,42,.35); z-index: 100;
-      display: flex; align-items: center; justify-content: center; padding: 24px;
-      animation: fade-in .15s ease;
-    }
-    .dlg {
-      width: 100%; max-width: 460px; background: var(--panel); border: 1px solid var(--line);
-      border-radius: 12px; box-shadow: 0 24px 64px rgba(0,0,0,.30); padding: 18px 20px 16px;
-      animation: pop-in .16s ease; display: flex; flex-direction: column; max-height: calc(100vh - 48px); overflow-y: auto;
-    }
-    .dlg-head { display: flex; align-items: center; gap: 9px; }
-    .dlg-head-icon {
-      width: 26px; height: 26px; border-radius: 6px; background: var(--ink); color: var(--panel);
-      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-    }
-    .dlg-title { font-size: 17px; font-weight: 600; }
-    .dlg-x {
-      margin-left: auto; width: 28px; height: 28px; border: 0; background: transparent;
-      border-radius: 6px; color: var(--faint); display: flex; align-items: center; justify-content: center;
-    }
-    .dlg-x:hover { background: rgba(127,127,127,.12); color: var(--ink); }
-    .dlg-sub { margin: 8px 0 14px; font-size: 13px; color: var(--muted); }
-    .scan-bar {
-      display: flex; align-items: center; gap: 8px; padding: 9px 12px; margin-bottom: 10px;
-      background: var(--teal-soft); border: 1px solid rgba(13,148,136,.28); border-radius: 8px;
-    }
-    .scan-bar.failed { background: var(--warn-bg); border-color: var(--warn-line); }
-    .scan-bar.failed .scan-text { color: var(--warn-ink); }
-    .scan-text { font-size: 12.5px; color: var(--teal-ink); flex: 1; min-width: 0; font-variant-numeric: tabular-nums; }
-    .rescan-btn {
-      display: flex; align-items: center; gap: 4px; padding: 4px 10px; flex-shrink: 0;
-      border: 1px solid rgba(13,148,136,.4); background: var(--panel); border-radius: 6px;
-      font-size: 12px; color: var(--teal-ink); font-weight: 600;
-    }
-    .rescan-btn:hover { border-color: var(--teal); }
-    .dlg-list { display: flex; flex-direction: column; gap: 7px; min-height: 68px; }
-    .skeleton {
-      height: 60px; border-radius: 9px; background-size: 200% 100%; animation: shimmer 1.3s infinite;
-      background-image: linear-gradient(90deg, rgba(127,127,127,.10) 25%, rgba(127,127,127,.22) 50%, rgba(127,127,127,.10) 75%);
-    }
-    .sp-item {
-      display: flex; align-items: center; gap: 12px; padding: 12px 14px; width: 100%; text-align: left;
-      border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
-    }
-    .sp-item:hover { border-color: var(--teal); }
-    .sp-item.current { border-color: var(--teal); background: var(--teal-soft); box-shadow: inset 0 0 0 1px var(--teal); cursor: default; }
-    .sp-icon {
-      width: 34px; height: 34px; border-radius: 8px; background: rgba(127,127,127,.12); color: var(--muted);
-      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-    }
-    .sp-item.current .sp-icon { background: var(--teal); color: #fff; }
-    .sp-name { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; min-width: 0; }
-    .cur-tag { font-size: 10.5px; font-weight: 700; color: var(--teal-ink); background: rgba(13,148,136,.16); border-radius: 5px; padding: 1px 7px; flex-shrink: 0; }
-    .sp-meta { font-size: 11.5px; color: var(--faint); margin-top: 2px; font-family: ui-monospace, Consolas, monospace; }
-    .sel-hint { margin-left: auto; font-size: 12.5px; font-weight: 600; color: var(--teal); flex-shrink: 0; }
-    .dlg-empty { padding: 24px; text-align: center; color: var(--ghost); font-size: 13px; }
-    .manual-link {
-      align-self: flex-start; margin-top: 12px; border: 0; background: transparent;
-      color: var(--teal); font-size: 13px; padding: 4px 0; font-weight: 500;
-    }
-    .manual-link:hover { text-decoration: underline; }
-    .manual-box { margin-top: 12px; padding: 13px; background: var(--panel-flat); border: 1px solid var(--line); border-radius: 9px; }
-    .manual-title { font-size: 12.5px; font-weight: 600; margin-bottom: 9px; }
-    .manual-row { display: flex; gap: 8px; }
-    .manual-row .text-input { flex: 1; min-width: 0; width: auto; }
-    .manual-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
-    .dlg-foot { display: flex; justify-content: flex-end; margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line-soft); }
-
-    /* ── 日志辅助控件 ── */
-    .search-clear {
-      border: 0; background: transparent; color: var(--faint); display: none;
-      width: 22px; height: 22px; border-radius: 5px; padding: 0; flex-shrink: 0;
-      align-items: center; justify-content: center;
-    }
-    .search-clear.show { display: flex; }
-    .search-clear:hover { background: rgba(127,127,127,.14); color: var(--ink); }
-    .lvl-link { border: 0; background: transparent; color: var(--teal); font-size: 12px; font-weight: 600; padding: 4px 6px; }
-    .lvl-link:hover { text-decoration: underline; }
-    .log-page:not(.hidden) { height: 100%; min-height: 0; display: flex; flex-direction: column; }
-    .log-page .page-head, .log-page .log-toolbar, .log-page .log-foot { flex: 0 0 auto; }
-    .log-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
-    .to-bottom {
-      position: absolute; right: 14px; bottom: 12px; display: none; align-items: center; gap: 5px;
-      padding: 6px 12px; border: 1px solid #334155; background: #1e293b; color: #cbd5e1;
-      border-radius: 999px; font-size: 12px; font-weight: 600; box-shadow: 0 6px 18px rgba(0,0,0,.4);
-    }
-    .to-bottom.show { display: flex; }
-    .to-bottom:hover { border-color: #64748b; }
-
-    .preset-row { display: flex; align-items: center; gap: 7px; margin-bottom: 12px; flex-wrap: wrap; }
-    .preset-label { font-size: 13px; color: var(--muted); }
-    .preset-btn { padding: 6px 15px; border: 1px solid var(--btn-line); background: var(--panel); border-radius: 6px; font-size: 13px; }
-    .preset-btn.active { background: var(--teal); border-color: var(--teal); color: #fff; font-weight: 600; }
-    .custom-tag { font-size: 11.5px; color: var(--faint); background: rgba(127,127,127,.15); border-radius: 5px; padding: 3px 8px; }
-    .custom-tag.hidden { display: none; }
-    .test-toggle {
-      margin-left: auto; display: flex; align-items: center; gap: 6px; padding: 6px 13px;
-      border: 1px solid var(--btn-line); background: var(--panel); border-radius: 6px; font-size: 13px; color: var(--muted);
-    }
-    .test-toggle.on { border-color: #7c3aed; background: var(--test-bg); color: var(--test); font-weight: 600; }
-    .reset-btn {
-      width: 30px; height: 30px; border: 1px solid var(--btn-line); background: var(--panel);
-      border-radius: 6px; color: var(--muted); display: flex; align-items: center; justify-content: center;
-    }
-    .test-banner {
-      display: flex; gap: 8px; margin: 0 0 11px; padding: 10px 13px; background: var(--test-bg);
-      border: 1px solid var(--test-line); border-radius: 8px; font-size: 12.5px; color: var(--test); line-height: 1.6;
-    }
-    .test-banner.hidden { display: none; }
-
-    .matrix { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-    .mx-head { display: grid; border-bottom: 1px solid var(--line); background: var(--panel-flat); }
-    .mx-row { display: grid; border-bottom: 1px solid var(--line-soft); }
-    .mx-row:last-of-type { border-bottom: 0; }
-    .mx-row.alt { background: var(--panel-alt); }
-    .matrix, .mx-head, .mx-row { --grid: 1fr 106px 106px; }
-    .matrix.testing .mx-head, .matrix.testing .mx-row { --grid: 1fr 88px 88px 172px; }
-    .mx-head, .mx-row { grid-template-columns: var(--grid); }
-    .th-event {
-      padding: 11px 16px; font-size: 11.5px; font-weight: 600; color: var(--faint);
-      text-transform: uppercase; letter-spacing: .04em; display: flex; align-items: center;
-    }
-    .th-col {
-      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-      padding: 8px; border: 0; border-left: 1px solid var(--line-soft); background: transparent;
-    }
-    .th-col-title { display: flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; }
-    .th-col-hint { font-size: 10px; color: var(--ghost); }
-    .td-event { display: flex; align-items: center; gap: 11px; padding: 12px 16px; min-width: 0; }
-    .ev-icon { color: var(--muted); flex-shrink: 0; }
-    .ev-label { font-size: 13.5px; font-weight: 600; }
-    .ev-desc { font-size: 11.5px; color: var(--faint); margin-top: 1px; }
-    .td-cell { display: flex; align-items: center; justify-content: center; border-left: 1px solid var(--line-faint); }
-    .check {
-      width: 23px; height: 23px; border-radius: 6px; border: 1.5px solid var(--hair);
-      background: var(--panel); color: #fff; padding: 0; display: flex; align-items: center; justify-content: center;
-    }
-    .check.on-wake { background: var(--teal); border-color: var(--teal); }
-    .check.on-standby { background: #525252; border-color: #525252; }
-    .check svg { visibility: hidden; }
-    .check.on-wake svg, .check.on-standby svg { visibility: visible; }
-    .na { color: var(--btn-line-soft); display: flex; }
-    .td-test { display: none; align-items: center; justify-content: center; gap: 5px; border-left: 1px solid var(--line-faint); padding: 6px 8px; flex-wrap: wrap; }
-    .matrix.testing .td-test { display: flex; }
-    .test-btn {
-      display: flex; align-items: center; gap: 4px; padding: 5px 10px; white-space: nowrap;
-      border: 1px solid var(--test-line); background: var(--test-bg); border-radius: 6px;
-      font-size: 12px; font-weight: 600; color: var(--test);
-    }
-    .test-btn.off { border-color: var(--btn-line-soft); background: var(--panel-flat); color: var(--ghost); font-weight: 400; }
-    .mx-result {
-      display: none; gap: 8px; padding: 10px 16px; font-size: 12.5px; line-height: 1.6;
-      border-bottom: 1px solid var(--line-soft); align-items: flex-start;
-    }
-    .matrix.testing .mx-result.show { display: flex; }
-    .mx-result.success { background: var(--ok-bg); color: var(--ok-ink); }
-    .mx-result.warning { background: var(--warn-bg); color: var(--warn-ink); }
-    .mx-result.error { background: var(--warn-bg); color: var(--danger); }
-    .mx-result.running { background: var(--test-bg); color: var(--test); }
-    .mx-result .detail { font-size: 11px; opacity: .75; margin-top: 2px; font-family: ui-monospace, Consolas, monospace; }
-    .mx-result .close {
-      margin-left: auto; border: 0; background: transparent; color: inherit; opacity: .4;
-      font-size: 12px; flex-shrink: 0; padding: 2px;
-    }
-    .warn-note {
-      display: flex; gap: 8px; margin-top: 11px; padding: 10px 13px; background: var(--warn-bg);
-      border: 1px solid var(--warn-line); border-radius: 8px; font-size: 12.5px; color: var(--warn-ink); line-height: 1.6;
-    }
-    .warn-note.hidden { display: none; }
-    .table-foot { margin: 10px 2px 0; font-size: 11.5px; color: var(--ghost); line-height: 1.6; }
-
-    .switch { width: 38px; height: 22px; appearance: none; background: #aeb8bc; border-radius: 999px; position: relative; cursor: pointer; transition: .18s; flex-shrink: 0; margin: 0; }
-    .switch:checked { background: var(--teal); }
-    .switch::before { content: ""; width: 16px; height: 16px; border-radius: 50%; background: #fff; position: absolute; left: 3px; top: 3px; transition: .18s; }
-    .switch:checked::before { left: 19px; }
-    .startup-method.disabled { opacity: .5; }
-    .startup-method.disabled .set-desc { color: var(--ghost); }
-    .startup-segment { display: flex; padding: 3px; border: 1px solid var(--btn-line); border-radius: 7px; background: var(--panel-flat); flex-shrink: 0; }
-    .startup-method-btn { border: 0; background: transparent; border-radius: 5px; padding: 6px 11px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
-    .startup-method-btn.active { background: var(--panel); color: var(--teal-ink); box-shadow: 0 1px 3px rgba(0,0,0,.12); font-weight: 600; }
-    .startup-method-btn:disabled { cursor: not-allowed; }
-    .startup-status { display: flex; align-items: center; gap: 7px; margin-top: 12px; padding: 9px 11px; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--panel-flat); color: var(--muted); font-size: 12.5px; }
-    .startup-status.active { color: var(--teal-ink); background: var(--teal-soft); border-color: rgba(13,148,136,.25); }
-    .startup-status.busy { color: var(--muted); background: var(--panel-flat); border-color: var(--line); }
-
-    /* ── Toast：与参考稿一致固定在右下角，同频道只保留最新一条 ── */
-    .toast-area {
-      position: fixed; z-index: 200; right: 20px; bottom: 20px; display: flex; flex-direction: column;
-      align-items: flex-end; gap: 8px; width: min(340px, calc(100vw - 40px)); pointer-events: none;
-    }
-    .toast {
-      width: fit-content; min-width: 220px; max-width: 320px; display: flex; align-items: flex-start; gap: 10px;
-      padding: 11px 12px 11px 13px; border-radius: 9px; background: var(--panel); border: 1px solid var(--line);
-      box-shadow: 0 8px 28px rgba(15,23,42,.16); font-size: 12.5px; pointer-events: auto;
-      animation: toast-in .2s cubic-bezier(.2,.8,.2,1);
-    }
-    .toast-icon { width: 18px; height: 18px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
-    .toast-body { flex: 1; min-width: 0; }
-    .toast b { display: block; margin-bottom: 2px; font-size: 13.5px; }
-    .toast small { color: var(--faint); font-size: 12px; }
-    .toast-close { border: 0; background: transparent; color: var(--ghost); padding: 0 2px; font-size: 13px; line-height: 1; }
-    .toast-close:hover { color: var(--ink); }
-    .toast.kind-success { border-left: 3px solid var(--teal); }
-    .toast.kind-success .toast-icon { color: var(--teal); }
-    .toast.kind-standby { border-left: 3px solid #64748b; }
-    .toast.kind-standby .toast-icon { color: #64748b; }
-    .toast.kind-volume { border-left: 3px solid var(--teal); }
-    .toast.kind-volume .toast-icon { color: var(--teal); }
-    .toast.kind-mute, .toast.kind-error { border-left: 3px solid var(--danger); }
-    .toast.kind-mute .toast-icon, .toast.kind-error .toast-icon { color: var(--danger); }
-    .toast.kind-warning { border-left: 3px solid #d97706; }
-    .toast.kind-warning .toast-icon { color: #d97706; }
-    .toast.kind-info { border-left: 3px solid #94a3b8; }
-    .toast.kind-info .toast-icon { color: #64748b; }
-    @keyframes toast-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
-
-    @media (max-width: 980px) {
-      nav { width: 132px; }
-      .page { width: 100%; padding: 22px 24px 32px; }
-      .input-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .input-btn:last-child:nth-child(3n + 1) { grid-column: auto; }
-      .input-btn:last-child:nth-child(odd) { grid-column: 1 / -1; }
-      .matrix { overflow-x: auto; }
-      .mx-head, .mx-row { min-width: 650px; }
-    }
-    .boot-error { padding: 40px; color: var(--muted); }
-    .boot-skeleton { display: flex; flex-direction: column; gap: 14px; }
-    .boot-status, .boot-card { border: 1px solid var(--line); border-radius: 10px; background: var(--panel-flat); }
-    .boot-status { height: 68px; }
-    .boot-card { height: 146px; }
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after {
-        animation-duration: .01ms !important;
-        animation-iteration-count: 1 !important;
-        scroll-behavior: auto !important;
-        transition-duration: .01ms !important;
-      }
-    }
-  </style>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div class="shell">
@@ -524,12 +14,16 @@
       <div class="nav-spacer"></div>
       <button class="nav-btn" data-nav="settings"></button>
     </nav>
-    <main id="main" aria-busy="true">
-      <div class="page boot-skeleton" aria-hidden="true"><div class="boot-status"></div><div class="boot-card"></div><div class="boot-card"></div></div>
-    </main>
+    <div class="content-shell">
+      <div id="connection-note" class="connection-note hidden" role="status"></div>
+      <main id="main" aria-busy="true">
+        <div class="page boot-skeleton" aria-hidden="true"><div class="boot-status"></div><div class="boot-card"></div><div class="boot-card"></div></div>
+      </main>
+    </div>
   </div>
   <div id="toasts" class="toast-area" aria-live="polite" aria-atomic="false"></div>
 
+  <script src="texts.js"></script>
   <script>
   "use strict";
   // ═════════════════════════════════════════════════════════
@@ -540,38 +34,6 @@
   const esc = s => String(s ?? "").replace(/[&<>'"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c]));
 
   // UI 文案与 JSX 保持同一套中英文语义；语言本身由 config.json 持久化。
-  const TEXT = {
-    nav_home: ["主页", "Home"], nav_log: ["日志", "Log"], nav_settings: ["设置", "Settings"],
-    volume: ["音量", "Volume"], direct_volume: ["点击直接输入音量", "Click to enter volume"],
-    volume_down: ["音量 −1", "Volume −1"], volume_up: ["音量 +1", "Volume +1"],
-    mute: ["静音", "Mute"], unmute: ["恢复音量", "Restore volume"], mute_note: ["已静音，点击喇叭图标恢复", "Muted — click the speaker icon to restore"],
-    input_source: ["输入源", "Input Source"], device_info: ["设备信息", "Device Info"],
-    ip_address: ["IP 地址", "IP Address"], mac_address: ["MAC 地址", "MAC Address"], model: ["型号", "Model"], firmware: ["固件", "Firmware"], health_last_check: ["最近心跳", "Last heartbeat"], health_last_action: ["最近动作", "Last action"], health_last_issue: ["最近异常", "Last issue"], health_none: ["暂无", "None yet"], health_now: ["刚刚", "Just now"], health_seconds_ago: ["$ 秒前", "$s ago"], failed: ["失败", "Failed"],
-    connected_on: ["已连接 · 开机", "Connected · On"], connected_standby: ["已连接 · 待机", "Connected · Standby"], disconnected: ["未连接", "Disconnected"],
-    no_device: ["未找到设备", "No device found"], power_on: ["开机", "On"], power_standby: ["待机", "Standby"], switching: ["切换中", "Switching"],
-    waking: ["正在唤醒", "Waking"], waiting_confirmation: ["等待音箱确认…", "Waiting for speaker confirmation…"], entering_standby: ["正在待机", "Entering standby"],
-    standby_help: ["扬声器处于待机状态。唤醒后即可调节音量和输入源。", "The speaker is in standby. Wake it to control volume and input."],
-    configure_speaker_help: ["未找到扬声器——去设置选择扬声器并扫描一下。", "No speaker found — choose and scan for a speaker in Settings."], configure_speaker: ["去设置扫描", "Set up speaker"],
-    app_log: ["应用日志", "Application Log"], refresh: ["刷新", "Reload"], open_folder: ["打开文件夹", "Open Folder"], log_file: ["日志文件", "Log file"], today_log: ["今天", "Today"],
-    search_log: ["搜索日志…", "Search logs…"], clear_search: ["清除搜索", "Clear search"], min_level: ["最低级别", "Min level"],
-    reset_filters: ["重置筛选", "Reset filters"], no_match: ["没有匹配「$」的日志行", "No lines matching \"$\""], no_level: ["该级别下没有日志", "No logs at this level"],
-    showing: ["显示", "Showing"], lines: ["行", "lines"], hidden_below: ["已隐藏 $ 以下", "hiding below $"], back_to_bottom: ["回到底部", "Back to bottom"],
-    level_info: ["全部", "All"], level_step: ["步骤", "Step"], level_state: ["状态", "State"], level_event: ["事件", "Event"], level_warn: ["警告", "Warn"], level_error: ["错误", "Error"],
-    severity_tip: ["$ 及以上，共 $ 行", "$ and above · $ lines"],
-    saved: ["已保存", "Saved"], general: ["通用", "General"], language: ["语言", "Language"], language_desc: ["界面显示语言", "Interface display language"],
-    speaker: ["扬声器", "Speaker"], default_input: ["默认输入源", "Default Input Source"], default_input_desc: ["App 唤醒扬声器时自动切到这个输入", "Selected whenever the app wakes the speaker"],
-    target_speaker: ["目标扬声器", "Target Speaker"], target_desc: ["MAC 是身份标识，IP 只是当前地址", "The MAC is the identity; the IP is just the current address"], select_speaker: ["选择扬声器", "Select Speaker"],
-    power_behavior: ["电源行为", "Power Behavior"], power_behavior_desc: ["哪些电脑事件会唤醒扬声器、哪些会让它待机。", "Which PC events wake the speaker or put it in standby."],
-    enabled_rules: ["已启用 $ / $ 条规则。", "$ / $ rules enabled."], preset: ["预设", "Preset"], custom: ["自定义", "Custom"],
-    simulate_events: ["模拟事件", "Simulate"], exit_simulate: ["退出模拟", "Exit simulation"], restore_recommended: ["恢复推荐", "Restore recommended"],
-    test_banner: ["模拟模式已开启。点任意一行的模拟按钮，会按该行当前的规则执行一次真实动作。规则关着就不会有动作，这本身就是诊断结果。", "Simulation is on. Each button runs the current rule for that row. A disabled rule does nothing, which is itself a useful diagnostic."],
-    trigger_event: ["触发事件", "Trigger Event"], wake: ["唤醒", "Wake"], standby: ["待机", "Standby"], test: ["模拟", "Test"], run_once: ["触发一次", "Run once"], all_off: ["全部关闭", "Turn all off"], all_on: ["全部开启", "Turn all on"], not_applicable: ["不适用", "N/A"], rule_disabled_simulation: ["规则已关闭，模拟不会有动作", "This rule is off; simulation will take no action."],
-    screen_warning: ["屏幕熄灭会让扬声器待机，但屏幕点亮不会唤醒它。你需要手动开机，或同时勾上「屏幕开关 · 唤醒」。", "Display-off puts the speaker in standby, but display-on will not wake it. Turn it on manually, or also enable Display Power · Wake."],
-    table_foot: ["点击列标题可整列开关。改动即时生效。", "Click a column header to toggle the whole column. Changes save instantly."], table_foot_test: ["模拟会真实控制扬声器，当前状态见主页。", "Simulations control the real speaker; see current state on Home."],
-    windows_startup: ["Windows 启动", "Windows Startup"], start_on_login: ["登录时自动运行", "Run when I sign in"], start_on_login_desc: ["关闭后会同时移除任务计划和注册表项；再次开启时默认使用无需管理员权限的注册表 Run", "Turning this off removes both entries; enabling it again defaults to Registry Run, which needs no administrator permission"], startup_method: ["注册方式", "Registration method"], startup_task: ["任务计划程序", "Task Scheduler"], startup_registry: ["注册表 Run", "Registry Run"], startup_task_desc: ["任务计划程序会在登录时启动。首次创建或清理旧任务时可能需要管理员批准。", "Runs at sign-in through Task Scheduler. Creating or cleaning up a task may need administrator approval."], startup_registry_desc: ["最简单的当前用户开机自启方式，不需要额外权限。", "The simplest per-user startup method; no additional permission is needed."], startup_active: ["已生效 · $", "Active · $"], startup_inactive: ["未注册开机自启", "Not registered to run at startup"], startup_applying: ["正在应用 · $", "Applying · $"], startup_disabling: ["正在关闭开机启动…", "Disabling startup…"],
-    dlg_sub: ["选择这个 App 要控制的 KEF 扬声器。", "Choose the KEF speaker this app should control."], scanning: ["正在扫描局域网…", "Scanning your network…"], checked_devices: ["已检查 $ 台设备", "checked $ devices"], scan_complete: ["扫描完成，找到 $ 台。", "Scan complete, found $."], current_included: ["已包含你当前的扬声器。", "Your current speaker is included."], rescan: ["重新扫描", "Rescan"], no_speaker: ["没有扫描到扬声器", "No speakers found"], manual_link: ["没找到？手动输入 IP 地址", "Not listed? Enter an IP manually"], manual_entry: ["手动指定", "Manual entry"], ip_placeholder: ["IP 地址，如 10.0.0.222", "IP address, e.g. 10.0.0.222"], mac_placeholder: ["MAC（可选）", "MAC (optional)"], cancel: ["取消", "Cancel"], apply: ["应用", "Apply"], close: ["关闭", "Close"], in_use: ["使用中", "In use"], select: ["选择", "Select"], scan_failed: ["扫描请求失败，请重试。", "Scan request failed. Please retry."],
-    volume_updated: ["音量 $", "Volume $"], muted: ["已静音", "Muted"], input_changed: ["已切换到 $", "Switched to $"], settings_saved: ["设置已保存", "Settings saved"], controller_error: ["控制器错误", "Controller error"], request_failed: ["请求失败。", "Request failed."], controller_unavailable: ["控制器不可用", "Controller unavailable"], controller_unavailable_desc: ["本地控制接口未能启动，请重启应用。", "The local control interface could not start. Please restart the app."], controller_reconnecting: ["与控制器失去连接，正在重连…", "Connection to the controller was lost. Reconnecting…"],
-  };
   let uiLanguage = "zh";
   const t = (key, ...args) => {
     let value = (TEXT[key] || [key, key])[uiLanguage === "en" ? 1 : 0];
@@ -657,45 +119,6 @@
       values: Object.fromEntries(RULE_KEYS.map(k => [k, false])) },
   };
 
-  const TOAST_ZH = {
-    "Controller error": "控制器错误", "Volume updated": "音量已更新", "Volume update failed": "音量更新失败",
-    "Input changed": "输入源已切换", "Input change failed": "输入源切换失败", "Invalid input": "无效的输入源",
-    "Settings were not saved": "设置未保存", "Settings saved": "设置已保存",
-    "Settings updated for this session": "设置已在本次会话生效",
-    "Target not saved": "目标未保存", "Target saved": "目标已保存",
-    "Target updated for this session": "目标已在本次会话生效",
-    "Startup settings saved": "开机自启设置已保存", "Startup settings need attention": "开机自启设置需要处理",
-    "Scanning for speakers": "正在扫描扬声器", "Speaker scan complete": "扫描完成", "Speaker scan failed": "扫描失败",
-    "Speaker action": "扬声器操作", "Speaker action failed": "扬声器操作失败",
-    "Wake": "唤醒", "Standby": "待机", "Early Standby": "提前待机", "Endsession Standby": "关机待机",
-    "Unknown test": "未知的模拟事件",
-    "Running": "执行中", "Completed": "已完成", "No action": "无动作", "Failed": "失败",
-  };
-  const DETAIL_ZH = [
-    [/^Searching the local network…$/, "正在搜索本地网络…"],
-    [/^Found (\d+) supported speaker\(s\)\.$/, "找到 $1 台受支持的扬声器。"],
-    [/^No supported speakers were found\.$/, "未找到受支持的扬声器。"],
-    [/^Changes are now active\.$/, "更改已生效。"],
-    [/^Volume is now (\d+)\.$/, "音量已设为 $1。"],
-    [/^Switched to (\S+)\.$/, "已切换到 $1。"],
-    [/^Verified ([\d.]+) and saved the target\.$/, "已验证 $1 并保存目标。"],
-    [/^Recovered ([\d.]+) from the MAC address and saved it\.$/, "已通过 MAC 找回 $1 并保存。"],
-    [/^Saved the target, but the speaker did not report its MAC during verification\.$/, "目标已保存，但验证时扬声器未报告 MAC。"],
-    [/^Saved the MAC target\. The app will recover its IP when the speaker appears\.$/, "已保存 MAC 目标，扬声器上线后会自动找回 IP。"],
-    [/^Saved the target as a connection hint; it is not reachable right now\.$/, "已保存为连接提示；当前无法访问该地址。"],
-    [/^That IP responded, but is not a supported KEF speaker\.$/, "该 IP 有响应，但不是受支持的 KEF 扬声器。"],
-    [/^That IP belongs to a speaker with MAC (.+)\.$/, "该 IP 属于 MAC 为 $1 的扬声器。"],
-    [/^Enter a routable IPv4 address\.$/, "请输入有效的 IPv4 地址。"],
-    [/^Enter a 12-digit MAC address\.$/, "请输入 12 位 MAC 地址。"],
-    [/^Enter an IP address or MAC address\.$/, "请输入 IP 或 MAC 地址。"],
-    [/^The target details could not be validated\.$/, "无法验证目标信息。"],
-    [/^Windows startup registration is up to date\.$/, "Windows 开机自启注册已更新。"],
-    [/^Wake requested$/, "已请求唤醒"], [/^Standby requested$/, "已请求待机"],
-    [/^Wake is running\.$/, "正在唤醒扬声器。"], [/^Standby is running\.$/, "正在进入待机。"],
-    [/^Action scheduled( ·.*)?$/, "动作已调度$1"],
-    [/^No action was scheduled( ·.*)?$/, "未调度任何动作$1"],
-    [/^Waiting for the controller to respond…$/, "等待控制器响应…"],
-  ];
   const zhTitle = title => TOAST_ZH[title] || title;
   const zhDetail = d => {
     let out = String(d || "");
@@ -831,7 +254,8 @@
     }
     const kind = visualKind || toastKind(level, title, detail, channel);
     el.className = `toast ${level || "info"} kind-${kind}`;
-    el.setAttribute("role", level === "error" ? "alert" : "status");
+    if (level === "error") el.setAttribute("role", "alert");
+    else el.removeAttribute("role");
     $(".toast-icon", el).innerHTML = icon(toastIcon(kind), 17);
     $("b", el).textContent = localTitle(title);
     const small = $("small", el);
@@ -858,6 +282,7 @@
       const [ic, label] = navMeta[btn.dataset.nav];
       btn.innerHTML = `${icon(ic, 17)}<span>${label}</span>`;
     }
+    $("#connection-note").innerHTML = `${icon("alert", 15)}<span>${t("controller_reconnecting")}</span>`;
     $("#main").removeAttribute("aria-busy");
     $("#main").innerHTML = `
       <div id="page-home" class="page">${homeSkeleton()}</div>
@@ -873,7 +298,6 @@
     const inputs = [...(state.inputs || [])]
       .sort((a, b) => INPUT_ORDER.indexOf(a.value) - INPUT_ORDER.indexOf(b.value));
     return `
-      <div id="connection-note" class="connection-note hidden" role="status">${icon("alert", 15)}<span>${t("controller_reconnecting")}</span></div>
       <div class="status-bar">
         <span id="dot" class="dot"></span>
         <div style="min-width:0">
@@ -947,13 +371,7 @@
       activeVolumePointer = e.pointerId;
       if (slider.setPointerCapture) slider.setPointerCapture(e.pointerId);
     });
-    const finishDragging = e => finishVolumeDrag(e.pointerId);
-    slider.addEventListener("pointerup", finishDragging);
-    slider.addEventListener("pointercancel", finishDragging);
-    slider.addEventListener("lostpointercapture", finishDragging);
-    window.addEventListener("pointerup", finishDragging);
-    window.addEventListener("pointercancel", finishDragging);
-    window.addEventListener("blur", () => finishVolumeDrag());
+    slider.addEventListener("lostpointercapture", e => finishVolumeDrag(e.pointerId));
     slider.addEventListener("input", () => {
       muted = false;
       previewVolume(+slider.value);
@@ -1232,14 +650,20 @@
 
   function parseLog(line) {
     const raw = String(line || "");
-    const structured = raw.match(/^\[([^\]]+)\]\[([^\]]+)\]\[([A-Z]+)\]\s*(.*)$/i);
-    if (!structured) return null;
-    const stamp = structured[1];
-    const source = structured[2];
-    const original = structured[4];
-    const normalizedLevel = { WARNING: "WARN", CRITICAL: "ERROR", FATAL: "ERROR", DEBUG: "INFO" }[(structured?.[3] || "").toUpperCase()];
-    const lvl = normalizedLevel || (SEVERITY.includes(structured[3].toUpperCase()) ? structured[3].toUpperCase() : "INFO");
-    const message = original;
+    const structured = raw.match(/^\[([^\]]+)\]\[([^\]]+)\]\[([A-Z]+)\]\s*(.*)$/);
+    const legacy = structured ? null : raw.match(/^\[([^\]]+)\]\[([^\]]+)\]\s*(.*)$/);
+    const short = structured || legacy ? null : raw.match(/^\[([^\]]+)\]\s*(.*)$/);
+    const stamp = structured ? structured[1] : (legacy ? legacy[1] : (short ? short[1] : ""));
+    const source = structured ? structured[2] : (legacy ? legacy[2] : "");
+    const original = structured ? structured[4] : (legacy ? legacy[3] : (short ? short[2] : raw));
+    const rawLevel = structured ? structured[3] : "INFO";
+    let lvl = rawLevel === "WARNING" ? "WARN" : rawLevel === "CRITICAL" ? "ERROR" : rawLevel;
+    const category = original.match(/^(BEGIN|STEP|END|EVENT|STATE|SKIP)\s/);
+    if (lvl === "INFO" && category) {
+      lvl = category[1] === "EVENT" ? "EVENT" : category[1] === "STATE" ? "STATE" : "STEP";
+    }
+    if (!SEVERITY.includes(lvl)) lvl = "INFO";
+    const message = category ? original.slice(category[0].length) : original;
     return { raw, time: stamp.includes(" ") ? stamp.split(" ").pop() : stamp, source, message, lvl };
   }
 
@@ -1307,9 +731,7 @@
 
   function appendLogLine(line) {
     if (selectedLogFile) return;
-    const item = parseLog(line);
-    if (!item) return;
-    pendingLogItems.push(item);
+    pendingLogItems.push(parseLog(line));
     if (!logFlushFrame) logFlushFrame = requestAnimationFrame(flushLogLines);
   }
 
@@ -1335,7 +757,7 @@
 
   function loadLogs() {
     bridge.logs(selectedLogFile).then(lines => {
-      logItems = (lines || []).map(parseLog).filter(Boolean);
+      logItems = (lines || []).map(parseLog);
       renderLogList({ stickBottom: true });
     }).catch(() => {});
   }
@@ -1592,6 +1014,7 @@
     dlg = { phase: "scanning", found: [], checked: 0, failed: "" };
     dialogReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     $(".shell").inert = true;
+    $("#toasts").inert = true;
     const el = document.createElement("div");
     el.className = "dlg-backdrop";
     el.id = "dlg-backdrop";
@@ -1670,6 +1093,7 @@
     const el = $("#dlg-backdrop");
     if (el) el.remove();
     $(".shell").inert = false;
+    $("#toasts").inert = false;
     const returnFocus = dialogReturnFocus;
     dialogReturnFocus = null;
     if (returnFocus && document.contains(returnFocus) && !returnFocus.disabled) returnFocus.focus();
@@ -1826,13 +1250,13 @@
     if (!row) return;
     const box = $(`[data-result="${row.id}"]`);
     if (!box) return;
-    const test = row.tests.find(test => test.key === msg.key);
+    const matchedTest = row.tests.find(entry => entry.key === msg.key);
     const iconName = { success: "check", warning: "alert", error: "alert", running: "loader" }[msg.state] || "check";
     box.className = `mx-result show ${esc(msg.state)}`;
     box.innerHTML = `
       ${icon(iconName, 14, msg.state === "running" ? "spin" : "")}
       <div style="min-width:0">
-        <div><strong>${esc(test ? localized(test.label) : msg.key)}</strong> · ${esc(localTitle(msg.title))} · ${esc(localDetail(msg.detail || ""))}</div>
+        <div><strong>${esc(matchedTest ? localized(matchedTest.label) : msg.key)}</strong> · ${esc(localTitle(msg.title))} · ${esc(localDetail(msg.detail || ""))}</div>
       </div>
       <button class="close" title="${t("close")}" aria-label="${t("close")}">${icon("x", 13)}</button>`;
   }
@@ -1915,6 +1339,9 @@
     if (btn) setPage(btn.dataset.nav);
   });
 
+  // Keep this above WebApiServer._updates_since's 15 s long-poll hold so a
+  // healthy idle connection always responds before the browser aborts it.
+  const UPDATE_REQUEST_TIMEOUT_MS = 20000;
   let updateCursor = 0, polling = false, updateAbort = null, updateRetryTimer = null, updateFailures = 0;
   function setControllerConnectionLost(lost) {
     const note = $("#connection-note");
@@ -1925,7 +1352,7 @@
     polling = true;
     const controller = new AbortController();
     let timedOut = false;
-    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 20000);
+    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, UPDATE_REQUEST_TIMEOUT_MS);
     updateAbort = controller;
     try {
       const batch = await bridge.updates(updateCursor, controller.signal);
@@ -1980,12 +1407,14 @@
     lastStateJson = JSON.stringify(state);
     buildShell();
     syncHome();
+    window.addEventListener("blur", () => finishVolumeDrag());
     document.addEventListener("keydown", e => {
       if (e.key === "Escape" && dlg) closeSpeakerDialog();
     });
     document.addEventListener("visibilitychange", updatePollingVisibility);
     updatePollingVisibility();
   }).catch(() => {
+    $("#main").removeAttribute("aria-busy");
     $("#main").innerHTML = `<div class="boot-error"><h1>${t("controller_unavailable")}</h1><p>${t("controller_unavailable_desc")}</p></div>`;
   });
   </script>
