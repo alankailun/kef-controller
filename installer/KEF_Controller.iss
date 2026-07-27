@@ -2,7 +2,7 @@
 #define AppVersion "1.7.8"
 #define WebView2RuntimeKey "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 #ifndef BuildSource
-  #define BuildSource "..\dist\KEF Controller"
+  #define BuildSource "..\dist\release-1.7.8\KEF Controller"
 #endif
 
 [Setup]
@@ -16,7 +16,8 @@ DefaultDirName={autopf}\KEF Controller
 DisableDirPage=no
 DefaultGroupName=KEF Controller
 DisableProgramGroupPage=yes
-OutputDir=output
+; Keep all release artifacts together under the repository's single dist folder.
+OutputDir=..\dist
 OutputBaseFilename=KEF_Controller_Setup
 SetupIconFile=assets\setup-icon.ico
 Compression=lzma
@@ -91,17 +92,7 @@ begin
   if not IsControllerRunning() then
     exit;
 
-  if MsgBox(
-    'KEF Controller is currently running.' + #13#10 + #13#10 +
-    'Click OK to close all running instances and continue installation, or Cancel to return to Setup.',
-    mbConfirmation,
-    MB_OKCANCEL
-  ) <> IDOK then
-  begin
-    Result := False;
-    exit;
-  end;
-
+  { Close the previous instance automatically before replacing its files. }
   CloseRunningApp();
   if IsControllerRunning() then
   begin
