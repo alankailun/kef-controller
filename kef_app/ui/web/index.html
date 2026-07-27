@@ -716,7 +716,9 @@
       if (el) el.textContent = String(count);
       if (button) {
         button.classList.toggle("active", minLogLevel === level);
-        button.disabled = count === 0 && level !== "ERROR";
+        // Empty severity filters remain selectable so every level consistently
+        // reports "No logs at this level" instead of becoming a dead chip.
+        button.disabled = false;
         button.title = t("severity_tip", t(LEVEL_TEXT_KEYS[level]), atOrAbove);
       }
     }

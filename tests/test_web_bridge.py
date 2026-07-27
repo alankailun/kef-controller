@@ -59,6 +59,11 @@ class WebBridgeTests(unittest.TestCase):
         self.assertIn('.severity-btn.active.INFO  { color: #cbd5e1; border-color: #334155; background: #1e293b; }', css)
         self.assertIn('.severity-btn.active.WARN  { color: #fcd34d; border-color: #78350f; background: #451a03; }', css)
 
+    def test_web_ui_keeps_empty_severity_filters_selectable(self) -> None:
+        html = (Path(__file__).parents[1] / "kef_app" / "ui" / "web" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('button.disabled = false;', html)
+
     def test_startup_update_is_scheduled_without_blocking_the_ui_thread(self) -> None:
         bridge = WebControllerBridge.__new__(WebControllerBridge)
         bridge._config = AppConfig()
