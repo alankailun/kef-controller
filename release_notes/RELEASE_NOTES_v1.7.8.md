@@ -24,8 +24,8 @@ Release date: 2026-07-26
 
 - Named power-rule checkboxes, labelled volume control, live toast updates,
   error alerts, reduced-motion support, and modal focus management.
-- Improved light-theme log-level chips, responsive log-page sizing, setup-note
-  theme tokens, long speaker-name truncation, search clear-button handling,
+- Improved log-page sizing, setup-note theme tokens, long speaker-name
+  truncation, search clear-button handling,
   and the original left-aligned input-source grid.
 - Added a launch skeleton and reduced unnecessary icon DOM replacement while
   changing volume or viewing simulated event settings.

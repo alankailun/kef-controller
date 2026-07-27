@@ -196,20 +196,12 @@
     }
     .severity-btn:hover:not(:disabled) { border-color: var(--teal); color: var(--ink); }
     .severity-btn:disabled { opacity: .38; cursor: default; }
-    .severity-btn.active.ERROR { color: #991b1b; border-color: #fecaca; background: #fef2f2; }
-    .severity-btn.active.WARN  { color: #92400e; border-color: #fde68a; background: #fffbeb; }
-    .severity-btn.active.EVENT { color: #5b21b6; border-color: #ddd6fe; background: #f5f3ff; }
-    .severity-btn.active.STATE { color: #155e75; border-color: #a5f3fc; background: #ecfeff; }
-    .severity-btn.active.STEP  { color: #166534; border-color: #bbf7d0; background: #f0fdf4; }
-    .severity-btn.active.INFO  { color: #334155; border-color: #cbd5e1; background: #f8fafc; }
-    @media (prefers-color-scheme: dark) {
-      .severity-btn.active.ERROR { color: #fca5a5; border-color: #7f1d1d; background: #450a0a; }
-      .severity-btn.active.WARN  { color: #fcd34d; border-color: #78350f; background: #451a03; }
-      .severity-btn.active.EVENT { color: #c4b5fd; border-color: #4c1d95; background: #2e1065; }
-      .severity-btn.active.STATE { color: #67e8f9; border-color: #155e75; background: #083344; }
-      .severity-btn.active.STEP  { color: #86efac; border-color: #14532d; background: #052e16; }
-      .severity-btn.active.INFO  { color: #cbd5e1; border-color: #334155; background: #1e293b; }
-    }
+    .severity-btn.active.ERROR { color: #fca5a5; border-color: #7f1d1d; background: #450a0a; }
+    .severity-btn.active.WARN  { color: #fcd34d; border-color: #78350f; background: #451a03; }
+    .severity-btn.active.EVENT { color: #c4b5fd; border-color: #4c1d95; background: #2e1065; }
+    .severity-btn.active.STATE { color: #67e8f9; border-color: #155e75; background: #083344; }
+    .severity-btn.active.STEP  { color: #86efac; border-color: #14532d; background: #052e16; }
+    .severity-btn.active.INFO  { color: #cbd5e1; border-color: #334155; background: #1e293b; }
     .log-box {
       background: #0f172a; border-radius: 10px; padding: 12px; flex: 1; min-height: 0;
       overflow-y: auto; font: 12px/1.65 ui-monospace, "Cascadia Mono", Consolas, monospace;

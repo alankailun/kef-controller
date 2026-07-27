@@ -53,6 +53,12 @@ class WebBridgeTests(unittest.TestCase):
         self.assertIn('.input-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));', css)
         self.assertNotIn('.input-btn:last-child', css)
 
+    def test_web_ui_uses_the_classic_dark_active_severity_chips(self) -> None:
+        css = (Path(__file__).parents[1] / "kef_app" / "ui" / "web" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('.severity-btn.active.INFO  { color: #cbd5e1; border-color: #334155; background: #1e293b; }', css)
+        self.assertIn('.severity-btn.active.WARN  { color: #fcd34d; border-color: #78350f; background: #451a03; }', css)
+
     def test_startup_update_is_scheduled_without_blocking_the_ui_thread(self) -> None:
         bridge = WebControllerBridge.__new__(WebControllerBridge)
         bridge._config = AppConfig()
