@@ -15,16 +15,18 @@ Release date: 2026-07-26
 - Log records now include an authoritative Python log level in both disk and
   live UI streams. The UI no longer classifies messages by scanning their text
   for words such as `failed` or `could not`.
-- Historical log files remain visible. Their severity defaults to INFO, while
-  their leading lifecycle token still supplies the STEP, EVENT, or STATE
-  category without scanning arbitrary fields such as `error=`.
+- Historical log files remain visible. A leading `WARN` or `ERROR` token is
+  preserved; otherwise their severity defaults to INFO, while a leading
+  lifecycle token still supplies the STEP, EVENT, or STATE category without
+  scanning arbitrary fields such as `error=`.
 
 ## Accessibility and UI
 
 - Named power-rule checkboxes, labelled volume control, live toast updates,
   error alerts, reduced-motion support, and modal focus management.
 - Improved light-theme log-level chips, responsive log-page sizing, setup-note
-  theme tokens, long speaker-name truncation, and search clear-button handling.
+  theme tokens, long speaker-name truncation, search clear-button handling,
+  and the original left-aligned input-source grid.
 - Added a launch skeleton and reduced unnecessary icon DOM replacement while
   changing volume or viewing simulated event settings.
 - Moved stylesheet and localization data into independent static assets, with
