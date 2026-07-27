@@ -8,6 +8,8 @@ Release date: 2026-07-26
   capture loss, window blur, or a pointer release outside the slider.
 - A direct volume edit is cancelled, rather than sent to the speaker, when the
   speaker enters standby while the edit field has focus.
+- Setup now closes a running KEF Controller instance automatically before
+  replacing its files, without an extra confirmation dialog.
 - The UI now shows a reconnecting notice after repeated controller update
   failures and clears it immediately when updates resume.
 - Log records now include an authoritative Python log level in both disk and
