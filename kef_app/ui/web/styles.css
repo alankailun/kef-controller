@@ -148,7 +148,6 @@
 
     /* ── 输入源 ── */
     .input-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 10px; }
-    .input-btn:last-child:nth-child(3n + 1) { grid-column: 2; }
     .input-btn {
       display: flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 8px;
       border: 1px solid var(--btn-line-soft); background: var(--panel); border-radius: 8px; font-size: 13px;
@@ -488,8 +487,6 @@
       nav { width: 132px; }
       .page { width: 100%; padding: 22px 24px 32px; }
       .input-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .input-btn:last-child:nth-child(3n + 1) { grid-column: auto; }
-      .input-btn:last-child:nth-child(odd) { grid-column: 1 / -1; }
       .matrix { overflow-x: auto; }
       .mx-head, .mx-row { min-width: 650px; }
     }

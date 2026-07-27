@@ -40,10 +40,18 @@ class WebBridgeTests(unittest.TestCase):
         html = (Path(__file__).parents[1] / "kef_app" / "ui" / "web" / "index.html").read_text(encoding="utf-8")
         self.assertIn('const structured = raw.match(/^\\[([^\\]]+)\\]\\[([^\\]]+)\\]\\[([A-Z]+)\\]\\s*(.*)$/);', html)
         self.assertIn('const legacy = structured ? null : raw.match(/^\\[([^\\]]+)\\]\\[([^\\]]+)\\]\\s*(.*)$/);', html)
-        self.assertIn('const category = original.match(/^(BEGIN|STEP|END|EVENT|STATE|SKIP)\\s/);', html)
-        self.assertIn('const message = category ? original.slice(category[0].length) : original;', html)
+        self.assertIn('const prefixLevel = original.match(/^(ERROR|WARN(?:ING)?|INFO)\\s*[:|-]?\\s*/i);', html)
+        self.assertIn('const rawLevel = structured ? structured[3] : (prefixLevel ? prefixLevel[1] : "INFO");', html)
+        self.assertIn('const category = categorized.match(/^(BEGIN|STEP|END|EVENT|STATE|SKIP)\\s/);', html)
+        self.assertIn('const message = category ? categorized.slice(category[0].length) : categorized;', html)
         self.assertNotIn('const isProcessLifecycle =', html)
         self.assertNotIn('const isPrewarmRetry =', html)
+
+    def test_web_ui_keeps_input_sources_left_aligned(self) -> None:
+        css = (Path(__file__).parents[1] / "kef_app" / "ui" / "web" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('.input-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));', css)
+        self.assertNotIn('.input-btn:last-child', css)
 
     def test_startup_update_is_scheduled_without_blocking_the_ui_thread(self) -> None:
         bridge = WebControllerBridge.__new__(WebControllerBridge)
