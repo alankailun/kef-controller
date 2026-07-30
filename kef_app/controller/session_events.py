@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import queue
 import threading
 import traceback
+from dataclasses import dataclass
 
 from .triggers import get_trigger
 
@@ -9,7 +11,27 @@ from .triggers import get_trigger
 _EARLY_STANDBY_EVENT_BUDGET_S = 0.30
 _SUSPEND_STANDBY_EVENT_BUDGET_S = 0.30
 _PUMP_CALLBACK_SLOW_THRESHOLD_S = 0.020
-_DISPLAY_OFF_STANDBY_REASONS = {"DISPLAY_OFF", "UI_TEST_DISPLAY_OFF"}
+_DISPLAY_OFF_FAST_RETRY_DELAY_S = 0.50
+_DISPLAY_OFF_VERIFIED_RETRY_DELAY_S = 1.50
+
+
+@dataclass(frozen=True, slots=True)
+class _DisplayOffStandbyTask:
+    generation: int
+    trigger_name: str
+    reason: str
+    event_mono: float
+    cancel_event: threading.Event
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundedStandbyTask:
+    trigger_name: str
+    generation: int
+    reason: str
+    event_mono: float
+    deadline_mono: float
+    fast_path_enabled: bool = True
 
 
 class ControllerSessionEventsMixin:
@@ -17,9 +39,7 @@ class ControllerSessionEventsMixin:
     def _early_standby_event_matches_reason(event_name: str, reason: str) -> bool:
         if event_name == reason:
             return True
-        if event_name == "GUID_LIDSWITCH_STATE_CHANGE" and reason == "POWER_LID_CLOSED":
-            return True
-        return event_name == "GUID_CONSOLE_DISPLAY_STATE" and reason == "DISPLAY_OFF"
+        return event_name == "GUID_LIDSWITCH_STATE_CHANGE" and reason == "POWER_LID_CLOSED"
 
     def _start_controller_thread(self, target, thread_name: str):
         def guarded():
@@ -30,7 +50,318 @@ class ControllerSessionEventsMixin:
 
         threading.Thread(target=guarded, daemon=True, name=thread_name).start()
 
-    def _schedule_delayed_wake(self, generation: int, reason: str, delay: float, step_label: str, thread_name: str):
+    def start_display_off_standby_dispatcher(self) -> bool:
+        """Start the resident worker used by off-pump standby fast paths."""
+        with self._display_off_dispatcher_lock:
+            thread = self._display_off_dispatcher_thread
+            if thread is not None and thread.is_alive():
+                return False
+            self._display_off_dispatcher_stop.clear()
+            self._display_off_dispatcher_queue = queue.SimpleQueue()
+            thread = threading.Thread(
+                target=self._run_display_off_standby_dispatcher,
+                daemon=True,
+                name="DisplayOffStandbyDispatcher",
+            )
+            self._display_off_dispatcher_thread = thread
+            thread.start()
+            return True
+
+    def stop_display_off_standby_dispatcher(self) -> None:
+        self._display_off_dispatcher_stop.set()
+        with self._display_off_dispatcher_lock:
+            self._display_off_dispatcher_queue.put(None)
+
+    def _enqueue_display_off_standby_task(self, task: _DisplayOffStandbyTask | _BoundedStandbyTask) -> None:
+        if self._display_off_dispatcher_stop.is_set():
+            # stop_display_off_standby_dispatcher is a terminal cleanup action.
+            # Never append work to a live-but-exiting worker's queue.
+            return
+        self.start_display_off_standby_dispatcher()
+        with self._display_off_dispatcher_lock:
+            if self._display_off_dispatcher_stop.is_set():
+                return
+            self._display_off_dispatcher_queue.put(task)
+
+    def _run_display_off_standby_dispatcher(self) -> None:
+        """Keep one task failure from taking down future display-off work."""
+        while not self._display_off_dispatcher_stop.is_set():
+            task = self._display_off_dispatcher_queue.get()
+            if task is None:
+                continue
+            try:
+                if isinstance(task, _DisplayOffStandbyTask):
+                    self._process_display_off_standby_task(task)
+                else:
+                    self._process_bounded_standby_task(task)
+            except Exception:
+                if isinstance(task, _DisplayOffStandbyTask):
+                    self._update_display_off_standby_intent(task.generation, "failed")
+                self.log.error(
+                    "StandbyDispatcher task failed:\n%s",
+                    traceback.format_exc(),
+                )
+
+    def _log_cancellable_retry_stop(
+        self,
+        task: _DisplayOffStandbyTask,
+        *,
+        step: str,
+        cause: str,
+        include_current_state: bool = False,
+    ) -> None:
+        fields = {
+            "action": "EARLY_STANDBY",
+            "gen": task.generation,
+            "reason": task.reason,
+            "step": step,
+            "cause": cause,
+            "mono": f"{self.mono():.3f}",
+        }
+        if include_current_state:
+            desired_state, desired_reason = self._current_desired_state()
+            fields.update(
+                current_gen=self._current_generation(),
+                current_desired=desired_state or "<empty>",
+                current_reason=desired_reason or "<empty>",
+            )
+        self._log_structured("STEP", log_level="info", **fields)
+
+    def _wait_for_display_off_retry(self, task: _DisplayOffStandbyTask, delay_s: float, step: str) -> bool:
+        if task.cancel_event.wait(delay_s):
+            self._log_cancellable_retry_stop(
+                task,
+                step="cancellable_retry_cancelled",
+                cause="cancel_event",
+                include_current_state=True,
+            )
+            return False
+        if self._display_off_dispatcher_stop.is_set():
+            self._log_cancellable_retry_stop(
+                task,
+                step="cancellable_retry_cancelled",
+                cause="dispatcher_stopped",
+            )
+            return False
+        if not self._display_off_intent_is_active(task.generation):
+            self._log_cancellable_retry_stop(
+                task,
+                step="cancellable_retry_superseded",
+                cause="generation_or_intent_changed",
+                include_current_state=True,
+            )
+            return False
+        self._log_structured(
+            "STEP",
+            log_level="info",
+            action="EARLY_STANDBY",
+            gen=task.generation,
+            reason=task.reason,
+            step=step,
+            delay_s=f"{delay_s:.2f}",
+            mono=f"{self.mono():.3f}",
+        )
+        return True
+
+    def _complete_display_off_fast_send(
+        self,
+        task: _DisplayOffStandbyTask,
+        *,
+        attempt: int,
+        outcome: str,
+    ) -> bool:
+        if not self._update_display_off_standby_intent(task.generation, "sent"):
+            return False
+        # The send has already completed.  UI/tray listeners are arbitrary
+        # user-facing code and must not hold the dispatcher that carries later
+        # deadline-bound lid/suspend work.  Keep the start/finish pair ordered
+        # in one guarded, short-lived notifier instead.
+        def notify_completed_send() -> None:
+            self._mark_power_action_started()
+            self._emit_power_action_started_event("EARLY_STANDBY", task.reason)
+            self._emit_power_action_finished("EARLY_STANDBY", task.reason, outcome)
+
+        self._start_controller_thread(
+            notify_completed_send,
+            f"CancellableStandbyNotify-{task.trigger_name}-{task.generation}-{attempt}",
+        )
+        self._log_structured(
+            "END",
+            action="EARLY_STANDBY",
+            gen=task.generation,
+            reason=task.reason,
+            outcome=outcome,
+            attempt=attempt,
+            since_event_ms=int(max(0.0, self.mono() - task.event_mono) * 1000),
+            mono=f"{self.mono():.3f}",
+        )
+        return True
+
+    def _send_display_off_fast_attempt(self, task: _DisplayOffStandbyTask, attempt: int) -> bool:
+        if not self._update_display_off_standby_intent(task.generation, "sending"):
+            return False
+
+        # The cached request avoids JSON/header construction and logging before
+        # the first byte.  Its pool helper tries both persistent holders.
+        cached_result = self.try_send_cached_prewarmed_standby(generation=task.generation)
+        if cached_result.success:
+            self._log_structured(
+                "STEP",
+                log_level="info",
+                action="EARLY_STANDBY",
+                gen=task.generation,
+                reason=task.reason,
+                step="cached_cancellable_send",
+                status=cached_result.status,
+                target_ip=cached_result.target_ip,
+                attempt=attempt,
+                cache_version=cached_result.cache_version,
+                cache_age_ms=cached_result.cache_age_ms,
+                duration_ms=cached_result.duration_ms,
+                mono=f"{self.mono():.3f}",
+            )
+            return self._complete_display_off_fast_send(
+                task,
+                attempt=attempt,
+                outcome="sent_unconfirmed_prewarmed",
+            )
+
+        current_ip = self.get_current_kef_ip()
+        if not current_ip:
+            self._log_structured(
+                "WARN",
+                action="EARLY_STANDBY",
+                gen=task.generation,
+                reason=task.reason,
+                step="cancellable_fast_send",
+                attempt=attempt,
+                status="skipped_no_current_ip",
+                mono=f"{self.mono():.3f}",
+            )
+            self._update_display_off_standby_intent(task.generation, "retry_waiting")
+            return False
+
+        fast_result = self._send_fast_standby(
+            current_ip,
+            generation=task.generation,
+            reason=task.reason,
+            fire_and_forget_attempts=1,
+            skip_prewarmed=True,
+        )
+        fields = {"attempt": attempt, "display_off_dispatcher": True}
+        self._log_prewarmed_fast_send(
+            fast_result,
+            action="EARLY_STANDBY",
+            generation=task.generation,
+            reason=task.reason,
+            current_ip=current_ip,
+            host_unreachable_cause="display_off_host_unreachable",
+            extra_fields=fields,
+        )
+        self._log_fire_and_forget_fast_send(
+            fast_result,
+            action="EARLY_STANDBY",
+            generation=task.generation,
+            reason=task.reason,
+            current_ip=current_ip,
+            host_unreachable_outcome="failed_host_unreachable",
+            host_unreachable_status="host_unreachable_retrying",
+            host_unreachable_cause="display_off_host_unreachable",
+            extra_fields=fields,
+        )
+
+        if fast_result.success:
+            return self._complete_display_off_fast_send(
+                task,
+                attempt=attempt,
+                outcome=("sent_unconfirmed_prewarmed" if fast_result.source == "prewarmed" else "sent_unconfirmed_fire_and_forget"),
+            )
+
+        self._update_display_off_standby_intent(task.generation, "retry_waiting")
+        return False
+
+    def _process_display_off_standby_task(self, task: _DisplayOffStandbyTask) -> None:
+        """Run a cancellable fast-fast-verified early-standby sequence."""
+        if self._send_display_off_fast_attempt(task, attempt=1):
+            return
+        if not self._wait_for_display_off_retry(task, _DISPLAY_OFF_FAST_RETRY_DELAY_S, "display_off_fast_retry"):
+            return
+        if self._send_display_off_fast_attempt(task, attempt=2):
+            return
+        if not self._wait_for_display_off_retry(task, _DISPLAY_OFF_VERIFIED_RETRY_DELAY_S, "display_off_verified_retry"):
+            return
+        if not self._update_display_off_standby_intent(task.generation, "sending"):
+            return
+
+        # Verified standby can take seconds (identity, action lock, HTTP
+        # verification).  It must never occupy the shared dispatcher, which
+        # also carries deadline-bound lid and suspend sends.
+        def verified_fallback() -> None:
+            success = self.standby_kef(task.generation, task.reason)
+            self._update_display_off_standby_intent(
+                task.generation,
+                "confirmed" if success else "failed",
+            )
+
+        self._start_controller_thread(
+            verified_fallback,
+            f"CancellableStandbyVerify-{task.trigger_name}-{task.generation}",
+        )
+
+    def _process_bounded_standby_task(self, task: _BoundedStandbyTask) -> None:
+        """Run one deadline-bound fast send without blocking the dispatcher."""
+        abort_reason = self._bounded_standby_abort_reason(
+            deadline_mono=task.deadline_mono,
+            generation=task.generation,
+        )
+        if abort_reason:
+            self._log_structured(
+                "ABORT",
+                action="STANDBY" if task.trigger_name == "suspend" else "EARLY_STANDBY",
+                gen=task.generation,
+                reason=task.reason,
+                step=f"before_{task.trigger_name}_dispatcher_send",
+                cause=abort_reason,
+                deadline_mono=f"{task.deadline_mono:.3f}",
+                mono=f"{self.mono():.3f}",
+            )
+            return
+
+        if task.trigger_name == "suspend":
+            if task.fast_path_enabled:
+                self.standby_kef_fast_suspend(
+                    task.generation,
+                    task.reason,
+                    deadline_mono=task.deadline_mono,
+                )
+                return
+            # Preserve the existing full-standby fallback without allowing it
+            # to hold up the resident fast-path dispatcher.
+            self._start_controller_thread(
+                lambda: self.standby_kef(task.generation, task.reason),
+                f"SuspendVerifiedStandby-{task.generation}",
+            )
+            return
+
+        trigger = get_trigger(task.trigger_name)
+        self._run_early_standby_trigger(
+            trigger,
+            task.reason,
+            generation=task.generation,
+            event_mono=task.event_mono,
+            deadline_mono=task.deadline_mono,
+        )
+
+    def _schedule_delayed_wake(
+        self,
+        generation: int,
+        reason: str,
+        delay: float,
+        step_label: str,
+        thread_name: str,
+        *,
+        skip_if_already_on: bool = False,
+    ):
         def worker():
             self._log_structured(
                 "STEP",
@@ -43,7 +374,10 @@ class ControllerSessionEventsMixin:
             )
             if not self._interruptible_sleep(delay, generation, step_label):
                 return
-            self.wake_kef(generation, reason)
+            if skip_if_already_on:
+                self.wake_kef(generation, reason, skip_if_already_on=True)
+            else:
+                self.wake_kef(generation, reason)
 
         self._start_controller_thread(worker, f"{thread_name}-{generation}")
 
@@ -133,6 +467,7 @@ class ControllerSessionEventsMixin:
         raise ValueError(f"Unknown off-pump standby trigger: {trigger_name}")
 
     def schedule_suspend_standby(self, reason: str, event_mono: float) -> bool:
+        self._cancel_display_off_standby_intent(expected_trigger=None, advance_generation=False)
         generation = self._new_generation("sleep", reason, mono=f"{event_mono:.3f}")
         if not self.config.standby_on_sleep:
             self._log_structured(
@@ -153,7 +488,7 @@ class ControllerSessionEventsMixin:
             action="STANDBY",
             gen=generation,
             reason=reason,
-            step="schedule_suspend_worker",
+            step="schedule_suspend_dispatcher",
             event_mono=f"{event_mono:.3f}",
             deadline_mono=f"{deadline_mono:.3f}",
             budget_ms=int(_SUSPEND_STANDBY_EVENT_BUDGET_S * 1000),
@@ -161,28 +496,16 @@ class ControllerSessionEventsMixin:
             mono=f"{self.mono():.3f}",
         )
 
-        def worker() -> None:
-            abort_reason = self._bounded_standby_abort_reason(
-                deadline_mono=deadline_mono,
+        self._enqueue_display_off_standby_task(
+            _BoundedStandbyTask(
+                trigger_name="suspend",
                 generation=generation,
+                reason=reason,
+                event_mono=event_mono,
+                deadline_mono=deadline_mono,
+                fast_path_enabled=fast_path_enabled,
             )
-            if abort_reason:
-                self._log_structured(
-                    "ABORT",
-                    action="STANDBY",
-                    gen=generation,
-                    reason=reason,
-                    step="before_suspend_worker_send",
-                    cause=abort_reason,
-                    mono=f"{self.mono():.3f}",
-                )
-                return
-            if fast_path_enabled:
-                self.standby_kef_fast_suspend(generation, reason, deadline_mono=deadline_mono)
-                return
-            self.standby_kef(generation, reason)
-
-        self._start_controller_thread(worker, f"SuspendStandby-{generation}")
+        )
         return True
 
     def schedule_early_standby(self, trigger_name: str, reason: str, event_mono: float) -> bool:
@@ -206,6 +529,40 @@ class ControllerSessionEventsMixin:
             )
             return False
 
+        if trigger_name in {"display_off", "lock"}:
+            intent = self._begin_cancellable_standby_intent(trigger_name, reason, event_mono)
+            task = _DisplayOffStandbyTask(
+                generation=intent.generation,
+                trigger_name=trigger_name,
+                reason=reason,
+                event_mono=event_mono,
+                cancel_event=intent.cancel_event,
+            )
+            # Queue before logging: this is the shortest path from the Windows
+            # event to the resident sender, while the intent remains fully
+            # cancellable by a later DisplayOn.
+            self._enqueue_display_off_standby_task(task)
+            self._log_structured(
+                "STATE",
+                desired="sleep",
+                gen=intent.generation,
+                reason=reason,
+                mono=f"{event_mono:.3f}",
+            )
+            self._log_structured(
+                "STEP",
+                log_level="info",
+                action=trigger.action_name,
+                gen=intent.generation,
+                reason=reason,
+                step="schedule_cancellable_dispatcher",
+                trigger=trigger_name,
+                event_mono=f"{event_mono:.3f}",
+                mono=f"{self.mono():.3f}",
+            )
+            return True
+
+        self._cancel_display_off_standby_intent(expected_trigger=None, advance_generation=False)
         generation = self._new_generation("sleep", reason, mono=f"{event_mono:.3f}")
         budget_s = _EARLY_STANDBY_EVENT_BUDGET_S
         deadline_mono = event_mono + budget_s
@@ -215,7 +572,7 @@ class ControllerSessionEventsMixin:
             action=trigger.action_name,
             gen=generation,
             reason=reason,
-            step="schedule_bounded_worker",
+            step="schedule_bounded_dispatcher",
             trigger=trigger_name,
             event_mono=f"{event_mono:.3f}",
             deadline_mono=f"{deadline_mono:.3f}",
@@ -223,189 +580,25 @@ class ControllerSessionEventsMixin:
             mono=f"{self.mono():.3f}",
         )
 
-        def worker():
-            if trigger_name == "lock" and self.try_handle_cached_lock_fast_path(
-                reason,
-                event_mono,
+        self._enqueue_display_off_standby_task(
+            _BoundedStandbyTask(
+                trigger_name=trigger_name,
                 generation=generation,
-                deadline_mono=deadline_mono,
-            ):
-                return
-            self._run_early_standby_trigger(
-                trigger,
-                reason,
-                generation=generation,
+                reason=reason,
                 event_mono=event_mono,
                 deadline_mono=deadline_mono,
             )
-
-        self._start_controller_thread(worker, f"EarlyStandby-{trigger_name}-{generation}")
+        )
         return True
-
-    def try_handle_cached_lock_fast_path(
-        self,
-        reason: str,
-        event_mono: float,
-        *,
-        generation: int | None = None,
-        deadline_mono: float | None = None,
-    ) -> bool:
-        if not self.config.standby_on_lock:
-            self._log_cached_lock_fast_path_skip(reason, event_mono, "lock_standby_disabled")
-            return False
-        if self._session_ending:
-            self._log_cached_lock_fast_path_skip(reason, event_mono, "session_ending")
-            return False
-
-        if deadline_mono is None and generation is None:
-            result = self.try_send_cached_prewarmed_standby()
-        else:
-            result = self.try_send_cached_prewarmed_standby(
-                deadline_mono=deadline_mono,
-                generation=generation,
-            )
-        if not result.success:
-            self._log_cached_lock_fast_path_result(reason, event_mono, result)
-            return False
-
-        if generation is None:
-            # Direct callers do not pre-record the Windows event or generation.
-            self._record_session_event_state(reason, event_mono)
-            generation = self._new_generation("sleep", reason, mono=f"{event_mono:.3f}")
-        # The send already finished, but listeners (tray/home power hints) track
-        # every standby through these events, so mirror _run_standby_action.
-        self._mark_power_action_started()
-        self._emit_power_action_started_event("EARLY_STANDBY", reason)
-        self._log_cached_lock_fast_path_success(reason, event_mono, generation, result)
-        self._emit_power_action_finished("EARLY_STANDBY", reason, "sent_unconfirmed_prewarmed")
-        return True
-
-    def _log_cached_lock_fast_path_skip(self, reason: str, event_mono: float, skip_reason: str) -> None:
-        now = self.mono()
-        self._log_structured(
-            "STEP",
-            log_level="info",
-            action="EARLY_STANDBY",
-            reason=reason,
-            step="cached_lock_fast_path",
-            fast_path_used=False,
-            fast_path_skip_reason=skip_reason,
-            since_event_ms=int(max(0.0, now - event_mono) * 1000),
-            mono=f"{now:.3f}",
-        )
-
-    def _log_cached_lock_fast_path_result(self, reason: str, event_mono: float, result) -> None:
-        finished = result.finished_mono or self.mono()
-        fields = {
-            "action": "EARLY_STANDBY",
-            "reason": reason,
-            "step": "cached_lock_fast_path",
-            "status": result.status or "skipped",
-            "fast_path_used": False,
-            "fast_path_skip_reason": result.fast_path_skip_reason or "unknown",
-            "target_ip": result.target_ip or "<empty>",
-            "target_mac": result.target_mac or "<empty>",
-            "duration_ms": result.duration_ms,
-            "since_event_ms": int(max(0.0, (result.started_mono or finished) - event_mono) * 1000),
-            "cache_version": result.cache_version,
-            "cache_age_ms": result.cache_age_ms,
-            "mono": f"{finished:.3f}",
-        }
-        if result.error:
-            fields["error"] = result.error
-        if result.so_error is not None:
-            fields["so_error"] = result.so_error
-        if result.host_unreachable:
-            fields["host_unreachable"] = True
-        self._log_structured("WARN" if result.error else "STEP", log_level="info", **fields)
-
-    def _log_cached_lock_fast_path_success(self, reason: str, event_mono: float, generation: int, result) -> None:
-        started = result.started_mono
-        finished = result.finished_mono
-        since_event_ms = int(max(0.0, started - event_mono) * 1000)
-        common = {
-            "fast_path_used": True,
-            "cache_version": result.cache_version,
-            "cache_age_ms": result.cache_age_ms,
-            "fast_path_duration_ms": result.duration_ms,
-        }
-        self._log_structured(
-            "STEP",
-            log_level="info",
-            action="EARLY_STANDBY",
-            reason=reason,
-            step="early_standby_trigger_entry",
-            event=reason,
-            since_event_ms=since_event_ms,
-            **common,
-            mono=f"{started:.3f}",
-        )
-        self._log_structured("BEGIN", action="EARLY_STANDBY", gen=generation, reason=reason, mono=f"{started:.3f}")
-        self._log_structured(
-            "STEP",
-            log_level="info",
-            action="EARLY_STANDBY",
-            gen=generation,
-            reason=reason,
-            step="lock_fast_path",
-            status="begin",
-            target_ip=result.target_ip,
-            target_mac=result.target_mac or "<empty>",
-            identity_check="cached_snapshot_only",
-            verify_standby=False,
-            **common,
-            mono=f"{started:.3f}",
-        )
-        self._log_structured(
-            "STEP",
-            log_level="info",
-            action="PREWARMED_STANDBY_SOCKET",
-            reason=reason,
-            step="send_enter",
-            target_ip=result.target_ip,
-            mode=result.mode,
-            deadline_s=f"{self.config.prewarmed_send_deadline_s:.2f}",
-            since_windows_event_ms=since_event_ms,
-            **common,
-            mono=f"{started:.3f}",
-        )
-        self._log_structured(
-            "STEP",
-            log_level="info",
-            action="EARLY_STANDBY",
-            gen=generation,
-            reason=reason,
-            step="prewarmed_standby_send",
-            status=result.status,
-            target_ip=result.target_ip,
-            duration_ms=result.duration_ms,
-            mode=result.mode,
-            deadline_s=f"{self.config.prewarmed_send_deadline_s:.2f}",
-            bypass_action_lock=True,
-            read_response=False,
-            so_error=result.so_error,
-            **common,
-            mono=f"{finished:.3f}",
-        )
-        self._log_structured(
-            "END",
-            action="EARLY_STANDBY",
-            gen=generation,
-            reason=reason,
-            outcome="sent_unconfirmed_prewarmed",
-            duration_ms=int(max(0.0, finished - started) * 1000),
-            **common,
-            mono=f"{finished:.3f}",
-        )
 
     def _run_early_standby_trigger(
         self,
         trigger,
         reason: str,
         *,
-        generation: int | None = None,
-        event_mono: float | None = None,
-        deadline_mono: float | None = None,
+        generation: int,
+        event_mono: float,
+        deadline_mono: float,
     ) -> bool:
         return self._on_early_standby_signal(
             reason,
@@ -424,15 +617,13 @@ class ControllerSessionEventsMixin:
         enabled: bool,
         disabled_cause: str,
         action: str,
-        generation: int | None = None,
-        event_mono: float | None = None,
-        deadline_mono: float | None = None,
+        generation: int,
+        event_mono: float,
+        deadline_mono: float,
     ) -> bool:
         entry_mono = self.mono()
         with self._state_lock:
             event_name = self._last_windows_event_name
-            recorded_event_mono = float(self._last_windows_event_mono or 0.0)
-        event_mono = recorded_event_mono if event_mono is None else event_mono
         if self._early_standby_event_matches_reason(event_name, reason):
             fields = {
                 "action": action,
@@ -480,12 +671,9 @@ class ControllerSessionEventsMixin:
                 mono=f"{entry_mono:.3f}",
             )
 
-        if generation is None:
-            generation = self._new_generation("sleep", reason)
-
         abort_reason = self._bounded_standby_abort_reason(
             deadline_mono=deadline_mono,
-            generation=generation if deadline_mono is not None else None,
+            generation=generation,
         )
         if abort_reason:
             self._log_structured(
@@ -495,13 +683,11 @@ class ControllerSessionEventsMixin:
                 reason=reason,
                 step="before_early_standby_worker_send",
                 cause=abort_reason,
-                deadline_mono=f"{deadline_mono:.3f}" if deadline_mono is not None else None,
+                deadline_mono=f"{deadline_mono:.3f}",
                 mono=f"{self.mono():.3f}",
             )
             return False
 
-        if deadline_mono is None:
-            return self.standby_kef_preemptive(generation, reason)
         return self.standby_kef_preemptive(generation, reason, deadline_mono=deadline_mono)
 
     def on_lid_closed(self, reason: str = "POWER_LID_CLOSED") -> bool:
@@ -546,19 +732,24 @@ class ControllerSessionEventsMixin:
         self._log_structured("SKIP", log_level="info", **fields)
 
     def on_display_on(self, event_mono: float, reason: str = "DISPLAY_ON") -> bool:
-        if not self.config.wake_on_display_on:
-            self._log_display_on_wake_skip(reason, "display_on_wake_disabled", event_mono=event_mono)
+        previous_intent = self._cancel_display_off_standby_intent(expected_trigger="display_off")
+        if previous_intent is None:
+            self._log_display_on_wake_skip(reason, "no_pending_display_off_intent", event_mono=event_mono)
             return False
 
-        desired_state, desired_reason = self._current_desired_state()
-        if desired_state != "sleep" or desired_reason not in _DISPLAY_OFF_STANDBY_REASONS:
-            self._log_display_on_wake_skip(
-                reason,
-                "not_display_off_sleep",
-                event_mono=event_mono,
-                desired_state=desired_state,
-                desired_reason=desired_reason,
-            )
+        self._log_structured(
+            "STATE",
+            desired="display_off_cancelled",
+            gen=self._current_generation(),
+            reason=reason,
+            cancelled_gen=previous_intent.generation,
+            previous_status=previous_intent.send_status,
+            since_event_ms=int(max(0.0, event_mono - previous_intent.event_mono) * 1000),
+            mono=f"{event_mono:.3f}",
+        )
+
+        if not self.config.wake_on_display_on:
+            self._log_display_on_wake_skip(reason, "display_on_wake_disabled", event_mono=event_mono)
             return False
 
         if self._is_session_locked():
@@ -566,8 +757,8 @@ class ControllerSessionEventsMixin:
                 reason,
                 "session_locked",
                 event_mono=event_mono,
-                desired_state=desired_state,
-                desired_reason=desired_reason,
+                desired_state=previous_intent.send_status,
+                desired_reason=previous_intent.reason,
             )
             return False
         if self._is_session_ending():
@@ -575,8 +766,8 @@ class ControllerSessionEventsMixin:
                 reason,
                 "session_ending",
                 event_mono=event_mono,
-                desired_state=desired_state,
-                desired_reason=desired_reason,
+                desired_state=previous_intent.send_status,
+                desired_reason=previous_intent.reason,
             )
             return False
         generation = self._new_generation("wake", reason, mono=f"{event_mono:.3f}")
@@ -587,7 +778,8 @@ class ControllerSessionEventsMixin:
             action="WAKE",
             gen=generation,
             reason=reason,
-            step="display_on_matched_display_off_standby",
+            step="display_on_cancelled_display_off_standby",
+            previous_send_status=previous_intent.send_status,
             event_mono=f"{event_mono:.3f}",
             delay_s=f"{self.config.display_on_wake_delay:.2f}",
             mono=f"{self.mono():.3f}",
@@ -598,6 +790,7 @@ class ControllerSessionEventsMixin:
             self.config.display_on_wake_delay,
             "display_on_delay",
             "DisplayOnWake",
+            skip_if_already_on=True,
         )
         return True
 
@@ -614,6 +807,17 @@ class ControllerSessionEventsMixin:
 
     def on_unlock(self, reason: str):
         self._set_session_locked(False)
+        previous_intent = self._cancel_display_off_standby_intent(expected_trigger="lock")
+        if previous_intent is not None:
+            self._log_structured(
+                "STATE",
+                desired="lock_standby_cancelled",
+                gen=self._current_generation(),
+                reason=reason,
+                cancelled_gen=previous_intent.generation,
+                previous_status=previous_intent.send_status,
+                since_event_ms=int(max(0.0, self.mono() - previous_intent.event_mono) * 1000),
+            )
         if self._is_session_ending():
             self._log_structured("SKIP", action="WAKE", reason=reason, cause="session_ending", mono=f"{self.mono():.3f}")
             return
@@ -625,7 +829,14 @@ class ControllerSessionEventsMixin:
             return
 
         generation = self._new_generation("wake", reason)
-        self._schedule_delayed_wake(generation, reason, self.config.unlock_wake_delay, "unlock_delay", "UnlockWake")
+        self._schedule_delayed_wake(
+            generation,
+            reason,
+            self.config.unlock_wake_delay,
+            "unlock_delay",
+            "UnlockWake",
+            skip_if_already_on=True,
+        )
 
     def on_query_end_session(self, wparam: int, lparam: int) -> bool:
         return get_trigger("query_end_session").fire(self, wparam, lparam)

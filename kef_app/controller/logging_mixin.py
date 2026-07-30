@@ -212,10 +212,16 @@ class ControllerLoggingMixin:
 
     def log_power_setting_event(self, change, wparam: int, lparam: int, *, event_mono: float | None = None):
         event_mono = self.mono() if event_mono is None else event_mono
+        self._record_power_setting_event_state(change, event_mono)
+        self._log_power_setting_event_line(change, wparam, lparam, event_mono)
+        return event_mono
+
+    def _record_power_setting_event_state(self, change, event_mono: float) -> None:
         with self._state_lock:
             self._last_windows_event_name = change.name
             self._last_windows_event_mono = event_mono
 
+    def _log_power_setting_event_line(self, change, wparam: int, lparam: int, event_mono: float) -> None:
         self._log_structured(
             "EVENT",
             kind="POWER_SETTING",
@@ -228,7 +234,6 @@ class ControllerLoggingMixin:
             lparam=f"0x{lparam:016X}",
             mono=f"{event_mono:.3f}",
         )
-        return event_mono
 
     def log_session_event(self, name: str, wparam: int, lparam: int):
         event_mono = self.mono()

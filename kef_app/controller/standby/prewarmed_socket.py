@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import select
 import socket
 import threading
 from dataclasses import dataclass
@@ -533,6 +534,7 @@ class PrewarmedStandbySocketMonitorMixin:
         frozen_limit_s: float,
         deadline_mono: float | None = None,
         generation: int | None = None,
+        reject_readable_before_send: bool = False,
     ) -> _PrewarmedSocketSendOutcome:
         so_error: int | None = None
         try:
@@ -550,6 +552,23 @@ class PrewarmedStandbySocketMonitorMixin:
                     finished,
                     abort_reason=abort_reason,
                 )
+
+            if reject_readable_before_send:
+                # Keepalive drains its complete response before returning a
+                # holder to the pool.  A readable persistent socket therefore
+                # signals peer FIN/RST (or otherwise unexpected bytes), not a
+                # response we may safely ignore.  Do not let sendall merely
+                # queue bytes locally and turn that stale connection into a
+                # false standby success.
+                readable, _, _ = select.select([sock], [], [], 0)
+                if readable:
+                    finished = self.mono()
+                    return _PrewarmedSocketSendOutcome(
+                        False,
+                        "stale_socket_readable",
+                        int(max(0.0, finished - started_mono) * 1000),
+                        finished,
+                    )
 
             sock.sendall(request)
             so_error = int(sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR))
@@ -598,6 +617,45 @@ class PrewarmedStandbySocketMonitorMixin:
             so_error=0,
         )
 
+    def _send_standby_over_prewarmed_pool(
+        self,
+        target_ip: str,
+        request: bytes,
+        *,
+        started_mono: float,
+        deadline_s: float,
+        frozen_limit_s: float,
+        deadline_mono: float | None = None,
+        generation: int | None = None,
+    ) -> _PrewarmedSocketSendOutcome | None:
+        """Try each persistent socket once before falling back to cold TCP.
+
+        A send consumes its socket because the standby request closes the write
+        side.  Retrying the other prewarmed holder is therefore safe and avoids
+        treating one stale pooled connection as a reason to reconnect.
+        """
+        last_outcome: _PrewarmedSocketSendOutcome | None = None
+        for _ in range(_PREWARM_PERSISTENT_SOCKET_POOL_SIZE):
+            sock = self._take_prewarmed_socket_holder(target_ip)
+            if sock is None:
+                break
+            attempt_started_mono = self.mono()
+            outcome = self._send_standby_over_socket(
+                sock,
+                request,
+                target_ip=target_ip,
+                started_mono=attempt_started_mono,
+                deadline_s=deadline_s,
+                frozen_limit_s=frozen_limit_s,
+                deadline_mono=deadline_mono,
+                generation=generation,
+                reject_readable_before_send=True,
+            )
+            last_outcome = outcome
+            if outcome.success or outcome.abort_reason:
+                return outcome
+        return last_outcome
+
     def try_send_prewarmed_standby(
         self,
         current_ip: str,
@@ -619,7 +677,11 @@ class PrewarmedStandbySocketMonitorMixin:
             return PrewarmedStandbySendResult(False, False, f"skipped_{abort_reason}", target_ip=current_ip)
 
         deadline_s = float(self.config.prewarmed_send_deadline_s)
-        frozen_limit_s = deadline_s * float(self.config.prewarmed_frozen_send_multiplier)
+        frozen_limit_s = (
+            float("inf")
+            if deadline_mono is None and generation is not None
+            else deadline_s * float(self.config.prewarmed_frozen_send_multiplier)
+        )
         request = build_standby_request_bytes(current_ip)
         started = self.mono()
         mode = "persistent_socket" if self.config.prewarmed_persist_socket else "short_connection"
@@ -639,8 +701,16 @@ class PrewarmedStandbySocketMonitorMixin:
         self._log_structured("STEP", log_level="info", **fields)
 
         if self.config.prewarmed_persist_socket:
-            sock = self._take_prewarmed_socket_holder(current_ip)
-            if sock is None:
+            outcome = self._send_standby_over_prewarmed_pool(
+                current_ip,
+                request,
+                started_mono=started,
+                deadline_s=deadline_s,
+                frozen_limit_s=frozen_limit_s,
+                deadline_mono=deadline_mono,
+                generation=generation,
+            )
+            if outcome is None:
                 return PrewarmedStandbySendResult(True, False, "no_socket", target_ip=current_ip, mode=mode)
         else:
             abort_reason = self._bounded_standby_abort_reason(
@@ -674,16 +744,16 @@ class PrewarmedStandbySocketMonitorMixin:
                     host_unreachable=is_host_unreachable(exc),
                 )
 
-        outcome = self._send_standby_over_socket(
-            sock,
-            request,
-            target_ip=current_ip,
-            started_mono=started,
-            deadline_s=deadline_s,
-            frozen_limit_s=frozen_limit_s,
-            deadline_mono=deadline_mono,
-            generation=generation,
-        )
+            outcome = self._send_standby_over_socket(
+                sock,
+                request,
+                target_ip=current_ip,
+                started_mono=started,
+                deadline_s=deadline_s,
+                frozen_limit_s=frozen_limit_s,
+                deadline_mono=deadline_mono,
+                generation=generation,
+            )
         return PrewarmedStandbySendResult(
             True,
             outcome.success,
@@ -755,8 +825,22 @@ class PrewarmedStandbySocketMonitorMixin:
             )
 
         cache_age_ms = int(max(0.0, started - snapshot.updated_mono) * 1000)
-        sock = self._take_prewarmed_socket_holder(snapshot.target_ip)
-        if sock is None:
+        deadline_s = float(self.config.prewarmed_send_deadline_s)
+        frozen_limit_s = (
+            float("inf")
+            if deadline_mono is None and generation is not None
+            else deadline_s * float(self.config.prewarmed_frozen_send_multiplier)
+        )
+        outcome = self._send_standby_over_prewarmed_pool(
+            snapshot.target_ip,
+            snapshot.standby_request_bytes,
+            started_mono=started,
+            deadline_s=deadline_s,
+            frozen_limit_s=frozen_limit_s,
+            deadline_mono=deadline_mono,
+            generation=generation,
+        )
+        if outcome is None:
             return CachedPrewarmedStandbySendResult(
                 False,
                 False,
@@ -772,18 +856,6 @@ class PrewarmedStandbySocketMonitorMixin:
                 snapshot=snapshot,
             )
 
-        deadline_s = float(self.config.prewarmed_send_deadline_s)
-        frozen_limit_s = deadline_s * float(self.config.prewarmed_frozen_send_multiplier)
-        outcome = self._send_standby_over_socket(
-            sock,
-            snapshot.standby_request_bytes,
-            target_ip=snapshot.target_ip,
-            started_mono=started,
-            deadline_s=deadline_s,
-            frozen_limit_s=frozen_limit_s,
-            deadline_mono=deadline_mono,
-            generation=generation,
-        )
         if not outcome.success:
             if outcome.abort_reason:
                 fast_path_skip_reason = outcome.abort_reason

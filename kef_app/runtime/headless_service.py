@@ -141,6 +141,7 @@ class HeadlessRuntime:
         threading.Thread(target=self.controller.on_startup, daemon=True, name="StartupWake").start()
         self.controller.start_speaker_event_monitor("headless_runtime")
         self.controller.start_prewarmed_standby_socket_monitor("headless_runtime")
+        self.controller.start_display_off_standby_dispatcher()
 
         resource_lock = threading.Lock()
         cleaned_up = False
@@ -165,6 +166,7 @@ class HeadlessRuntime:
                     self._hwnd = 0
                 self.controller.stop_speaker_event_monitor()
                 self.controller.stop_prewarmed_standby_socket_monitor()
+                self.controller.stop_display_off_standby_dispatcher()
 
                 if session_notify_registered and hwnd:
                     try:
@@ -309,7 +311,16 @@ class HeadlessRuntime:
                             )
                             return True
 
-                        self.controller.log_power_setting_event(change, wparam, lparam, event_mono=event_mono)
+                        if change.name == "GUID_CONSOLE_DISPLAY_STATE" and change.value == MONITOR_DISPLAY_OFF:
+                            # Record enough state for cancellation, enqueue the
+                            # resident sender, then write diagnostics.  A slow
+                            # logging path must never stand before the first
+                            # display-off send attempt.
+                            self.controller._record_power_setting_event_state(change, event_mono)
+                            self.controller.on_display_off(event_mono)
+                            self.controller._log_power_setting_event_line(change, wparam, lparam, event_mono)
+                        else:
+                            self.controller.log_power_setting_event(change, wparam, lparam, event_mono=event_mono)
                         if change.name == "GUID_LIDSWITCH_STATE_CHANGE" and change.value == LID_CLOSED:
                             self.controller.dispatch_off_pump_standby(
                                 "lid_closed",
@@ -318,9 +329,6 @@ class HeadlessRuntime:
                                 callback_started_mono=event_mono,
                                 step="dispatch_bounded_early_standby",
                             )
-                        elif change.name == "GUID_CONSOLE_DISPLAY_STATE" and change.value == MONITOR_DISPLAY_OFF:
-                            # Pure display-off standby; gated only by standby_on_display_off.
-                            self.controller.on_display_off(event_mono)
                         elif change.name == "GUID_CONSOLE_DISPLAY_STATE" and change.value == MONITOR_DISPLAY_ON:
                             self.controller.on_display_on(event_mono)
                         return True
@@ -342,12 +350,14 @@ class HeadlessRuntime:
                         return True
                     if wparam == PBT_APMRESUMEAUTOMATIC:
                         self.controller.log_power_event("PBT_APMRESUMEAUTOMATIC", wparam, lparam)
+                        self.controller.start_display_off_standby_dispatcher()
                         self.controller.start_prewarmed_standby_socket_monitor("PBT_APMRESUMEAUTOMATIC")
                         self.controller.start_speaker_event_monitor("PBT_APMRESUMEAUTOMATIC")
                         self.controller.on_resume("PBT_APMRESUMEAUTOMATIC")
                         return True
                     if wparam == PBT_APMRESUMESUSPEND:
                         self.controller.log_power_event("PBT_APMRESUMESUSPEND", wparam, lparam)
+                        self.controller.start_display_off_standby_dispatcher()
                         self.controller.start_prewarmed_standby_socket_monitor("PBT_APMRESUMESUSPEND")
                         self.controller.start_speaker_event_monitor("PBT_APMRESUMESUSPEND")
                         self.controller.on_resume("PBT_APMRESUMESUSPEND")

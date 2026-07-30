@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import unittest
 from unittest.mock import Mock, patch
 
@@ -15,7 +16,8 @@ from kef_app.controller.actions.standby import (
     STANDARD_STANDBY_POLICY,
     VerifiedStandbyPolicy,
 )
-from kef_app.controller.standby import PrewarmedStandbySendResult
+from kef_app.controller.session_events import _DisplayOffStandbyTask
+from kef_app.controller.standby import CachedPrewarmedStandbySendResult, PrewarmedStandbySendResult
 from kef_app.controller.triggers import TRIGGERS
 from kef_app.devices.transport import FireAndForgetShutdownResult
 from kef_app.devices.transport import is_host_unreachable
@@ -62,6 +64,16 @@ class PowerEventLogicTests(unittest.TestCase):
             name == "power_action_finished" and payload.get("success") is True and payload.get("outcome") == outcome
             for name, payload in events
         )
+
+    @staticmethod
+    def begin_display_off_intent(controller: KefPowerController, status: str = "sent"):
+        intent = controller._begin_cancellable_standby_intent("display_off", "DISPLAY_OFF", controller.mono())
+        if status == "pending":
+            return intent
+        controller._update_display_off_standby_intent(intent.generation, "sending")
+        if status != "sending":
+            controller._update_display_off_standby_intent(intent.generation, status)
+        return intent
 
     def test_trigger_registry_contains_power_standby_triggers(self):
         self.assertEqual(
@@ -247,16 +259,11 @@ class PowerEventLogicTests(unittest.TestCase):
             step="dispatch_suspend_standby",
         )
 
-    def test_scheduled_suspend_standby_uses_event_anchored_deadline_in_worker(self):
+    def test_scheduled_suspend_standby_uses_event_anchored_deadline_in_dispatcher(self):
         controller = self.make_controller(standby_on_sleep=True)
-        captured: dict[str, object] = {}
-        controller._start_controller_thread = lambda target, thread_name: captured.update(
-            target=target,
-            thread_name=thread_name,
-        )
+        controller._enqueue_display_off_standby_task = Mock()
         controller._log_structured = Mock()
         controller.standby_kef_fast_suspend = Mock(return_value=True)
-        controller.standby_kef = Mock(return_value=True)
         event_mono = controller.mono()
 
         scheduled = controller.schedule_suspend_standby("PBT_APMSUSPEND", event_mono)
@@ -266,34 +273,33 @@ class PowerEventLogicTests(unittest.TestCase):
             any(
                 call.args[:1] == ("STEP",)
                 and call.kwargs.get("log_level") == "info"
-                and call.kwargs.get("step") == "schedule_suspend_worker"
+                and call.kwargs.get("step") == "schedule_suspend_dispatcher"
                 for call in controller._log_structured.mock_calls
             )
         )
-        self.assertEqual(captured["thread_name"], "SuspendStandby-1")
-        captured["target"]()
+        task = controller._enqueue_display_off_standby_task.call_args.args[0]
+        self.assertEqual(task.deadline_mono, event_mono + 0.30)
+        controller._process_bounded_standby_task(task)
         controller.standby_kef_fast_suspend.assert_called_once_with(
             1,
             "PBT_APMSUSPEND",
             deadline_mono=event_mono + 0.30,
         )
-        controller.standby_kef.assert_not_called()
 
     def test_scheduled_suspend_standby_does_not_send_after_event_deadline(self):
         controller = self.make_controller(standby_on_sleep=True)
-        captured: dict[str, object] = {}
-        controller._start_controller_thread = lambda target, _thread_name: captured.update(target=target)
+        controller._enqueue_display_off_standby_task = Mock()
         controller.standby_kef_fast_suspend = Mock(return_value=True)
         controller._log_structured = Mock()
 
         self.assertTrue(controller.schedule_suspend_standby("PBT_APMSUSPEND", controller.mono() - 1.0))
-        captured["target"]()
+        controller._process_bounded_standby_task(controller._enqueue_display_off_standby_task.call_args.args[0])
 
         controller.standby_kef_fast_suspend.assert_not_called()
         self.assertTrue(
             any(
                 call.args[:1] == ("ABORT",)
-                and call.kwargs.get("step") == "before_suspend_worker_send"
+                and call.kwargs.get("step") == "before_suspend_dispatcher_send"
                 and call.kwargs.get("cause") == "deadline_exceeded"
                 for call in controller._log_structured.mock_calls
             )
@@ -301,21 +307,20 @@ class PowerEventLogicTests(unittest.TestCase):
 
     def test_scheduled_suspend_standby_does_not_send_after_generation_changes(self):
         controller = self.make_controller(standby_on_sleep=True)
-        captured: dict[str, object] = {}
-        controller._start_controller_thread = lambda target, _thread_name: captured.update(target=target)
+        controller._enqueue_display_off_standby_task = Mock()
         controller.standby_kef_fast_suspend = Mock(return_value=True)
         controller._log_structured = Mock()
         event_mono = controller.mono()
 
         self.assertTrue(controller.schedule_suspend_standby("PBT_APMSUSPEND", event_mono))
         controller._new_generation("wake", "PBT_APMRESUMEAUTOMATIC")
-        captured["target"]()
+        controller._process_bounded_standby_task(controller._enqueue_display_off_standby_task.call_args.args[0])
 
         controller.standby_kef_fast_suspend.assert_not_called()
         self.assertTrue(
             any(
                 call.args[:1] == ("ABORT",)
-                and call.kwargs.get("step") == "before_suspend_worker_send"
+                and call.kwargs.get("step") == "before_suspend_dispatcher_send"
                 and call.kwargs.get("cause") == "stale_generation"
                 for call in controller._log_structured.mock_calls
             )
@@ -324,6 +329,7 @@ class PowerEventLogicTests(unittest.TestCase):
     def test_scheduled_suspend_can_use_full_standby_when_fast_path_disabled(self):
         controller = self.make_controller(standby_on_sleep=True, suspend_fast_standby_enabled=False)
         captured: dict[str, object] = {}
+        controller._enqueue_display_off_standby_task = Mock()
         controller._start_controller_thread = lambda target, thread_name: captured.update(
             target=target,
             thread_name=thread_name,
@@ -332,7 +338,8 @@ class PowerEventLogicTests(unittest.TestCase):
         controller.standby_kef = Mock(return_value=True)
 
         self.assertTrue(controller.schedule_suspend_standby("PBT_APMSUSPEND", controller.mono()))
-        self.assertEqual(captured["thread_name"], "SuspendStandby-1")
+        controller._process_bounded_standby_task(controller._enqueue_display_off_standby_task.call_args.args[0])
+        self.assertEqual(captured["thread_name"], "SuspendVerifiedStandby-1")
         captured["target"]()
 
         controller.standby_kef_fast_suspend.assert_not_called()
@@ -392,13 +399,13 @@ class PowerEventLogicTests(unittest.TestCase):
             step="dispatch_display_off_standby",
         )
 
-    def test_display_off_event_matches_reason_for_early_standby_diagnostics(self):
+    def test_lid_event_matches_reason_for_early_standby_diagnostics(self):
         controller = self.make_controller()
 
         self.assertTrue(
             controller._early_standby_event_matches_reason(
-                "GUID_CONSOLE_DISPLAY_STATE",
-                "DISPLAY_OFF",
+                "GUID_LIDSWITCH_STATE_CHANGE",
+                "POWER_LID_CLOSED",
             )
         )
 
@@ -414,27 +421,18 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertNotIn("target", captured)
         controller._run_early_standby_trigger.assert_not_called()
 
-    def test_scheduled_display_off_runs_early_standby_trigger(self):
+    def test_scheduled_display_off_queues_resident_dispatcher_without_event_deadline(self):
         controller = self.make_controller(standby_on_display_off=True)
-        captured: dict[str, object] = {}
-        controller._start_controller_thread = lambda target, thread_name: captured.update(
-            target=target,
-            thread_name=thread_name,
-        )
-        controller._run_early_standby_trigger = Mock(return_value=True)
+        controller._enqueue_display_off_standby_task = Mock()
         event_mono = controller.mono()
 
         scheduled = controller.schedule_early_standby("display_off", "DISPLAY_OFF", event_mono)
-        captured["target"]()
 
         self.assertTrue(scheduled)
-        self.assertEqual(captured["thread_name"], "EarlyStandby-display_off-1")
-        controller._run_early_standby_trigger.assert_called_once()
-        self.assertAlmostEqual(
-            controller._run_early_standby_trigger.call_args.kwargs["deadline_mono"],
-            event_mono + 0.30,
-            places=3,
-        )
+        task = controller._enqueue_display_off_standby_task.call_args.args[0]
+        self.assertEqual(task.generation, 1)
+        self.assertEqual(task.reason, "DISPLAY_OFF")
+        self.assertEqual(task.event_mono, event_mono)
 
     def test_display_on_wakes_only_after_display_off_standby(self):
         controller = self.make_controller(
@@ -442,25 +440,25 @@ class PowerEventLogicTests(unittest.TestCase):
             wake_on_display_on=True,
             display_on_wake_delay=0.45,
         )
-        controller._start_controller_thread = lambda _target, _thread_name: None
         controller._schedule_delayed_wake = Mock()
 
-        self.assertTrue(controller.schedule_early_standby("display_off", "DISPLAY_OFF", controller.mono()))
+        self.begin_display_off_intent(controller)
         result = controller.on_display_on(controller.mono())
 
         self.assertTrue(result)
         controller._schedule_delayed_wake.assert_called_once_with(
-            2,
+            3,
             "DISPLAY_ON",
             0.45,
             "display_on_delay",
             "DisplayOnWake",
+            skip_if_already_on=True,
         )
-        self.assertEqual(controller._current_generation(), 2)
+        self.assertEqual(controller._current_generation(), 3)
 
     def test_display_on_skips_when_disabled(self):
         controller = self.make_controller(wake_on_display_on=False)
-        controller._new_generation("sleep", "DISPLAY_OFF")
+        self.begin_display_off_intent(controller)
         controller._schedule_delayed_wake = Mock()
         controller._log_structured = Mock()
 
@@ -473,6 +471,168 @@ class PowerEventLogicTests(unittest.TestCase):
                 call.args[:1] == ("SKIP",)
                 and call.kwargs.get("cause") == "display_on_wake_disabled"
                 and call.kwargs.get("log_level") == "info"
+                for call in controller._log_structured.mock_calls
+            )
+        )
+
+    def test_display_on_cancels_pending_intent_even_when_wake_is_disabled(self):
+        controller = self.make_controller(wake_on_display_on=False)
+        intent = self.begin_display_off_intent(controller, "pending")
+        controller._schedule_delayed_wake = Mock()
+
+        self.assertFalse(controller.on_display_on(controller.mono()))
+
+        self.assertTrue(intent.cancel_event.is_set())
+        self.assertFalse(controller._display_off_intent_is_active(intent.generation))
+        controller._schedule_delayed_wake.assert_not_called()
+
+    def test_display_on_cancels_pending_intent_while_session_is_locked(self):
+        controller = self.make_controller(wake_on_display_on=True)
+        intent = self.begin_display_off_intent(controller, "pending")
+        controller._set_session_locked(True)
+        controller._schedule_delayed_wake = Mock()
+
+        self.assertFalse(controller.on_display_on(controller.mono()))
+
+        self.assertTrue(intent.cancel_event.is_set())
+        self.assertFalse(controller._display_off_intent_is_active(intent.generation))
+        controller._schedule_delayed_wake.assert_not_called()
+
+    def test_display_on_wakes_after_display_off_send_failed(self):
+        controller = self.make_controller(wake_on_display_on=True)
+        self.begin_display_off_intent(controller, "failed")
+        controller._schedule_delayed_wake = Mock()
+
+        self.assertTrue(controller.on_display_on(controller.mono()))
+
+        controller._schedule_delayed_wake.assert_called_once_with(
+            3,
+            "DISPLAY_ON",
+            controller.config.display_on_wake_delay,
+            "display_on_delay",
+            "DisplayOnWake",
+            skip_if_already_on=True,
+        )
+
+    def test_display_off_processor_uses_cached_send_without_event_deadline(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        intent = self.begin_display_off_intent(controller, "pending")
+        task = type("Task", (), {
+            "generation": intent.generation,
+            "trigger_name": "display_off",
+            "reason": intent.reason,
+            "event_mono": intent.event_mono,
+            "cancel_event": intent.cancel_event,
+        })()
+        controller.try_send_cached_prewarmed_standby = Mock(
+            return_value=CachedPrewarmedStandbySendResult(
+                success=True,
+                fast_path_used=True,
+                status="sent",
+                target_ip="192.168.1.10",
+                cache_version=1,
+                cache_age_ms=0,
+            )
+        )
+        controller._send_fast_standby = Mock()
+
+        controller._process_display_off_standby_task(task)
+
+        controller.try_send_cached_prewarmed_standby.assert_called_once_with(generation=intent.generation)
+        controller._send_fast_standby.assert_not_called()
+
+    def test_generation_only_fast_send_uses_one_synchronous_cold_attempt(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        generation = controller._new_generation("sleep", "DISPLAY_OFF")
+        controller.try_send_prewarmed_standby = Mock(
+            return_value=PrewarmedStandbySendResult(False, False, "no_recent_keepalive")
+        )
+        controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
+
+        result = controller._send_fast_standby(
+            "192.168.1.10",
+            generation=generation,
+            fire_and_forget_attempts=1,
+        )
+
+        self.assertTrue(result.success)
+        kwargs = controller._send_fire_and_forget_shutdown.call_args.kwargs
+        self.assertEqual(kwargs["attempts"], 1)
+        self.assertTrue(kwargs["should_send"]())
+
+    def test_dispatcher_survives_one_task_exception(self):
+        controller = self.make_controller()
+        first = _DisplayOffStandbyTask(0, "display_off", "DISPLAY_OFF", controller.mono(), threading.Event())
+        second = _DisplayOffStandbyTask(0, "display_off", "DISPLAY_OFF", controller.mono(), threading.Event())
+        second_processed = threading.Event()
+
+        def process(task):
+            if task is first:
+                raise RuntimeError("synthetic task failure")
+            second_processed.set()
+            controller.stop_display_off_standby_dispatcher()
+
+        controller._process_display_off_standby_task = Mock(side_effect=process)
+        controller.start_display_off_standby_dispatcher()
+        controller._display_off_dispatcher_queue.put(first)
+        controller._display_off_dispatcher_queue.put(second)
+
+        self.assertTrue(second_processed.wait(1.0))
+        self.assertEqual(controller._process_display_off_standby_task.call_count, 2)
+
+    def test_unlock_cancels_lock_intent_even_when_unlock_wake_is_disabled(self):
+        controller = self.make_controller(wake_on_unlock_only=False)
+        intent = controller._begin_cancellable_standby_intent("lock", "WTS_SESSION_LOCK", controller.mono())
+
+        controller.on_unlock("WTS_SESSION_UNLOCK")
+
+        self.assertTrue(intent.cancel_event.is_set())
+        self.assertFalse(controller._display_off_intent_is_active(intent.generation))
+
+    def test_cancellable_verified_fallback_does_not_hold_dispatcher(self):
+        controller = self.make_controller()
+        intent = self.begin_display_off_intent(controller, "pending")
+        task = _DisplayOffStandbyTask(
+            intent.generation,
+            "display_off",
+            intent.reason,
+            intent.event_mono,
+            intent.cancel_event,
+        )
+        controller._send_display_off_fast_attempt = Mock(return_value=False)
+        controller._wait_for_display_off_retry = Mock(return_value=True)
+        controller._start_controller_thread = Mock()
+
+        controller._process_display_off_standby_task(task)
+
+        self.assertEqual(controller._start_controller_thread.call_count, 1)
+        self.assertIn("CancellableStandbyVerify", controller._start_controller_thread.call_args.args[1])
+
+    def test_cancellable_verified_success_can_reach_confirmed(self):
+        controller = self.make_controller()
+        intent = self.begin_display_off_intent(controller, "sending")
+
+        self.assertTrue(controller._update_display_off_standby_intent(intent.generation, "confirmed"))
+
+    def test_cancellable_retry_logs_when_cancelled(self):
+        controller = self.make_controller()
+        intent = self.begin_display_off_intent(controller, "retry_waiting")
+        task = _DisplayOffStandbyTask(
+            intent.generation,
+            "display_off",
+            intent.reason,
+            intent.event_mono,
+            intent.cancel_event,
+        )
+        controller._log_structured = Mock()
+        task.cancel_event.set()
+
+        self.assertFalse(controller._wait_for_display_off_retry(task, 0.0, "retry"))
+
+        self.assertTrue(
+            any(
+                call.kwargs.get("step") == "cancellable_retry_cancelled"
+                and call.kwargs.get("cause") == "cancel_event"
                 for call in controller._log_structured.mock_calls
             )
         )
@@ -490,15 +650,14 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertTrue(
             any(
                 call.args[:1] == ("SKIP",)
-                and call.kwargs.get("cause") == "not_display_off_sleep"
-                and call.kwargs.get("desired_reason") == "PBT_APMSUSPEND"
+                and call.kwargs.get("cause") == "no_pending_display_off_intent"
                 for call in controller._log_structured.mock_calls
             )
         )
 
     def test_display_on_skips_while_session_locked(self):
         controller = self.make_controller(wake_on_display_on=True)
-        controller._new_generation("sleep", "DISPLAY_OFF")
+        self.begin_display_off_intent(controller)
         controller._set_session_locked(True)
         controller._schedule_delayed_wake = Mock()
         controller._log_structured = Mock()
@@ -517,18 +676,19 @@ class PowerEventLogicTests(unittest.TestCase):
 
     def test_display_on_wake_dedupes_following_unlock(self):
         controller = self.make_controller(wake_on_display_on=True, wake_on_unlock_only=True)
-        controller._new_generation("sleep", "DISPLAY_OFF")
+        self.begin_display_off_intent(controller)
         controller._schedule_delayed_wake = Mock()
 
         self.assertTrue(controller.on_display_on(controller.mono()))
         controller.on_unlock("WTS_SESSION_UNLOCK")
 
         controller._schedule_delayed_wake.assert_called_once_with(
-            2,
+            3,
             "DISPLAY_ON",
             controller.config.display_on_wake_delay,
             "display_on_delay",
             "DisplayOnWake",
+            skip_if_already_on=True,
         )
 
     def test_display_on_is_not_blocked_by_previous_unlock_wake_after_new_display_off(self):
@@ -536,63 +696,44 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._schedule_delayed_wake = Mock()
 
         controller.on_unlock("WTS_SESSION_UNLOCK")
-        controller._new_generation("sleep", "DISPLAY_OFF")
+        self.begin_display_off_intent(controller)
         result = controller.on_display_on(controller.mono())
 
         self.assertTrue(result)
         self.assertEqual(controller._schedule_delayed_wake.call_count, 2)
         controller._schedule_delayed_wake.assert_any_call(
-            3,
+            4,
             "DISPLAY_ON",
             controller.config.display_on_wake_delay,
             "display_on_delay",
             "DisplayOnWake",
+            skip_if_already_on=True,
         )
 
-    def test_scheduled_lock_standby_uses_event_anchored_deadline_in_worker(self):
+    def test_scheduled_lock_standby_uses_cancellable_dispatcher_without_deadline(self):
         controller = self.make_controller(standby_on_lock=True)
-        captured: dict[str, object] = {}
-        controller._start_controller_thread = lambda target, thread_name: captured.update(
-            target=target,
-            thread_name=thread_name,
-        )
-        controller.try_handle_cached_lock_fast_path = Mock(return_value=False)
-        controller._run_early_standby_trigger = Mock(return_value=True)
+        controller._enqueue_display_off_standby_task = Mock()
         event_mono = controller.mono()
 
         scheduled = controller.schedule_early_standby("lock", "WTS_SESSION_LOCK", event_mono)
 
         self.assertTrue(scheduled)
-        self.assertEqual(captured["thread_name"], "EarlyStandby-lock-1")
-        captured["target"]()
-        controller.try_handle_cached_lock_fast_path.assert_called_once_with(
-            "WTS_SESSION_LOCK",
-            event_mono,
-            generation=1,
-            deadline_mono=event_mono + 0.30,
-        )
-        controller._run_early_standby_trigger.assert_called_once()
-        self.assertEqual(controller._run_early_standby_trigger.call_args.kwargs["generation"], 1)
-        self.assertEqual(controller._run_early_standby_trigger.call_args.kwargs["event_mono"], event_mono)
-        self.assertEqual(controller._run_early_standby_trigger.call_args.kwargs["deadline_mono"], event_mono + 0.30)
+        task = controller._enqueue_display_off_standby_task.call_args.args[0]
+        self.assertEqual(task.trigger_name, "lock")
+        self.assertEqual(task.generation, 1)
 
-    def test_scheduled_lid_standby_reuses_bounded_worker_without_lock_fast_path(self):
+    def test_scheduled_lid_standby_reuses_bounded_dispatcher_without_lock_fast_path(self):
         controller = self.make_controller(standby_on_lid_close=True)
-        captured: dict[str, object] = {}
-        controller._start_controller_thread = lambda target, thread_name: captured.update(
-            target=target,
-            thread_name=thread_name,
-        )
-        controller.try_handle_cached_lock_fast_path = Mock()
+        controller._enqueue_display_off_standby_task = Mock()
         controller._run_early_standby_trigger = Mock(return_value=True)
         event_mono = controller.mono()
 
         scheduled = controller.schedule_early_standby("lid_closed", "POWER_LID_CLOSED", event_mono)
 
         self.assertTrue(scheduled)
-        self.assertEqual(captured["thread_name"], "EarlyStandby-lid_closed-1")
-        captured["target"]()
-        controller.try_handle_cached_lock_fast_path.assert_not_called()
+        task = controller._enqueue_display_off_standby_task.call_args.args[0]
+        self.assertEqual(task.deadline_mono, event_mono + 0.30)
+        controller._process_bounded_standby_task(task)
         controller._run_early_standby_trigger.assert_called_once()
         self.assertEqual(controller._run_early_standby_trigger.call_args.kwargs["generation"], 1)
         self.assertEqual(controller._run_early_standby_trigger.call_args.kwargs["event_mono"], event_mono)
@@ -600,8 +741,7 @@ class PowerEventLogicTests(unittest.TestCase):
 
     def test_scheduled_lid_standby_does_not_send_after_event_deadline(self):
         controller = self.make_controller(standby_on_lid_close=True)
-        captured: dict[str, object] = {}
-        controller._start_controller_thread = lambda target, _thread_name: captured.update(target=target)
+        controller._enqueue_display_off_standby_task = Mock()
         controller.standby_kef_preemptive = Mock(return_value=True)
         controller._log_structured = Mock()
 
@@ -612,13 +752,13 @@ class PowerEventLogicTests(unittest.TestCase):
                 controller.mono() - 1.0,
             )
         )
-        captured["target"]()
+        controller._process_bounded_standby_task(controller._enqueue_display_off_standby_task.call_args.args[0])
 
         controller.standby_kef_preemptive.assert_not_called()
         self.assertTrue(
             any(
                 call.args[:1] == ("ABORT",)
-                and call.kwargs.get("step") == "before_early_standby_worker_send"
+                and call.kwargs.get("step") == "before_lid_closed_dispatcher_send"
                 and call.kwargs.get("cause") == "deadline_exceeded"
                 for call in controller._log_structured.mock_calls
             )
@@ -626,21 +766,20 @@ class PowerEventLogicTests(unittest.TestCase):
 
     def test_scheduled_lid_standby_does_not_send_after_generation_changes(self):
         controller = self.make_controller(standby_on_lid_close=True)
-        captured: dict[str, object] = {}
-        controller._start_controller_thread = lambda target, _thread_name: captured.update(target=target)
+        controller._enqueue_display_off_standby_task = Mock()
         controller.standby_kef_preemptive = Mock(return_value=True)
         controller._log_structured = Mock()
         event_mono = controller.mono()
 
         self.assertTrue(controller.schedule_early_standby("lid_closed", "POWER_LID_CLOSED", event_mono))
         controller._new_generation("wake", "WTS_SESSION_UNLOCK")
-        captured["target"]()
+        controller._process_bounded_standby_task(controller._enqueue_display_off_standby_task.call_args.args[0])
 
         controller.standby_kef_preemptive.assert_not_called()
         self.assertTrue(
             any(
                 call.args[:1] == ("ABORT",)
-                and call.kwargs.get("step") == "before_early_standby_worker_send"
+                and call.kwargs.get("step") == "before_lid_closed_dispatcher_send"
                 and call.kwargs.get("cause") == "stale_generation"
                 for call in controller._log_structured.mock_calls
             )
@@ -682,8 +821,26 @@ class PowerEventLogicTests(unittest.TestCase):
             0.35,
             "unlock_delay",
             "UnlockWake",
+            skip_if_already_on=True,
         )
         self.assertEqual(controller._current_generation(), 1)
+
+    def test_on_unlock_safely_wakes_after_lock_standby_failed(self):
+        controller = self.make_controller(wake_on_unlock_only=True)
+        intent = controller._begin_cancellable_standby_intent("lock", "WTS_SESSION_LOCK", controller.mono())
+        self.assertTrue(controller._update_display_off_standby_intent(intent.generation, "failed"))
+        controller._schedule_delayed_wake = Mock()
+
+        controller.on_unlock("WTS_SESSION_UNLOCK")
+
+        controller._schedule_delayed_wake.assert_called_once_with(
+            3,
+            "WTS_SESSION_UNLOCK",
+            controller.config.unlock_wake_delay,
+            "unlock_delay",
+            "UnlockWake",
+            skip_if_already_on=True,
+        )
 
     def test_on_unlock_skips_when_unlock_wake_disabled(self):
         controller = self.make_controller(wake_on_unlock_only=False)
@@ -840,13 +997,13 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._request_shutdown = Mock()
         controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
 
-        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK", deadline_mono=controller.mono() + 1.0)
 
         self.assertTrue(result)
         controller.resolve_target.assert_not_called()
         controller._ensure_target_identity.assert_not_called()
         controller._perform_standby_request.assert_not_called()
-        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller._send_fire_and_forget_shutdown.assert_called_once()
         controller._request_shutdown.assert_not_called()
 
     def test_bounded_preemptive_standby_does_not_send_after_generation_changes(self):
@@ -1018,13 +1175,10 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown = Mock()
         controller._request_shutdown = Mock()
 
-        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK", deadline_mono=controller.mono() + 1.0)
 
         self.assertTrue(result)
-        controller.try_send_prewarmed_standby.assert_called_once_with(
-            "192.168.1.10",
-            reason="WTS_SESSION_LOCK",
-        )
+        controller.try_send_prewarmed_standby.assert_called_once()
         controller._send_fire_and_forget_shutdown.assert_not_called()
         controller._request_shutdown.assert_not_called()
         self.assertTrue(self.emitted_outcome(events, "sent_unconfirmed_prewarmed"))
@@ -1050,7 +1204,13 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown = Mock()
         controller._request_shutdown = Mock()
 
-        self.assertTrue(controller.standby_kef_preemptive(early_generation, "WTS_SESSION_LOCK"))
+        self.assertTrue(
+            controller.standby_kef_preemptive(
+                early_generation,
+                "WTS_SESSION_LOCK",
+                deadline_mono=controller.mono() + 1.0,
+            )
+        )
 
         suspend_generation = controller._new_generation("sleep", "PBT_APMSUSPEND")
         controller.try_send_prewarmed_standby = Mock(
@@ -1067,13 +1227,14 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown = Mock()
         controller._request_shutdown = Mock()
 
-        result = controller.standby_kef_fast_suspend(suspend_generation, "PBT_APMSUSPEND")
+        result = controller.standby_kef_fast_suspend(
+            suspend_generation,
+            "PBT_APMSUSPEND",
+            deadline_mono=controller.mono() + 1.0,
+        )
 
         self.assertTrue(result)
-        controller.try_send_prewarmed_standby.assert_called_once_with(
-            "192.168.1.10",
-            reason="PBT_APMSUSPEND",
-        )
+        controller.try_send_prewarmed_standby.assert_called_once()
         controller._send_fire_and_forget_shutdown.assert_not_called()
         controller._request_shutdown.assert_not_called()
         self.assertTrue(self.emitted_outcome(events, "sent_unconfirmed_prewarmed"))
@@ -1105,7 +1266,11 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown = Mock()
         controller._request_shutdown = Mock()
 
-        result = controller.standby_kef_fast_suspend(generation, "PBT_APMSUSPEND")
+        result = controller.standby_kef_fast_suspend(
+            generation,
+            "PBT_APMSUSPEND",
+            deadline_mono=controller.mono() + 1.0,
+        )
 
         self.assertTrue(result)
         self.assertEqual(order, ["prewarmed_send", "power_action_started", "power_action_finished"])
@@ -1132,14 +1297,11 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
         controller._request_shutdown = Mock()
 
-        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK", deadline_mono=controller.mono() + 1.0)
 
         self.assertTrue(result)
-        controller.try_send_prewarmed_standby.assert_called_once_with(
-            "192.168.1.10",
-            reason="WTS_SESSION_LOCK",
-        )
-        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller.try_send_prewarmed_standby.assert_called_once()
+        controller._send_fire_and_forget_shutdown.assert_called_once()
         controller._request_shutdown.assert_not_called()
         self.assertTrue(
             any(
@@ -1173,11 +1335,11 @@ class PowerEventLogicTests(unittest.TestCase):
             )
         )
         controller._send_fire_and_forget_shutdown = Mock(
-            side_effect=lambda _ip: order.append("fire_and_forget") or self.fire_and_forget_result(True)
+            side_effect=lambda _ip, **_kwargs: order.append("fire_and_forget") or self.fire_and_forget_result(True)
         )
         controller._request_shutdown = Mock()
 
-        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK", deadline_mono=controller.mono() + 1.0)
 
         self.assertTrue(result)
         self.assertEqual(order, ["prewarmed", "fire_and_forget"])
@@ -1207,13 +1369,10 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown = Mock()
         controller._request_shutdown = Mock()
 
-        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK", deadline_mono=controller.mono() + 1.0)
 
         self.assertTrue(result)
-        controller.try_send_prewarmed_standby.assert_called_once_with(
-            "192.168.1.10",
-            reason="WTS_SESSION_LOCK",
-        )
+        controller.try_send_prewarmed_standby.assert_called_once()
         controller._send_fire_and_forget_shutdown.assert_not_called()
         controller._request_shutdown.assert_not_called()
         controller.log_wifi_diagnostics.assert_called_once_with(
@@ -1252,12 +1411,16 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._request_shutdown = Mock()
         self.assertTrue(controller._action_lock.acquire(blocking=False))
         try:
-            result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+            result = controller.standby_kef_preemptive(
+                generation,
+                "WTS_SESSION_LOCK",
+                deadline_mono=controller.mono() + 1.0,
+            )
         finally:
             controller._action_lock.release()
 
         self.assertTrue(result)
-        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller._send_fire_and_forget_shutdown.assert_called_once()
         controller._request_shutdown.assert_not_called()
 
     def test_preemptive_standby_generic_fire_and_forget_failure_does_not_use_standard_fallback(self):
@@ -1271,10 +1434,10 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(False))
         controller._request_shutdown = Mock()
 
-        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK", deadline_mono=controller.mono() + 1.0)
 
         self.assertFalse(result)
-        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller._send_fire_and_forget_shutdown.assert_called_once()
         controller._request_shutdown.assert_not_called()
         controller.log_wifi_diagnostics.assert_not_called()
         self.assertTrue(
@@ -1282,7 +1445,7 @@ class PowerEventLogicTests(unittest.TestCase):
                 call.args[:1] == ("SKIP",)
                 and call.kwargs.get("action") == "EARLY_STANDBY"
                 and call.kwargs.get("cause") == "fast_standby_send_failed"
-                and call.kwargs.get("standard_fallback") == "removed"
+                and call.kwargs.get("standard_fallback") == "disabled_for_bounded_path"
                 for call in controller._log_structured.mock_calls
             )
         )
@@ -1301,10 +1464,10 @@ class PowerEventLogicTests(unittest.TestCase):
         )
         controller._request_shutdown = Mock()
 
-        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK", deadline_mono=controller.mono() + 1.0)
 
         self.assertTrue(result)
-        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller._send_fire_and_forget_shutdown.assert_called_once()
         controller._request_shutdown.assert_not_called()
         controller.log_wifi_diagnostics.assert_called_once_with(
             reason="WTS_SESSION_LOCK",
@@ -1342,10 +1505,10 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
         controller._request_shutdown = Mock()
 
-        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK", deadline_mono=controller.mono() + 1.0)
 
         self.assertTrue(result)
-        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller._send_fire_and_forget_shutdown.assert_called_once()
         controller._request_shutdown.assert_not_called()
         self.assertTrue(self.emitted_outcome(events, "sent_unconfirmed_fire_and_forget"))
         self.assertFalse(
@@ -1362,7 +1525,7 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._request_shutdown = Mock()
         controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
 
-        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK")
+        result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK", deadline_mono=controller.mono() + 1.0)
 
         self.assertFalse(result)
         controller._send_fire_and_forget_shutdown.assert_not_called()
@@ -1380,13 +1543,17 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._request_shutdown = Mock()
         controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
 
-        result = controller.standby_kef_fast_suspend(generation, "PBT_APMSUSPEND")
+        result = controller.standby_kef_fast_suspend(
+            generation,
+            "PBT_APMSUSPEND",
+            deadline_mono=controller.mono() + 1.0,
+        )
 
         self.assertTrue(result)
         controller.resolve_target.assert_not_called()
         controller._ensure_target_identity.assert_not_called()
         controller._perform_standby_request.assert_not_called()
-        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller._send_fire_and_forget_shutdown.assert_called_once()
         controller._request_shutdown.assert_not_called()
 
     def test_fast_suspend_standby_generic_fire_and_forget_failure_does_not_use_standard_fallback(self):
@@ -1399,17 +1566,21 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(False))
         controller._request_shutdown = Mock()
 
-        result = controller.standby_kef_fast_suspend(generation, "PBT_APMSUSPEND")
+        result = controller.standby_kef_fast_suspend(
+            generation,
+            "PBT_APMSUSPEND",
+            deadline_mono=controller.mono() + 1.0,
+        )
 
         self.assertFalse(result)
-        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller._send_fire_and_forget_shutdown.assert_called_once()
         controller._request_shutdown.assert_not_called()
         self.assertTrue(
             any(
                 call.args[:1] == ("SKIP",)
                 and call.kwargs.get("action") == "STANDBY"
                 and call.kwargs.get("cause") == "fast_standby_send_failed"
-                and call.kwargs.get("standard_fallback") == "removed"
+                and call.kwargs.get("standard_fallback") == "disabled_for_bounded_path"
                 for call in controller._log_structured.mock_calls
             )
         )
@@ -1437,7 +1608,13 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown = Mock()
         controller._request_shutdown = Mock()
 
-        self.assertTrue(controller.standby_kef_preemptive(early_generation, "WTS_SESSION_LOCK"))
+        self.assertTrue(
+            controller.standby_kef_preemptive(
+                early_generation,
+                "WTS_SESSION_LOCK",
+                deadline_mono=controller.mono() + 1.0,
+            )
+        )
 
         suspend_generation = controller._new_generation("sleep", "PBT_APMSUSPEND")
         controller.try_send_prewarmed_standby = Mock(
@@ -1446,10 +1623,14 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
         controller._request_shutdown = Mock()
 
-        result = controller.standby_kef_fast_suspend(suspend_generation, "PBT_APMSUSPEND")
+        result = controller.standby_kef_fast_suspend(
+            suspend_generation,
+            "PBT_APMSUSPEND",
+            deadline_mono=controller.mono() + 1.0,
+        )
 
         self.assertTrue(result)
-        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller._send_fire_and_forget_shutdown.assert_called_once()
         controller._request_shutdown.assert_not_called()
 
     def test_fast_suspend_standby_assumes_fire_and_forget_host_unreachable_without_standard_fallback(self):
@@ -1465,10 +1646,14 @@ class PowerEventLogicTests(unittest.TestCase):
         )
         controller._request_shutdown = Mock()
 
-        result = controller.standby_kef_fast_suspend(generation, "PBT_APMSUSPEND")
+        result = controller.standby_kef_fast_suspend(
+            generation,
+            "PBT_APMSUSPEND",
+            deadline_mono=controller.mono() + 1.0,
+        )
 
         self.assertTrue(result)
-        controller._send_fire_and_forget_shutdown.assert_called_once_with("192.168.1.10")
+        controller._send_fire_and_forget_shutdown.assert_called_once()
         controller._request_shutdown.assert_not_called()
         self.assertTrue(self.emitted_outcome(events, "sent_skipped_host_unreachable"))
 
@@ -1478,7 +1663,11 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._request_shutdown = Mock()
         controller._send_fire_and_forget_shutdown = Mock(return_value=self.fire_and_forget_result(True))
 
-        result = controller.standby_kef_fast_suspend(generation, "PBT_APMSUSPEND")
+        result = controller.standby_kef_fast_suspend(
+            generation,
+            "PBT_APMSUSPEND",
+            deadline_mono=controller.mono() + 1.0,
+        )
 
         self.assertFalse(result)
         controller._send_fire_and_forget_shutdown.assert_not_called()
@@ -2100,6 +2289,32 @@ class PowerEventLogicTests(unittest.TestCase):
 
         self.assertFalse(controller.wake_kef(0, "unit_test"))
         controller.wait_until_reachable.assert_not_called()
+
+    def test_display_on_wake_leaves_an_already_on_speaker_on_its_current_input(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_input="wifi")
+        controller._ensure_target_identity = Mock(return_value=True)
+        controller.wait_until_reachable = Mock(return_value=True)
+        controller.get_input_source = Mock(return_value="optical")
+        controller._set_speaker_source = Mock()
+        controller._run_generation_attempts = Mock()
+
+        self.assertTrue(controller.wake_kef(0, "DISPLAY_ON", skip_if_already_on=True))
+
+        controller.get_input_source.assert_called_once_with(fresh=True)
+        controller._set_speaker_source.assert_not_called()
+        controller._run_generation_attempts.assert_not_called()
+
+    def test_non_display_wake_keeps_forcing_the_configured_input(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_input="wifi")
+        controller._ensure_target_identity = Mock(return_value=True)
+        controller.wait_until_reachable = Mock(return_value=True)
+        controller.get_input_source = Mock(return_value="optical")
+        controller._run_generation_attempts = Mock(return_value="success_attempt_1")
+
+        self.assertTrue(controller.wake_kef(0, "startup"))
+
+        controller.get_input_source.assert_not_called()
+        controller._run_generation_attempts.assert_called_once()
 
 
 if __name__ == "__main__":

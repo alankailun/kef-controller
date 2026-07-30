@@ -94,7 +94,7 @@ class ControllerDeviceWakeMixin:
                 ):
                     return False
 
-    def wake_kef(self, generation: int, reason: str) -> bool:
+    def wake_kef(self, generation: int, reason: str, *, skip_if_already_on: bool = False) -> bool:
         outcome = "unknown"
         start_mono = self._log_action_begin("WAKE", generation, reason)
         c = self.config
@@ -162,6 +162,32 @@ class ControllerDeviceWakeMixin:
             if not self._ensure_target_identity("WAKE", reason, "wake_before_attempts"):
                 outcome = "skipped_target_identity_not_verified"
                 return False
+
+            if skip_if_already_on:
+                # Display-on is a recovery action, not an instruction to take
+                # over the speaker's current input.  A fresh source read is
+                # authoritative: some firmware reports powerOn briefly after
+                # entering standby, while source is already ``standby``.
+                current_input = self.get_input_source(fresh=True)
+                if current_input and current_input != "standby":
+                    self._set_speaker_runtime_state(
+                        input_source=current_input,
+                        speaker_on=True,
+                        source="display_on_idempotency_check",
+                    )
+                    outcome = "success_already_on"
+                    self._log_structured(
+                        "STEP",
+                        log_level="info",
+                        action="WAKE",
+                        gen=generation,
+                        reason=reason,
+                        step="set_input_source",
+                        status=outcome,
+                        actual_input=current_input,
+                        mono=f"{self.mono():.3f}",
+                    )
+                    return True
 
             def execute_attempt(attempt: int) -> None:
                 if target_input:

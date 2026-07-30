@@ -1,6 +1,44 @@
 from __future__ import annotations
 
+import threading
 import time
+from dataclasses import dataclass
+
+
+@dataclass(slots=True)
+class DisplayOffStandbyIntent:
+    """Generation-scoped, cancellable early-standby work.
+
+    ``cancelled`` deliberately lives beside, rather than inside, send_status:
+    a display-on event must preserve whether a send could already have reached
+    the speaker while still invalidating all later work for the generation.
+    """
+
+    generation: int
+    trigger_name: str
+    reason: str
+    event_mono: float
+    cancel_event: threading.Event
+    send_status: str = "pending"
+    cancelled: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class DisplayOffStandbyIntentSnapshot:
+    generation: int
+    trigger_name: str
+    reason: str
+    event_mono: float
+    cancel_event: threading.Event
+    send_status: str
+
+
+_CANCELLABLE_STANDBY_STATUS_TRANSITIONS = {
+    "pending": frozenset({"sending", "failed"}),
+    "sending": frozenset({"retry_waiting", "sent", "confirmed", "failed"}),
+    "retry_waiting": frozenset({"sending", "failed"}),
+    "sent": frozenset({"confirmed"}),
+}
 
 class ControllerStateMixin:
     def _new_generation(self, desired_state: str, reason: str, *, mono: str | None = None) -> int:
@@ -19,6 +57,99 @@ class ControllerStateMixin:
     def _current_desired_state(self) -> tuple[str, str]:
         with self._state_lock:
             return self._desired_state, self._desired_reason
+
+    @staticmethod
+    def _display_off_intent_snapshot(intent: DisplayOffStandbyIntent) -> DisplayOffStandbyIntentSnapshot:
+        return DisplayOffStandbyIntentSnapshot(
+            generation=intent.generation,
+            trigger_name=intent.trigger_name,
+            reason=intent.reason,
+            event_mono=intent.event_mono,
+            cancel_event=intent.cancel_event,
+            send_status=intent.send_status,
+        )
+
+    def _begin_cancellable_standby_intent(
+        self,
+        trigger_name: str,
+        reason: str,
+        event_mono: float,
+    ) -> DisplayOffStandbyIntentSnapshot:
+        """Record minimum state before queueing cancellable early standby.
+
+        This intentionally does not log.  The display-off hot path must signal
+        the resident dispatcher before doing diagnostic bookkeeping.
+        """
+        with self._state_lock:
+            previous = self._display_off_standby_intent
+            if previous is not None and not previous.cancelled:
+                previous.cancelled = True
+                previous.cancel_event.set()
+
+            self._generation += 1
+            self._desired_state = "sleep"
+            self._desired_reason = reason
+            intent = DisplayOffStandbyIntent(
+                generation=self._generation,
+                trigger_name=trigger_name,
+                reason=reason,
+                event_mono=event_mono,
+                cancel_event=threading.Event(),
+            )
+            self._display_off_standby_intent = intent
+            return self._display_off_intent_snapshot(intent)
+
+    def _cancel_display_off_standby_intent(
+        self,
+        *,
+        expected_trigger: str | None = "display_off",
+        advance_generation: bool = True,
+    ) -> DisplayOffStandbyIntentSnapshot | None:
+        """Invalidate an outstanding display-off task without losing send state."""
+        with self._state_lock:
+            intent = self._display_off_standby_intent
+            if (
+                intent is None
+                or intent.cancelled
+                or (expected_trigger is not None and intent.trigger_name != expected_trigger)
+            ):
+                return None
+
+            snapshot = self._display_off_intent_snapshot(intent)
+            intent.cancelled = True
+            intent.cancel_event.set()
+            # This is the cancellation fence used by every socket send and
+            # retry.  Do not call _new_generation here: display-on decides its
+            # desired state only after it has observed the old send status.
+            if advance_generation:
+                self._generation += 1
+            return snapshot
+
+    def _display_off_intent_is_active(self, generation: int) -> bool:
+        with self._state_lock:
+            intent = self._display_off_standby_intent
+            return bool(
+                intent is not None
+                and intent.generation == generation
+                and not intent.cancelled
+                and self._generation == generation
+            )
+
+    def _update_display_off_standby_intent(self, generation: int, send_status: str) -> bool:
+        """CAS-style, monotonic state transition for a display-off task."""
+        with self._state_lock:
+            intent = self._display_off_standby_intent
+            if (
+                intent is None
+                or intent.generation != generation
+                or intent.cancelled
+                or self._generation != generation
+            ):
+                return False
+            if send_status not in _CANCELLABLE_STANDBY_STATUS_TRANSITIONS.get(intent.send_status, ()):
+                return False
+            intent.send_status = send_status
+            return True
 
     def _set_session_ending(self, ending: bool):
         with self._state_lock:

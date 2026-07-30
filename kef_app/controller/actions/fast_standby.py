@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from ..standby import FastStandbySendResult, send_fast_standby
+from ..standby import FastStandbySendResult, PrewarmedStandbySendResult, send_fast_standby
 from ...devices.transport import FireAndForgetShutdownResult, fire_and_forget_standby
 
 
@@ -24,11 +24,12 @@ class ControllerFastStandbyMixin:
         *,
         deadline_mono: float | None = None,
         should_send: Callable[[], bool] | None = None,
+        attempts: int = _FAST_STANDBY_FIRE_AND_FORGET_ATTEMPTS,
     ) -> FireAndForgetShutdownResult:
         return fire_and_forget_standby(
             current_ip,
             port=self.config.mac_discovery_tcp_port,
-            attempts=_FAST_STANDBY_FIRE_AND_FORGET_ATTEMPTS,
+            attempts=attempts,
             socket_timeout=_FAST_STANDBY_FIRE_AND_FORGET_SOCKET_TIMEOUT,
             join_timeout=_FAST_STANDBY_FIRE_AND_FORGET_JOIN_TIMEOUT,
             deadline_mono=deadline_mono,
@@ -42,14 +43,9 @@ class ControllerFastStandbyMixin:
         deadline_mono: float | None = None,
         generation: int | None = None,
         reason: str = "fast_standby",
+        fire_and_forget_attempts: int = _FAST_STANDBY_FIRE_AND_FORGET_ATTEMPTS,
+        skip_prewarmed: bool = False,
     ) -> FastStandbySendResult:
-        if deadline_mono is None and generation is None:
-            return send_fast_standby(
-                current_ip,
-                lambda ip: self.try_send_prewarmed_standby(ip, reason=reason),
-                self._send_fire_and_forget_shutdown,
-            )
-
         # Do not query the Windows route table from the transport's should_send
         # callback.  The callback is evaluated several times and the networking
         # stack can stall while Windows is suspending or ending the session;
@@ -60,6 +56,34 @@ class ControllerFastStandbyMixin:
                 deadline_mono=deadline_mono,
                 generation=generation,
                 check_deadline=False,
+            )
+
+        # Display-off work is cancellable for the life of the display state,
+        # rather than only for a short Windows event budget.  Keep every I/O
+        # call bounded by its socket timeout while preserving the generation
+        # gate before and after a cold connect.
+        if deadline_mono is None:
+            def send_prewarmed(ip: str) -> PrewarmedStandbySendResult:
+                if skip_prewarmed:
+                    # The cancellable dispatcher already consumed every
+                    # persistent holder through its cached-byte fast path.
+                    # Do not immediately probe the empty pool a second time.
+                    return PrewarmedStandbySendResult(False, False, "skipped_already_tried", target_ip=ip)
+                return self.try_send_prewarmed_standby(
+                    ip,
+                    generation=generation,
+                    reason=reason,
+                )
+
+            return send_fast_standby(
+                current_ip,
+                send_prewarmed,
+                lambda ip: self._send_fire_and_forget_shutdown(
+                    ip,
+                    should_send=should_send,
+                    attempts=fire_and_forget_attempts,
+                ),
+                should_continue=should_send,
             )
 
         now = self.mono()
@@ -211,12 +235,12 @@ class ControllerFastStandbyMixin:
         host_unreachable_outcome: str = "sent_skipped_host_unreachable",
         host_unreachable_status: str = "host_unreachable_assumed_standby",
         host_unreachable_cause: str = "fire_and_forget_host_unreachable",
-        deadline_mono: float | None = None,
+        deadline_mono: float,
     ) -> str | None:
         fast_result = self._send_fast_standby(
             current_ip,
             deadline_mono=deadline_mono,
-            generation=generation if deadline_mono is not None else None,
+            generation=generation,
             reason=reason,
         )
         self._log_prewarmed_fast_send(

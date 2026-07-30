@@ -372,7 +372,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         *,
         generation: int | None,
         reason: str,
-        deadline_mono: float | None = None,
+        deadline_mono: float,
     ) -> tuple[bool, str]:
         current_ip = self.get_current_kef_ip()
         self._log_standby(
@@ -424,12 +424,11 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         if fast_send_result is not None:
             return _outcome_is_success(fast_send_result), fast_send_result
 
-        fields: dict[str, object] = {"cause": "fast_standby_send_failed"}
-        if deadline_mono is not None:
-            fields["deadline_mono"] = f"{deadline_mono:.3f}"
-            fields["standard_fallback"] = "disabled_for_bounded_path"
-        else:
-            fields["standard_fallback"] = "removed"
+        fields: dict[str, object] = {
+            "cause": "fast_standby_send_failed",
+            "deadline_mono": f"{deadline_mono:.3f}",
+            "standard_fallback": "disabled_for_bounded_path",
+        }
         self._log_standby("SKIP", policy, generation, reason, **fields)
         return False, policy.failed_outcome
 
@@ -439,7 +438,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         *,
         generation: int,
         reason: str,
-        deadline_mono: float | None = None,
+        deadline_mono: float,
     ) -> bool:
         def run() -> tuple[bool, str]:
             skipped, outcome = self._standby_skip_disabled(policy, generation, reason)
@@ -468,7 +467,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         generation: int,
         reason: str,
         *,
-        deadline_mono: float | None = None,
+        deadline_mono: float,
     ) -> bool:
         return self._execute_fast_standby_policy(
             PREEMPTIVE_STANDBY_POLICY,
@@ -501,7 +500,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         generation: int,
         reason: str,
         *,
-        deadline_mono: float | None = None,
+        deadline_mono: float,
     ) -> bool:
         return self._execute_fast_standby_policy(
             FAST_SUSPEND_STANDBY_POLICY,

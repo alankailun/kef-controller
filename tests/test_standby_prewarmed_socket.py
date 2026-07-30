@@ -386,6 +386,49 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
             1,
         )
 
+    def test_cached_prewarmed_send_tries_second_pool_socket_after_first_send_failure(self):
+        controller = self.make_controller(80, prewarmed_persist_socket=True)
+        first_socket = Mock()
+        first_socket.sendall.side_effect = OSError("stale pooled socket")
+        second_socket = Mock()
+        second_socket.getsockopt.return_value = 0
+        with controller._prewarmed_standby_lock:
+            controller._prewarmed_standby_holders = [
+                PrewarmedSocketHolder(first_socket, "127.0.0.1", controller.mono()),
+                PrewarmedSocketHolder(second_socket, "127.0.0.1", controller.mono()),
+            ]
+
+        with patch("kef_app.controller.standby.prewarmed_socket.select.select", return_value=([], [], [])):
+            result = controller.try_send_cached_prewarmed_standby()
+
+        self.assertTrue(result.success, result)
+        first_socket.sendall.assert_called_once()
+        second_socket.sendall.assert_called_once()
+        first_socket.close.assert_called_once()
+        second_socket.close.assert_called_once()
+
+    def test_cached_prewarmed_send_rejects_a_readable_stale_socket_before_send(self):
+        controller = self.make_controller(80, prewarmed_persist_socket=True)
+        first_socket = Mock()
+        second_socket = Mock()
+        second_socket.getsockopt.return_value = 0
+        with controller._prewarmed_standby_lock:
+            controller._prewarmed_standby_holders = [
+                PrewarmedSocketHolder(first_socket, "127.0.0.1", controller.mono()),
+                PrewarmedSocketHolder(second_socket, "127.0.0.1", controller.mono()),
+            ]
+
+        with patch(
+            "kef_app.controller.standby.prewarmed_socket.select.select",
+            side_effect=[([first_socket], [], []), ([], [], [])],
+        ):
+            result = controller.try_send_cached_prewarmed_standby()
+
+        self.assertTrue(result.success, result)
+        first_socket.sendall.assert_not_called()
+        first_socket.close.assert_called_once()
+        second_socket.sendall.assert_called_once()
+
     def test_cached_prewarmed_send_skips_when_socket_ip_does_not_match_cache(self):
         with _LoopbackHttpSpeaker() as speaker:
             controller = self.make_controller(speaker.port, prewarmed_persist_socket=True)
@@ -403,49 +446,6 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         self.assertEqual(result.fast_path_skip_reason, "no_socket_for_cached_ip")
         self.assertEqual(result.target_ip, "127.0.0.2")
 
-    def test_cached_lock_fast_path_logs_diagnostics(self):
-        with _LoopbackHttpSpeaker() as speaker:
-            controller = self.make_controller(speaker.port, prewarmed_persist_socket=True)
-            controller._prewarmed_standby_tick("unit_test")
-            controller._log_structured = Mock()
-            events: list[str] = []
-            controller.add_event_listener(lambda name, _payload: events.append(name))
-
-            handled = controller.try_handle_cached_lock_fast_path("WTS_SESSION_LOCK", controller.mono())
-            controller._close_prewarmed_socket_holders()
-
-        self.assertTrue(handled)
-        self.assertEqual(controller._current_generation(), 1)
-        # The fast path mirrors _run_standby_action so tray/home power hints
-        # see this standby like any other; the action is finished by then.
-        self.assertEqual(events, ["power_action_started", "power_action_finished"])
-        self.assertFalse(controller._is_controller_power_action_active())
-        self.assertTrue(
-            any(
-                call.kwargs.get("step") == "prewarmed_standby_send"
-                and call.kwargs.get("fast_path_used") is True
-                and call.kwargs.get("cache_version") is not None
-                and call.kwargs.get("fast_path_duration_ms") is not None
-                for call in controller._log_structured.mock_calls
-            )
-        )
-
-    def test_cached_lock_fast_path_falls_back_when_no_socket(self):
-        controller = self.make_controller(80, prewarmed_persist_socket=True)
-        controller._log_structured = Mock()
-
-        handled = controller.try_handle_cached_lock_fast_path("WTS_SESSION_LOCK", controller.mono())
-
-        self.assertFalse(handled)
-        self.assertTrue(
-            any(
-                call.kwargs.get("step") == "cached_lock_fast_path"
-                and call.kwargs.get("fast_path_used") is False
-                and call.kwargs.get("fast_path_skip_reason") == "no_socket_for_cached_ip"
-                for call in controller._log_structured.mock_calls
-            )
-        )
-
     def test_fast_standby_controller_loopback_benchmark(self):
         samples_ms: list[float] = []
         runs = 20
@@ -459,7 +459,11 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
             for _ in range(runs):
                 generation = controller._new_generation("sleep", "PBT_APMSUSPEND")
                 started = time.perf_counter()
-                result = controller.standby_kef_fast_suspend(generation, "PBT_APMSUSPEND")
+                result = controller.standby_kef_fast_suspend(
+                    generation,
+                    "PBT_APMSUSPEND",
+                    deadline_mono=controller.mono() + 1.0,
+                )
                 samples_ms.append((time.perf_counter() - started) * 1000.0)
                 self.assertTrue(result)
 

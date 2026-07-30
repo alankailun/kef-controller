@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 from typing import Any, Callable, Optional
 
@@ -72,6 +73,12 @@ class KefPowerController(
         self._prewarmed_standby_holders = []
         self._prewarmed_standby_restart_reason: str | None = None
         self._fast_standby_send_cache = FastStandbySendCache()
+        self._display_off_dispatcher_lock = threading.Lock()
+        # Construction/cleanup placeholder.  start_display_off_standby_dispatcher
+        # replaces it immediately before starting the resident worker.
+        self._display_off_dispatcher_queue: queue.SimpleQueue[object] = queue.SimpleQueue()
+        self._display_off_dispatcher_stop = threading.Event()
+        self._display_off_dispatcher_thread: threading.Thread | None = None
         self._event_listeners: list[Callable[[str, dict[str, Any]], None]] = []
 
         self._current_kef_ip = self._loaded_state.last_ip or config.kef_ip
@@ -105,6 +112,7 @@ class KefPowerController(
         self._generation = 0
         self._desired_state = ""
         self._desired_reason = ""
+        self._display_off_standby_intent = None
         self._controller_active_power_actions = 0
         self._last_resume_event_mono = 0.0
         self._last_wake_schedule_mono = 0.0
