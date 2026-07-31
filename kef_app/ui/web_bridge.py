@@ -33,37 +33,37 @@ from .logs.log_history import (
 from .settings.settings_service import get_speaker_power_disabled_reason, save_settings_and_sync_startup
 
 
-_EVENTS: dict[str, tuple[str, str, str, Callable[[Any], object]]] = {
+_EVENTS: dict[str, tuple[str, str, Callable[[Any], object]]] = {
     "startup": (
-        "Startup", "wake_on_startup", "Wake speaker when the app starts.",
+        "Startup", "wake_on_startup",
         lambda controller: controller.on_startup(),
     ),
     "display-off": (
-        "Display Off", "standby_on_display_off", "Put the speaker in standby when the screen turns off.",
+        "Display Off", "standby_on_display_off",
         lambda controller: controller.on_display_off(controller.mono(), "WEB_TEST_DISPLAY_OFF"),
     ),
     "display-on": (
-        "Display On", "wake_on_display_on", "Wake the speaker when the screen turns on.",
+        "Display On", "wake_on_display_on",
         lambda controller: controller.on_display_on(controller.mono(), "WEB_TEST_DISPLAY_ON"),
     ),
     "lock": (
-        "Lock", "standby_on_lock", "Put the speaker in standby when Windows locks.",
+        "Lock", "standby_on_lock",
         lambda controller: controller.on_lock("WEB_TEST_LOCK"),
     ),
     "unlock": (
-        "Unlock", "wake_on_unlock_only", "Wake the speaker after Windows unlocks.",
+        "Unlock", "wake_on_unlock_only",
         lambda controller: controller.on_unlock("WEB_TEST_UNLOCK"),
     ),
     "sleep": (
-        "Sleep", "standby_on_sleep", "Put the speaker in standby when Windows sleeps.",
+        "Sleep", "standby_on_sleep",
         lambda controller: controller.on_suspend("WEB_TEST_SUSPEND"),
     ),
     "lid-close": (
-        "Lid Close", "standby_on_lid_close", "Put the speaker in standby when the laptop lid closes.",
+        "Lid Close", "standby_on_lid_close",
         lambda controller: controller.on_lid_closed("WEB_TEST_LID_CLOSE"),
     ),
     "shutdown": (
-        "Shutdown", "endsession_standby_on_shutdown", "Put the speaker in standby when Windows shuts down.",
+        "Shutdown", "endsession_standby_on_shutdown",
         lambda controller: controller.standby_kef_end_session("WEB_TEST_ENDSESSION", "WEB_TEST"),
     ),
 }
@@ -134,8 +134,11 @@ class WebControllerBridge(QObject):
 
     @Slot(result=str)
     def initialState(self) -> str:
+        return self._encode(self._initial_state_payload())
+
+    def _initial_state_payload(self) -> dict[str, Any]:
         self._poll_speaker_state()
-        return self._encode(self._state())
+        return self._state()
 
     @Slot()
     def refresh(self) -> None:
@@ -161,10 +164,7 @@ class WebControllerBridge(QObject):
         is_on = self._speaker_on if self._speaker_on is not None else bool(identity.available)
         action = "standby" if is_on else "wake"
         def power_work() -> bool:
-            generation = self._controller._new_generation(action, "web_ui")
-            if is_on:
-                return bool(self._controller.standby_kef(generation, "web_ui"))
-            return bool(self._controller.wake_kef(generation, "web_ui"))
+            return bool(self._controller.run_user_power_action(action, "web_ui"))
         self._start_action(
             f"Web{action.title()}",
             power_work,
@@ -228,7 +228,7 @@ class WebControllerBridge(QObject):
                     continue
                 coerce = self._config_store.FIELD_COERCERS[key]
                 setattr(updated, key, coerce(value))
-        except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        except (ValueError, TypeError, KeyError) as exc:
             self._notify("error", "Settings were not saved", str(exc))
             return
 
@@ -386,7 +386,7 @@ class WebControllerBridge(QObject):
         if event is None:
             self._notify("error", "Unknown test", event_key)
             return
-        label, setting_key, _description, runner = event
+        label, setting_key, runner = event
         if not bool(getattr(self._config, setting_key)):
             self._notify("warning", f"{label}: no action", get_speaker_power_disabled_reason(setting_key))
             self._emit_event_result(event_key, "warning", "No action", get_speaker_power_disabled_reason(setting_key))
@@ -420,6 +420,9 @@ class WebControllerBridge(QObject):
     @Slot(result=str)
     @Slot(str, result=str)
     def logs(self, selected_name: str = "") -> str:
+        return self._encode(self._logs_payload(selected_name))
+
+    def _logs_payload(self, selected_name: str = "") -> list[str]:
         # v1.6.3 merged the file tail with the in-memory UI ring. Keep that
         # model, but filter hidden poll noise *before* applying the display cap;
         # otherwise thousands of web_ui_poll lines displace PROCESS_START and
@@ -431,17 +434,19 @@ class WebControllerBridge(QObject):
             if not should_hide_from_ui_log(line)
         ]
         if log_path != self._config.log_file:
-            return self._encode(file_lines[-800:])
-        lines = merge_recent_lines(
+            return file_lines[-800:]
+        return merge_recent_lines(
             file_lines,
             self._log_handler.snapshot_lines(),
             max_lines=800,
         )
-        return self._encode(lines)
 
     @Slot(result=str)
     def logFiles(self) -> str:
-        return self._encode(list_log_history_files(self._config.log_file))
+        return self._encode(self._log_files_payload())
+
+    def _log_files_payload(self) -> list[str]:
+        return list_log_history_files(self._config.log_file)
 
     @Slot()
     def openLogFolder(self) -> None:
@@ -463,52 +468,36 @@ class WebControllerBridge(QObject):
         response = reply if isinstance(reply, dict) else {}
         values = list(args) if isinstance(args, list) else []
         try:
-            if method == "initialState":
-                result: object = json.loads(self.initialState())
-            elif method == "logs":
-                selected_name = str(values[0]) if values else ""
-                result = json.loads(self.logs(selected_name))
-            elif method == "logFiles":
-                result = json.loads(self.logFiles())
-            elif method == "refresh":
-                self.refresh()
-                result = {"ok": True}
-            elif method == "togglePower":
-                self.togglePower()
-                result = {"ok": True}
-            elif method == "setVolume":
-                self.setVolume(int(values[0]))
-                result = {"ok": True}
-            elif method == "changeInput":
-                self.changeInput(str(values[0]))
-                result = {"ok": True}
-            elif method == "updateSettings":
-                self.updateSettings(str(values[0]))
-                result = {"ok": True}
-            elif method == "applyTarget":
-                self.applyTarget(str(values[0]), str(values[1]))
-                result = {"ok": True}
-            elif method == "updateStartup":
-                self.updateStartup(str(values[0]), bool(values[1]))
-                result = {"ok": True}
-            elif method == "runEvent":
-                self.runEvent(str(values[0]))
-                result = {"ok": True}
-            elif method == "scanSpeakers":
-                self.scanSpeakers()
-                result = {"ok": True}
-            elif method == "openLogFolder":
-                self.openLogFolder()
-                result = {"ok": True}
-            else:
-                raise ValueError(f"Unknown web API method: {method}")
-            response["result"] = result
+            handlers: dict[str, Callable[[], object]] = {
+                "initialState": self._initial_state_payload,
+                "logs": lambda: self._logs_payload(str(values[0]) if values else ""),
+                "logFiles": self._log_files_payload,
+                "refresh": lambda: self._api_action(self.refresh),
+                "togglePower": lambda: self._api_action(self.togglePower),
+                "setVolume": lambda: self._api_action(lambda: self.setVolume(int(values[0]))),
+                "changeInput": lambda: self._api_action(lambda: self.changeInput(str(values[0]))),
+                "updateSettings": lambda: self._api_action(lambda: self.updateSettings(str(values[0]))),
+                "applyTarget": lambda: self._api_action(lambda: self.applyTarget(str(values[0]), str(values[1]))),
+                "updateStartup": lambda: self._api_action(lambda: self.updateStartup(str(values[0]), bool(values[1]))),
+                "runEvent": lambda: self._api_action(lambda: self.runEvent(str(values[0]))),
+                "scanSpeakers": lambda: self._api_action(self.scanSpeakers),
+                "openLogFolder": lambda: self._api_action(self.openLogFolder),
+            }
+            try:
+                response["result"] = handlers[method]()
+            except KeyError as exc:
+                raise ValueError(f"Unknown web API method: {method}") from exc
         except Exception as exc:
             response["error"] = str(exc)
         finally:
             event = response.get("event")
             if isinstance(event, threading.Event):
                 event.set()
+
+    @staticmethod
+    def _api_action(callback: Callable[[], None]) -> dict[str, bool]:
+        callback()
+        return {"ok": True}
 
     def publish_state(self) -> None:
         self.state_changed.emit(self._encode(self._state()))
@@ -551,11 +540,6 @@ class WebControllerBridge(QObject):
                 "last_action": self._last_action,
                 "last_failure": self._recent_failure(),
             },
-            "events": [
-                {"key": key, "label": label, "setting": setting, "description": description,
-                 "enabled": bool(getattr(self._config, setting))}
-                for key, (label, setting, description, _runner) in _EVENTS.items()
-            ],
         }
 
     def _poll_speaker_state(self, force: bool = False) -> None:
@@ -603,9 +587,16 @@ class WebControllerBridge(QObject):
         self._on_polled_state(input_source, volume, speaker_on)
 
     def _on_power_action_started(self, action: str, _reason: str) -> None:
-        self._awaiting_wake_confirmation = str(action).upper() == "WAKE"
+        normalized_action = str(action or "").upper()
+        self._awaiting_wake_confirmation = normalized_action == "WAKE"
         self._last_action_started = time.monotonic()
-        self._notify("info", "Speaker action", f"{action.replace('_', ' ').title()} is running.")
+        self._notify(
+            "info",
+            "Speaker action",
+            f"{action.replace('_', ' ').title()} is running.",
+            action=normalized_action,
+            phase="started",
+        )
         self.publish_state()
 
     def _on_power_action_finished(self, action: str, _reason: str, success: bool, outcome: str) -> None:
@@ -628,8 +619,14 @@ class WebControllerBridge(QObject):
         # Publish the confirmed action result before the slower live poll. The
         # poll still reconciles later external changes from the speaker.
         self.publish_state()
-        self._notify("success" if success else "error", action.replace("_", " ").title(),
-                     f"{outcome or ('Completed' if success else 'Failed')} · {elapsed} ms")
+        self._notify(
+            "success" if success else "error",
+            action.replace("_", " ").title(),
+            f"{outcome or ('Completed' if success else 'Failed')} · {elapsed} ms",
+            action=normalized_action,
+            phase="finished",
+            success=bool(success),
+        )
         self._poll_speaker_state(force=True)
 
     def _on_log_line(self, line: str) -> None:
@@ -656,8 +653,24 @@ class WebControllerBridge(QObject):
     def _emit_event_result(self, key: str, state: str, title: str, detail: str) -> None:
         self.toast.emit(self._encode({"kind": "event", "key": key, "state": state, "title": title, "detail": detail}))
 
-    def _notify(self, level: str, title: str, detail: str) -> None:
-        self.toast.emit(self._encode({"kind": "toast", "level": level, "title": title, "detail": detail}))
+    def _notify(
+        self,
+        level: str,
+        title: str,
+        detail: str,
+        *,
+        action: str = "",
+        phase: str = "",
+        success: bool | None = None,
+    ) -> None:
+        payload: dict[str, object] = {"kind": "toast", "level": level, "title": title, "detail": detail}
+        if action:
+            payload["action"] = action
+        if phase:
+            payload["phase"] = phase
+        if success is not None:
+            payload["success"] = success
+        self.toast.emit(self._encode(payload))
 
     def _speaker_label(self) -> str:
         if self._speaker_on is True:

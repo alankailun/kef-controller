@@ -5,7 +5,9 @@ import time
 import tempfile
 import unittest
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.request import Request, urlopen
 
 from kef_app.ui.web_api_server import WebApiServer, _STATIC_CONTENT_TYPES
 
@@ -23,12 +25,44 @@ class WebApiServerTests(unittest.TestCase):
             server = WebApiServer(root, object())
             server.start()
             try:
-                with urlopen(f"{server.url}styles.css") as response:
+                with urlopen(urljoin(server.url, "styles.css")) as response:
                     self.assertEqual(response.headers.get_content_type(), "text/css")
-                with urlopen(f"{server.url}texts.js") as response:
+                with urlopen(urljoin(server.url, "texts.js")) as response:
                     self.assertEqual(response.headers.get_content_type(), "text/javascript")
             finally:
                 server.stop()
+
+    def test_api_requires_the_per_process_token_and_limits_request_size(self) -> None:
+        bridge = type("Bridge", (), {"invoke_api": lambda _self, method, args: {"method": method, "args": args}})()
+        server = WebApiServer(Path("."), bridge)
+        server.start()
+        try:
+            base = server.url.split("?", 1)[0]
+            token = parse_qs(urlparse(server.url).query)["token"][0]
+            request = Request(
+                f"{base}api/refresh?token={token}",
+                data=b'{"args":[]}',
+                headers={"Content-Type": "application/json"},
+            )
+            with urlopen(request) as response:
+                self.assertEqual(response.status, 200)
+
+            with self.assertRaises(HTTPError) as denied:
+                urlopen(Request(f"{base}api/refresh", data=b'{}'))
+            self.assertEqual(denied.exception.code, 403)
+            denied.exception.close()
+
+            oversized = Request(
+                f"{base}api/refresh?token={token}",
+                data=b"x" * ((1 << 20) + 1),
+                headers={"Content-Type": "application/json"},
+            )
+            with self.assertRaises(HTTPError) as rejected:
+                urlopen(oversized)
+            self.assertEqual(rejected.exception.code, 413)
+            rejected.exception.close()
+        finally:
+            server.stop()
 
     def test_bootstrap_uses_current_state_without_replaying_old_events(self) -> None:
         bridge = type("Bridge", (), {"invoke_api": lambda _self, method, args: {"method": method, "args": args}})()

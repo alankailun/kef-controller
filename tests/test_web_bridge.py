@@ -64,6 +64,33 @@ class WebBridgeTests(unittest.TestCase):
 
         self.assertIn('button.disabled = false;', html)
 
+    def test_power_pending_uses_structured_toast_fields_not_english_copy(self) -> None:
+        html = (Path(__file__).parents[1] / "kef_app" / "ui" / "web" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('const powerAction = String(msg.action || "").toUpperCase();', html)
+        self.assertIn('const powerPhase = String(msg.phase || "");', html)
+        self.assertNotIn('POWER_ACTION_TITLES', html)
+        self.assertNotIn('Wake is running', html)
+
+    def test_structured_power_toast_includes_machine_readable_fields(self) -> None:
+        bridge = WebControllerBridge.__new__(WebControllerBridge)
+        bridge._encode = lambda payload: payload
+        bridge.toast = Mock()
+
+        bridge._notify("success", "Wake", "Completed", action="WAKE", phase="finished", success=True)
+
+        bridge.toast.emit.assert_called_once_with(
+            {
+                "kind": "toast",
+                "level": "success",
+                "title": "Wake",
+                "detail": "Completed",
+                "action": "WAKE",
+                "phase": "finished",
+                "success": True,
+            }
+        )
+
     def test_startup_update_is_scheduled_without_blocking_the_ui_thread(self) -> None:
         bridge = WebControllerBridge.__new__(WebControllerBridge)
         bridge._config = AppConfig()
@@ -94,7 +121,7 @@ class WebBridgeTests(unittest.TestCase):
         self.assertTrue(_wake_is_confirmed(True, "wifi"))
 
     def test_lid_close_simulation_uses_the_lid_close_rule(self) -> None:
-        label, setting, _description, _runner = _EVENTS["lid-close"]
+        label, setting, _runner = _EVENTS["lid-close"]
 
         self.assertEqual(label, "Lid Close")
         self.assertEqual(setting, "standby_on_lid_close")

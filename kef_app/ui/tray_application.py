@@ -45,7 +45,6 @@ class KefTrayApp:
             self._on_runtime_stopped,
             Qt.ConnectionType.QueuedConnection,
         )
-        self._active_power_actions = 0
         self._active_action = ""
         self._speaker_on_hint: Optional[bool] = None
         self._identity_poll_lock = threading.Lock()
@@ -98,18 +97,18 @@ class KefTrayApp:
 
         return menu
 
-    def _start_controller_action(self, desired_state: str, runner, reason: str, thread_name: str) -> None:
-        def run():
-            generation = self._controller._new_generation(desired_state, reason)
-            runner(generation, reason)
-
-        start_background_task(thread_name, run, log=self._log)
+    def _start_controller_action(self, action: str, reason: str, thread_name: str) -> None:
+        start_background_task(
+            thread_name,
+            lambda: self._controller.run_user_power_action(action, reason),
+            log=self._log,
+        )
 
     def _do_wake(self) -> None:
-        self._start_controller_action("wake", self._controller.wake_kef, "ui_tray", "TrayWake")
+        self._start_controller_action("wake", "ui_tray", "TrayWake")
 
     def _do_standby(self) -> None:
-        self._start_controller_action("sleep", self._controller.standby_kef, "ui_tray", "TrayStandby")
+        self._start_controller_action("standby", "ui_tray", "TrayStandby")
 
     def start(self) -> None:
         thread = start_background_task("HeadlessRuntime", self._runtime.run, log=self._log)
@@ -127,7 +126,7 @@ class KefTrayApp:
         self._refresh_icon()
 
     def _refresh_icon(self) -> None:
-        if self._active_power_actions > 0:
+        if self._controller.is_power_action_active():
             action_label = self._format_action_label(self._active_action)
             self._status_action.setText(f"{action_label}...")
             self._tray.setIcon(icon_working())
@@ -191,20 +190,18 @@ class KefTrayApp:
         self._refresh_icon()
 
     def _on_power_action_started(self, action: str, _reason: str) -> None:
-        self._active_power_actions += 1
         self._active_action = action
         self._refresh_icon()
 
     def _on_power_action_finished(self, _action: str, _reason: str, _success: bool, _outcome: str) -> None:
-        self._active_power_actions = max(0, self._active_power_actions - 1)
-        if self._active_power_actions == 0:
+        if not self._controller.is_power_action_active():
             self._active_action = ""
         self._refresh_icon()
 
     def _poll_external_identity(self) -> None:
         if not self._window.isVisible():
             return
-        if self._active_power_actions > 0:
+        if self._controller.is_power_action_active():
             return
         if not self._controller.get_current_kef_ip():
             return

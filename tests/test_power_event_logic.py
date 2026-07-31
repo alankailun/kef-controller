@@ -88,6 +88,21 @@ class PowerEventLogicTests(unittest.TestCase):
             },
         )
 
+    def test_user_power_action_keeps_generation_management_inside_controller(self):
+        controller = self.make_controller()
+        controller._new_generation = Mock(return_value=9)
+        controller.wake_kef = Mock(return_value=True)
+        controller.standby_kef = Mock(return_value=True)
+
+        self.assertTrue(controller.run_user_power_action("wake", "ui_test"))
+        controller._new_generation.assert_called_once_with("wake", "ui_test")
+        controller.wake_kef.assert_called_once_with(9, "ui_test")
+
+        controller._new_generation.reset_mock()
+        self.assertTrue(controller.run_user_power_action("standby", "ui_test"))
+        controller._new_generation.assert_called_once_with("sleep", "ui_test")
+        controller.standby_kef.assert_called_once_with(9, "ui_test")
+
     def test_standby_policies_capture_distinct_path_shapes(self):
         self.assertIsInstance(PREEMPTIVE_STANDBY_POLICY, FastStandbyPolicy)
         self.assertEqual(PREEMPTIVE_STANDBY_POLICY.action, "EARLY_STANDBY")
@@ -2159,6 +2174,29 @@ class PowerEventLogicTests(unittest.TestCase):
 
         self.assertEqual(result, ("standby", None, False))
         self.assertFalse(controller._speaker_runtime_power_on)
+        self.assertFalse(controller._read_ui_value.call_args_list[0].kwargs["fresh"])
+
+    def test_cached_ui_read_retries_once_with_a_fresh_connector(self):
+        controller = self.make_controller(kef_ip="192.168.1.10")
+        speaker = Mock(status="powerOn")
+        controller.get_speaker = Mock(side_effect=[OSError("stale connector"), speaker])
+        controller.reset_speaker = Mock()
+
+        value, ok = controller._read_ui_value(
+            "unit_test",
+            "unit_test",
+            fresh=False,
+            step="speaker_status",
+            reader=lambda current: current.status,
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(value, "powerOn")
+        controller.reset_speaker.assert_called_once_with()
+        self.assertEqual(
+            [call.kwargs["fresh"] for call in controller.get_speaker.call_args_list],
+            [False, True],
+        )
 
     def test_external_ui_poll_infers_on_from_live_input_when_status_is_unknown(self):
         controller = self.make_controller(kef_ip="192.168.1.10")

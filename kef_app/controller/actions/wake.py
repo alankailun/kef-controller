@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import socket
-
-from ..network_timeout import temporary_socket_timeout
 from ...devices.speaker_models import normalize_input_source
 
 
@@ -116,7 +114,7 @@ class ControllerDeviceWakeMixin:
                 )
                 return False
 
-            if target_input and not self._is_configurable_input_source(target_input):
+            if not self._is_configurable_input_source(target_input):
                 outcome = "skipped_unsupported_input_source"
                 self._log_structured(
                     "SKIP",
@@ -190,11 +188,7 @@ class ControllerDeviceWakeMixin:
                     return True
 
             def execute_attempt(attempt: int) -> None:
-                if target_input:
-                    self._set_speaker_source(target_input, fresh=True)
-                else:
-                    with temporary_socket_timeout(c.socket_timeout):
-                        self.get_speaker(fresh=True)
+                self._set_speaker_source(target_input, fresh=True)
 
                 self.capture_identity_from_current_ip(reason=reason, trigger=f"wake_success_attempt_{attempt}")
                 self.log_wifi_diagnostics(reason=reason, trigger=f"wake_success_attempt_{attempt}")

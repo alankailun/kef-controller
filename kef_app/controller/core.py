@@ -14,7 +14,7 @@ from .actions import ControllerDeviceActionsMixin
 from .discovery import ControllerDiscoveryMixin
 from .logging_mixin import ControllerLoggingMixin
 from .network_timeout import temporary_socket_timeout
-from .power_state import ControllerStateMixin
+from .power_state import ControllerStateMixin, power_action_outcome_is_success
 from .session_events import ControllerSessionEventsMixin
 from .standby import FastStandbySendCache, PrewarmedStandbySocketMonitorMixin
 
@@ -27,10 +27,6 @@ _UNCONFIRMED_STANDBY_OUTCOMES = {
     "sent_unconfirmed_standard",
     "sent_skipped_host_unreachable",
 }
-
-
-def _power_action_outcome_is_success(outcome: str) -> bool:
-    return outcome.startswith("success") or outcome.startswith("sent_")
 
 
 class KefPowerController(
@@ -162,6 +158,17 @@ class KefPowerController(
     def _emit_identity_changed(self) -> None:
         self._emit_event("identity_changed", identity=self.get_current_identity())
 
+    def run_user_power_action(self, action: str, reason: str) -> bool:
+        """Run a user-requested wake/standby action with controller-owned generation state."""
+        normalized_action = str(action or "").strip().lower()
+        if normalized_action == "wake":
+            generation = self._new_generation("wake", reason)
+            return bool(self.wake_kef(generation, reason))
+        if normalized_action in {"standby", "sleep"}:
+            generation = self._new_generation("sleep", reason)
+            return bool(self.standby_kef(generation, reason))
+        raise ValueError(f"Unsupported user power action: {action}")
+
     def _mark_power_action_started(self) -> None:
         with self._state_lock:
             self._controller_active_power_actions += 1
@@ -174,7 +181,7 @@ class KefPowerController(
         self._emit_power_action_started_event(action, reason)
 
     def _emit_power_action_finished(self, action: str, reason: str, outcome: str) -> None:
-        success = _power_action_outcome_is_success(outcome)
+        success = power_action_outcome_is_success(outcome)
         with self._state_lock:
             self._controller_active_power_actions = max(0, self._controller_active_power_actions - 1)
         if (

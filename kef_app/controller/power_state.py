@@ -40,6 +40,11 @@ _CANCELLABLE_STANDBY_STATUS_TRANSITIONS = {
     "sent": frozenset({"confirmed"}),
 }
 
+
+def power_action_outcome_is_success(outcome: str) -> bool:
+    return outcome.startswith("success") or outcome.startswith("sent_")
+
+
 class ControllerStateMixin:
     def _new_generation(self, desired_state: str, reason: str, *, mono: str | None = None) -> int:
         with self._state_lock:
@@ -170,6 +175,10 @@ class ControllerStateMixin:
     def _is_controller_power_action_active(self) -> bool:
         with self._state_lock:
             return self._controller_active_power_actions > 0
+
+    def is_power_action_active(self) -> bool:
+        """Return whether any controller-owned wake or standby action is running."""
+        return self._is_controller_power_action_active()
 
     def _should_abort_generation(self, generation: int) -> bool:
         return generation != self._current_generation()

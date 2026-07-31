@@ -130,8 +130,9 @@
   // ═════════════════════════════════════════════════════════
   // API（本地回环 HTTP → Python 桥）
   // ═════════════════════════════════════════════════════════
+  const apiToken = new URLSearchParams(window.location.search).get("token") || "";
   const api = async (method, args = [], { signal = undefined, silent = false } = {}) => {
-    const response = await fetch(`/api/${method}`, {
+    const response = await fetch(`/api/${method}?token=${encodeURIComponent(apiToken)}`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ args }), signal,
     });
@@ -1298,8 +1299,6 @@
     else if (page === "settings") syncSettings();
   }
 
-  const POWER_ACTION_TITLES = new Set(["Wake", "Standby", "Early Standby", "Endsession Standby", "Speaker action failed"]);
-
   function handleToast(msg) {
     if (msg.kind === "event") { showEventResult(msg); return; }
     if (msg.kind === "scan") {
@@ -1317,8 +1316,10 @@
       syncDialog();
       return;
     }
-    const wakeStarted = msg.title === "Speaker action" && /^Wake is running\.$/.test(msg.detail || "");
-    const wakeNeedsLiveState = msg.title === "Wake" && msg.level === "success";
+    const powerAction = String(msg.action || "").toUpperCase();
+    const powerPhase = String(msg.phase || "");
+    const wakeStarted = powerAction === "WAKE" && powerPhase === "started";
+    const wakeNeedsLiveState = powerAction === "WAKE" && powerPhase === "finished" && msg.success === true;
     if (powerPending && powerPendingTarget && wakeStarted) {
       powerPendingStage = "confirming";
       syncHome();
@@ -1328,7 +1329,7 @@
       armPowerPendingTimeout(3000);
       syncHome();
     }
-    if (msg.kind === "toast" && POWER_ACTION_TITLES.has(msg.title) && powerPending && !wakeNeedsLiveState) {
+    if (msg.kind === "toast" && powerAction && powerPhase === "finished" && powerPending && !wakeNeedsLiveState) {
       clearPowerPending();
       syncHome();
     }

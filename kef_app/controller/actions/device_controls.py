@@ -52,12 +52,22 @@ class ControllerDeviceControlsMixin:
         step: str,
         reader: Callable[[KefConnector], T],
     ) -> tuple[T | None, bool]:
-        try:
+        def read_value(use_fresh_connector: bool) -> T:
             with temporary_socket_timeout(self.config.socket_timeout):
-                speaker = self.get_speaker(fresh=fresh)
-                return reader(speaker), True
+                speaker = self.get_speaker(fresh=use_fresh_connector)
+                return reader(speaker)
+
+        try:
+            return read_value(fresh), True
         except Exception as exc:
             self.reset_speaker()
+            if not fresh:
+                # Cached UI polls avoid connector construction in the common
+                # case, but get one fresh retry before reporting a failure.
+                try:
+                    return read_value(True), True
+                except Exception as retry_exc:
+                    exc = retry_exc
             if self._is_ui_poll_trigger(trigger):
                 self._log_ui_poll_failure(reason=reason, trigger=trigger, step=step, error=exc)
                 return None, False
@@ -293,7 +303,10 @@ class ControllerDeviceControlsMixin:
         speaker_on, power_ok = self._read_ui_value(
             reason,
             trigger,
-            fresh=True,
+            # Reuse the cached connector for the routine two-second UI poll.
+            # _read_ui_value resets and retries once with a fresh connector if
+            # the cached read fails.
+            fresh=False,
             step="speaker_status",
             reader=lambda speaker: self._normalize_speaker_power_state(speaker.status),
         )

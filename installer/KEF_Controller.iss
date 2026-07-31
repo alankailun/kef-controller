@@ -1,8 +1,8 @@
 #define AppExeName "KEF Controller.exe"
-#define AppVersion "1.7.9"
+#define AppVersion "1.8.0"
 #define WebView2RuntimeKey "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 #ifndef BuildSource
-  #define BuildSource "..\dist\release-1.7.9\KEF Controller"
+  #define BuildSource "..\dist\release-1.8.0\KEF Controller"
 #endif
 
 [Setup]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import secrets
 import threading
 import time
 from collections import deque
@@ -9,7 +10,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 if TYPE_CHECKING:
     from .web_bridge import WebControllerBridge
@@ -20,6 +21,7 @@ _STATIC_CONTENT_TYPES = {
     ".css": "text/css; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
 }
+_MAX_API_BODY_BYTES = 1 << 20
 
 
 class WebApiServer:
@@ -33,6 +35,7 @@ class WebApiServer:
         self._events: deque[dict[str, object]] = deque(maxlen=500)
         self._events_condition = threading.Condition()
         self._next_event_id = 1
+        self._api_token = secrets.token_urlsafe(32)
         self._last_client_activity_mono = time.monotonic()
         self._stopping = False
 
@@ -41,7 +44,7 @@ class WebApiServer:
         if self._server is None:
             raise RuntimeError("Web API server has not been started")
         host, port = self._server.server_address[:2]
-        return f"http://{host}:{port}/"
+        return f"http://{host}:{port}/?token={quote(self._api_token)}"
 
     def start(self) -> None:
         if self._server is not None:
@@ -76,6 +79,10 @@ class WebApiServer:
         self._server.shutdown()
         self._server.server_close()
         self._server = None
+        thread = self._thread
+        self._thread = None
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
 
     def publish(self, channel: str, payload: str) -> None:
         with self._events_condition:
@@ -144,12 +151,20 @@ class WebApiServer:
         handler.wfile.write(content)
 
     def _serve_api(self, handler: BaseHTTPRequestHandler) -> None:
-        path = urlparse(handler.path).path
+        parsed = urlparse(handler.path)
+        path = parsed.path
         if not path.startswith("/api/"):
             self._send_error(handler, HTTPStatus.NOT_FOUND, "Not found")
             return
+        token = parse_qs(parsed.query).get("token", [""])[0]
+        if not secrets.compare_digest(token, self._api_token):
+            self._send_error(handler, HTTPStatus.FORBIDDEN, "Forbidden")
+            return
         try:
             size = int(handler.headers.get("Content-Length", "0"))
+            if size < 0 or size > _MAX_API_BODY_BYTES:
+                self._send_error(handler, HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Request body too large")
+                return
             payload = json.loads(handler.rfile.read(size).decode("utf-8") or "{}")
             args = payload.get("args", []) if isinstance(payload, dict) else []
             if not isinstance(args, list):

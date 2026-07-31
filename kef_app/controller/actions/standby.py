@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .device_common import _STANDBY_VERIFY_TIMEOUT, StandbyVerificationError
-from .fast_standby import ControllerFastStandbyMixin, _outcome_is_success
+from .fast_standby import ControllerFastStandbyMixin
+from ..power_state import power_action_outcome_is_success
 
 
 _ENDSESSION_FAST_STANDBY_BUDGET_S = 2.00
@@ -251,7 +252,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             purpose=policy.lock_purpose,
         )
         if outcome is not None:
-            return _outcome_is_success(outcome), outcome
+            return power_action_outcome_is_success(outcome), outcome
 
         try:
             try:
@@ -349,7 +350,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             deadline_mono=deadline_mono,
         )
         if fast_send_outcome is not None:
-            return _outcome_is_success(fast_send_outcome), fast_send_outcome
+            return power_action_outcome_is_success(fast_send_outcome), fast_send_outcome
 
         self._log_standby(
             "WARN",
@@ -408,7 +409,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             target_ip=current_ip,
         )
         if outcome is not None:
-            return _outcome_is_success(outcome), outcome
+            return power_action_outcome_is_success(outcome), outcome
 
         fast_send_result = self._try_fast_standby_send(
             action=policy.action,
@@ -422,7 +423,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             deadline_mono=deadline_mono,
         )
         if fast_send_result is not None:
-            return _outcome_is_success(fast_send_result), fast_send_result
+            return power_action_outcome_is_success(fast_send_result), fast_send_result
 
         fields: dict[str, object] = {
             "cause": "fast_standby_send_failed",

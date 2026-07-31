@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Callable
 
 from ..standby import FastStandbySendResult, PrewarmedStandbySendResult, send_fast_standby
+from ..power_state import power_action_outcome_is_success
 from ...devices.transport import FireAndForgetShutdownResult, fire_and_forget_standby
 
 
@@ -11,10 +12,6 @@ _FAST_STANDBY_FIRE_AND_FORGET_SOCKET_TIMEOUT = 0.18
 _FAST_STANDBY_FIRE_AND_FORGET_JOIN_TIMEOUT = 0.25
 _BOUNDED_PREWARM_BUDGET_FRACTION = 0.40
 _BOUNDED_FIRE_AND_FORGET_RESERVE_S = 0.15
-
-
-def _outcome_is_success(outcome: str) -> bool:
-    return outcome.startswith("success") or outcome.startswith("sent_")
 
 
 class ControllerFastStandbyMixin:
@@ -220,7 +217,7 @@ class ControllerFastStandbyMixin:
         if result.abort_reason:
             fields["cause"] = f"bounded_send_{result.abort_reason}"
 
-        log_tag = "WARN" if outcome and not _outcome_is_success(outcome) else "STEP"
+        log_tag = "WARN" if outcome and not power_action_outcome_is_success(outcome) else "STEP"
         self._log_structured(log_tag, log_level="info", **fields)
 
     def _try_fast_standby_send(
