@@ -13,27 +13,27 @@ class ControllerIdentityStateMixin:
 
     def get_current_kef_ip(self) -> str:
         with self._ip_lock:
-            return self._current_kef_ip
+            return self._identity.current_ip
 
     def get_effective_target_mac(self) -> str:
         configured_mac = normalize_mac(self.config.kef_mac)
         if configured_mac:
             return configured_mac
         with self._ip_lock:
-            return self._target_kef_mac
+            return self._identity.target_mac
 
     def get_current_identity(self) -> SpeakerIdentity:
         with self._ip_lock:
             return SpeakerIdentity(
-                ip=self._current_kef_ip,
-                mac=self._target_kef_mac,
-                mac_display=self._target_kef_mac,
-                speaker_name=self._speaker_name,
-                speaker_model=self._speaker_model,
-                firmware_version=self._speaker_firmware,
-                available=bool(self._current_kef_ip) and self._identity_available,
+                ip=self._identity.current_ip,
+                mac=self._identity.target_mac,
+                mac_display=self._identity.target_mac,
+                speaker_name=self._identity.speaker_name,
+                speaker_model=self._identity.speaker_model,
+                firmware_version=self._identity.speaker_firmware,
+                available=bool(self._identity.current_ip) and self._identity.available,
                 backend=self.config.backend_name,
-                matched_by=self._last_matched_by,
+                matched_by=self._identity.last_matched_by,
             )
 
     def select_kef_device(self, identity: SpeakerIdentity, source: str) -> bool:
@@ -45,7 +45,6 @@ class ControllerIdentityStateMixin:
                 source=source,
                 cause="invalid_ip",
                 ip=ip or "<empty>",
-                mono=f"{self.mono():.3f}",
             )
             return False
 
@@ -55,29 +54,29 @@ class ControllerIdentityStateMixin:
         firmware_version = identity.firmware_version or ""
 
         with self._ip_lock:
-            old_ip = self._current_kef_ip
-            old_mac = self._target_kef_mac
-            old_name = self._speaker_name
-            old_model = self._speaker_model
-            old_firmware = self._speaker_firmware
-            old_matched_by = self._last_matched_by
+            old_ip = self._identity.current_ip
+            old_mac = self._identity.target_mac
+            old_name = self._identity.speaker_name
+            old_model = self._identity.speaker_model
+            old_firmware = self._identity.speaker_firmware
+            old_matched_by = self._identity.last_matched_by
 
-            self._current_kef_ip = ip
-            self._target_kef_mac = mac_norm
-            self._speaker_name = speaker_name
-            self._speaker_model = speaker_model
-            self._speaker_firmware = firmware_version
-            self._last_matched_by = identity.matched_by or "manual"
-            self._identity_available = True
-            self._identity_probe_failures = 0
+            self._identity.current_ip = ip
+            self._identity.target_mac = mac_norm
+            self._identity.speaker_name = speaker_name
+            self._identity.speaker_model = speaker_model
+            self._identity.speaker_firmware = firmware_version
+            self._identity.last_matched_by = identity.matched_by or "manual"
+            self._identity.available = True
+            self._identity.probe_failures = 0
 
             changed = (
-                old_ip != self._current_kef_ip
-                or old_mac != self._target_kef_mac
-                or old_name != self._speaker_name
-                or old_model != self._speaker_model
-                or old_firmware != self._speaker_firmware
-                or old_matched_by != self._last_matched_by
+                old_ip != self._identity.current_ip
+                or old_mac != self._identity.target_mac
+                or old_name != self._identity.speaker_name
+                or old_model != self._identity.speaker_model
+                or old_firmware != self._identity.speaker_firmware
+                or old_matched_by != self._identity.last_matched_by
             )
 
         if not changed:
@@ -88,7 +87,6 @@ class ControllerIdentityStateMixin:
                 outcome="unchanged",
                 ip=ip,
                 mac=mac_norm or "<empty>",
-                mono=f"{self.mono():.3f}",
             )
             return False
 
@@ -106,18 +104,17 @@ class ControllerIdentityStateMixin:
             new_mac=mac_norm or "<empty>",
             speaker_name=speaker_name or "<empty>",
             speaker_model=speaker_model or "<empty>",
-            mono=f"{self.mono():.3f}",
         )
         self._emit_identity_changed()
         return True
 
     def _mark_identity_probe_success(self, source: str) -> bool:
         with self._ip_lock:
-            current_ip = self._current_kef_ip
-            previous_failures = self._identity_probe_failures
-            availability_changed = bool(current_ip) and not self._identity_available
-            self._identity_probe_failures = 0
-            self._identity_available = bool(current_ip)
+            current_ip = self._identity.current_ip
+            previous_failures = self._identity.probe_failures
+            availability_changed = bool(current_ip) and not self._identity.available
+            self._identity.probe_failures = 0
+            self._identity.available = bool(current_ip)
 
         if previous_failures or availability_changed:
             self._log_structured(
@@ -128,23 +125,22 @@ class ControllerIdentityStateMixin:
                 source=source,
                 current_ip=current_ip or "<empty>",
                 previous_failures=previous_failures,
-                mono=f"{self.mono():.3f}",
             )
         return availability_changed
 
     def record_identity_probe_failure(self, source: str, trigger: str, cause: str) -> bool:
         threshold = max(1, int(self.config.identity_probe_failure_threshold))
         with self._ip_lock:
-            current_ip = self._current_kef_ip
+            current_ip = self._identity.current_ip
             if not current_ip:
                 return False
 
-            self._identity_probe_failures += 1
-            failures = self._identity_probe_failures
+            self._identity.probe_failures += 1
+            failures = self._identity.probe_failures
             offline = failures >= threshold
-            availability_changed = offline and self._identity_available
+            availability_changed = offline and self._identity.available
             if offline:
-                self._identity_available = False
+                self._identity.available = False
 
         # The UI poll already emits one rate-limited network-error summary.
         # Repeating this second identity line every two seconds made a normal
@@ -161,7 +157,6 @@ class ControllerIdentityStateMixin:
                 failures=failures,
                 threshold=threshold,
                 offline=offline,
-                mono=f"{self.mono():.3f}",
             )
         if availability_changed:
             self._emit_identity_changed()
@@ -179,7 +174,7 @@ class ControllerIdentityStateMixin:
 
     def get_target_kef_mac(self) -> str:
         with self._ip_lock:
-            return self._target_kef_mac
+            return self._identity.target_mac
 
     def update_identity_from_device_info(self, info: Optional[SpeakerIdentity], source: str) -> bool:
         if not info:
@@ -198,24 +193,24 @@ class ControllerIdentityStateMixin:
         changed = False
 
         with self._ip_lock:
-            old_mac = self._target_kef_mac
-            old_name = self._speaker_name
-            old_model = self._speaker_model
-            old_firmware = self._speaker_firmware
-            if mac_norm and self._target_kef_mac != mac_norm:
-                self._target_kef_mac = mac_norm
+            old_mac = self._identity.target_mac
+            old_name = self._identity.speaker_name
+            old_model = self._identity.speaker_model
+            old_firmware = self._identity.speaker_firmware
+            if mac_norm and self._identity.target_mac != mac_norm:
+                self._identity.target_mac = mac_norm
                 changed = True
-            if speaker_name and self._speaker_name != speaker_name:
-                self._speaker_name = speaker_name
+            if speaker_name and self._identity.speaker_name != speaker_name:
+                self._identity.speaker_name = speaker_name
                 changed = True
-            if speaker_model and self._speaker_model != speaker_model:
-                self._speaker_model = speaker_model
+            if speaker_model and self._identity.speaker_model != speaker_model:
+                self._identity.speaker_model = speaker_model
                 changed = True
-            if firmware_version and self._speaker_firmware != firmware_version:
-                self._speaker_firmware = firmware_version
+            if firmware_version and self._identity.speaker_firmware != firmware_version:
+                self._identity.speaker_firmware = firmware_version
                 changed = True
-            if info.matched_by and self._last_matched_by != info.matched_by:
-                self._last_matched_by = info.matched_by
+            if info.matched_by and self._identity.last_matched_by != info.matched_by:
+                self._identity.last_matched_by = info.matched_by
                 changed = True
 
         for step, old_val, new_val, kw_old, kw_new, display_val in [
@@ -232,7 +227,6 @@ class ControllerIdentityStateMixin:
                     step=step,
                     source=source,
                     **{kw_old: old_val or "<empty>", kw_new: display_val},
-                    mono=f"{self.mono():.3f}",
                 )
         availability_changed = self._mark_identity_probe_success(source=f"identity:{source}")
         if changed:
@@ -247,9 +241,9 @@ class ControllerIdentityStateMixin:
         if not is_routable_ipv4(new_ip):
             return False
         with self._ip_lock:
-            old_ip = self._current_kef_ip
+            old_ip = self._identity.current_ip
             if old_ip != new_ip:
-                self._current_kef_ip = new_ip
+                self._identity.current_ip = new_ip
 
         availability_changed = self._mark_identity_probe_success(source=f"ip:{source}")
         if old_ip == new_ip:
@@ -259,7 +253,6 @@ class ControllerIdentityStateMixin:
                 step="confirm_current_ip",
                 source=source,
                 ip=new_ip,
-                mono=f"{self.mono():.3f}",
             )
             if availability_changed:
                 self._emit_identity_changed()
@@ -276,7 +269,6 @@ class ControllerIdentityStateMixin:
             source=source,
             old_ip=old_ip,
             new_ip=new_ip,
-            mono=f"{self.mono():.3f}",
         )
         self._emit_identity_changed()
         return True
@@ -292,26 +284,26 @@ class ControllerIdentityStateMixin:
         old_mac = ""
 
         with self._ip_lock:
-            old_ip = self._current_kef_ip
-            old_mac = self._target_kef_mac
+            old_ip = self._identity.current_ip
+            old_mac = self._identity.target_mac
 
             if configured_ip:
                 if is_routable_ipv4(configured_ip):
                     if old_ip != configured_ip:
-                        self._current_kef_ip = configured_ip
-                        self._identity_available = True
-                        self._identity_probe_failures = 0
+                        self._identity.current_ip = configured_ip
+                        self._identity.available = True
+                        self._identity.probe_failures = 0
                         ip_changed = True
                 else:
                     ignored_ip = configured_ip
             elif old_ip:
-                self._current_kef_ip = ""
-                self._identity_available = False
-                self._identity_probe_failures = 0
+                self._identity.current_ip = ""
+                self._identity.available = False
+                self._identity.probe_failures = 0
                 ip_changed = True
 
             if old_mac != configured_mac:
-                self._target_kef_mac = configured_mac
+                self._identity.target_mac = configured_mac
                 mac_changed = True
 
         if ignored_ip:
@@ -322,7 +314,6 @@ class ControllerIdentityStateMixin:
                 source=source,
                 cause="invalid_configured_ip",
                 ip=ignored_ip,
-                mono=f"{self.mono():.3f}",
             )
 
         if not (ip_changed or mac_changed):
@@ -345,7 +336,6 @@ class ControllerIdentityStateMixin:
             new_mac=self.get_effective_target_mac() or "<empty>",
             ip_changed=ip_changed,
             mac_changed=mac_changed,
-            mono=f"{self.mono():.3f}",
         )
         self._emit_identity_changed()
         return True

@@ -8,13 +8,9 @@ from unittest.mock import Mock, patch
 from kef_app.config import AppConfig
 from kef_app.controller import KefPowerController
 from kef_app.controller.actions.standby import (
-    ENDSESSION_STANDBY_POLICY,
-    EndSessionStandbyPolicy,
     FAST_SUSPEND_STANDBY_POLICY,
     FastStandbyPolicy,
     PREEMPTIVE_STANDBY_POLICY,
-    STANDARD_STANDBY_POLICY,
-    VerifiedStandbyPolicy,
 )
 from kef_app.controller.session_events import _DisplayOffStandbyTask
 from kef_app.controller.standby import CachedPrewarmedStandbySendResult, PrewarmedStandbySendResult
@@ -103,7 +99,7 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._new_generation.assert_called_once_with("sleep", "ui_test")
         controller.standby_kef.assert_called_once_with(9, "ui_test")
 
-    def test_standby_policies_capture_distinct_path_shapes(self):
+    def test_fast_standby_policies_capture_distinct_path_shapes(self):
         self.assertIsInstance(PREEMPTIVE_STANDBY_POLICY, FastStandbyPolicy)
         self.assertEqual(PREEMPTIVE_STANDBY_POLICY.action, "EARLY_STANDBY")
         self.assertTrue(PREEMPTIVE_STANDBY_POLICY.host_unreachable_is_success)
@@ -112,12 +108,6 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertIsInstance(FAST_SUSPEND_STANDBY_POLICY, FastStandbyPolicy)
         self.assertEqual(FAST_SUSPEND_STANDBY_POLICY.host_unreachable_outcome, "sent_skipped_host_unreachable")
         self.assertEqual(FAST_SUSPEND_STANDBY_POLICY.disabled_field, "suspend_fast_standby_enabled")
-
-        self.assertIsInstance(STANDARD_STANDBY_POLICY, VerifiedStandbyPolicy)
-        self.assertEqual(STANDARD_STANDBY_POLICY.identity_step, "standby_before_request")
-
-        self.assertIsInstance(ENDSESSION_STANDBY_POLICY, EndSessionStandbyPolicy)
-        self.assertEqual(ENDSESSION_STANDBY_POLICY.fire_and_forget_outcome, "sent_unconfirmed_fire_and_forget")
 
     def test_network_parameter_notifications_are_deduped_with_summary(self):
         controller = self.make_controller(kef_ip="192.168.1.10")
@@ -201,9 +191,9 @@ class PowerEventLogicTests(unittest.TestCase):
 
     def test_event_monitor_records_restart_request_while_stopping(self):
         controller = self.make_controller(home_event_poll_enabled=True)
-        with controller._speaker_event_monitor_lock:
-            controller._speaker_event_monitor_running = True
-            controller._speaker_event_monitor_stop.set()
+        with controller._speaker_events.lock:
+            controller._speaker_events.running = True
+            controller._speaker_events.stop.set()
 
         self.assertFalse(controller.start_speaker_event_monitor("PBT_APMRESUMEAUTOMATIC"))
         self.assertEqual(controller._finish_speaker_event_monitor(), "PBT_APMRESUMEAUTOMATIC")
@@ -589,8 +579,8 @@ class PowerEventLogicTests(unittest.TestCase):
 
         controller._process_display_off_standby_task = Mock(side_effect=process)
         controller.start_display_off_standby_dispatcher()
-        controller._display_off_dispatcher_queue.put(first)
-        controller._display_off_dispatcher_queue.put(second)
+        controller._display_off_dispatcher.queue.put(first)
+        controller._display_off_dispatcher.queue.put(second)
 
         self.assertTrue(second_processed.wait(1.0))
         self.assertEqual(controller._process_display_off_standby_task.call_count, 2)
@@ -1396,7 +1386,7 @@ class PowerEventLogicTests(unittest.TestCase):
             fresh=True,
             timeout=0.15,
         )
-        self.assertIsNone(controller._speaker_runtime_power_on)
+        self.assertIsNone(controller._runtime_speaker.power_on)
         self.assertTrue(
             any(
                 name == "power_action_finished"
@@ -1490,7 +1480,7 @@ class PowerEventLogicTests(unittest.TestCase):
             fresh=True,
             timeout=0.15,
         )
-        self.assertIsNone(controller._speaker_runtime_power_on)
+        self.assertIsNone(controller._runtime_speaker.power_on)
         self.assertTrue(
             any(
                 name == "power_action_finished"
@@ -1791,7 +1781,7 @@ class PowerEventLogicTests(unittest.TestCase):
     def test_urgent_standby_target_can_use_cached_identity_when_live_mac_is_missing(self):
         controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
         with controller._ip_lock:
-            controller._speaker_model = "LS50 Wireless II"
+            controller._identity.speaker_model = "LS50 Wireless II"
         partial_identity = SpeakerIdentity(
             ip="192.168.1.10",
             speaker_model="LS50 Wireless II",
@@ -1812,7 +1802,7 @@ class PowerEventLogicTests(unittest.TestCase):
     def test_urgent_standby_target_uses_cached_identity_without_probe(self):
         controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
         with controller._ip_lock:
-            controller._speaker_model = "LS50 Wireless II"
+            controller._identity.speaker_model = "LS50 Wireless II"
         controller.get_speaker = Mock()
         controller._backend.capture_identity = Mock()
 
@@ -1831,7 +1821,7 @@ class PowerEventLogicTests(unittest.TestCase):
     def test_urgent_standby_target_can_use_cached_identity_when_live_mac_and_model_are_missing(self):
         controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
         with controller._ip_lock:
-            controller._speaker_model = "LS50 Wireless II"
+            controller._identity.speaker_model = "LS50 Wireless II"
         partial_identity = SpeakerIdentity(ip="192.168.1.10")
         controller.get_speaker = Mock(return_value=object())
         controller._backend.capture_identity = Mock(return_value=partial_identity)
@@ -1849,7 +1839,7 @@ class PowerEventLogicTests(unittest.TestCase):
     def test_nonurgent_target_does_not_use_cached_identity_when_live_mac_and_model_are_missing(self):
         controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
         with controller._ip_lock:
-            controller._speaker_model = "LS50 Wireless II"
+            controller._identity.speaker_model = "LS50 Wireless II"
         partial_identity = SpeakerIdentity(ip="192.168.1.10")
         controller.get_speaker = Mock(return_value=object())
         controller._backend.capture_identity = Mock(return_value=partial_identity)
@@ -2124,7 +2114,6 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._ensure_target_identity = Mock(return_value=True)
         controller.get_speaker = Mock(return_value=Mock())
         controller._log_structured = Mock()
-        controller.mono = Mock(return_value=123.0)
 
         self.assertTrue(controller.set_volume(40))
 
@@ -2134,8 +2123,33 @@ class PowerEventLogicTests(unittest.TestCase):
             action="SET_VOLUME",
             level=40,
             status="success",
-            mono="123.000",
         )
+
+    def test_action_logger_binds_context_and_centralizes_default_mono(self):
+        controller = self.make_controller()
+        controller.log.setLevel(logging.DEBUG)
+
+        class CaptureHandler(logging.Handler):
+            def __init__(self):
+                super().__init__()
+                self.records: list[logging.LogRecord] = []
+
+            def emit(self, record: logging.LogRecord) -> None:
+                self.records.append(record)
+
+        capture = CaptureHandler()
+        controller.log.addHandler(capture)
+        self.addCleanup(controller.log.removeHandler, capture)
+
+        action_log = controller._action_log("WAKE", 7, "ui_test")
+        action_log.write("STEP", step="request")
+
+        self.assertEqual(len(capture.records), 1)
+        message = capture.records[0].getMessage()
+        self.assertIn("STEP action=WAKE | gen=7 | reason=ui_test | step=request", message)
+        self.assertEqual(message.count("mono="), 1)
+        with self.assertRaisesRegex(ValueError, "cannot be overridden: action"):
+            action_log.write("STEP", action="STANDBY")
 
     def test_wake_completion_waits_for_a_real_state_poll_before_marking_on(self):
         controller = self.make_controller(kef_ip="192.168.1.10")
@@ -2173,7 +2187,7 @@ class PowerEventLogicTests(unittest.TestCase):
         result = controller.poll_external_ui_state("unit_test", "unit_test")
 
         self.assertEqual(result, ("standby", None, False))
-        self.assertFalse(controller._speaker_runtime_power_on)
+        self.assertFalse(controller._runtime_speaker.power_on)
         self.assertFalse(controller._read_ui_value.call_args_list[0].kwargs["fresh"])
 
     def test_cached_ui_read_retries_once_with_a_fresh_connector(self):
@@ -2208,7 +2222,7 @@ class PowerEventLogicTests(unittest.TestCase):
         result = controller.poll_external_ui_state("unit_test", "unit_test")
 
         self.assertEqual(result, ("wifi", 31, True))
-        self.assertTrue(controller._speaker_runtime_power_on)
+        self.assertTrue(controller._runtime_speaker.power_on)
 
     def test_web_ui_poll_failure_logs_once_per_rate_limit_window(self):
         controller = self.make_controller(kef_ip="192.168.1.10")

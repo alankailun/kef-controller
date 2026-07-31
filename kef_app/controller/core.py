@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import logging
-import queue
 import threading
 from typing import Any, Callable, Optional
-
-from pykefcontrol.kef_connector import KefConnector
 
 from ..config import AppConfig
 from ..storage import PersistedSpeakerState, SpeakerStateStore
@@ -16,6 +13,17 @@ from .logging_mixin import ControllerLoggingMixin
 from .network_timeout import temporary_socket_timeout
 from .power_state import ControllerStateMixin, power_action_outcome_is_success
 from .session_events import ControllerSessionEventsMixin
+from .state_models import (
+    IdentityState,
+    DisplayOffDispatcherState,
+    ControllerEventListenersState,
+    PowerActionState,
+    PrewarmedStandbyState,
+    RuntimeSpeakerState,
+    SpeakerConnectionState,
+    SpeakerEventMonitorState,
+    WindowsEventState,
+)
 from .standby import FastStandbySendCache, PrewarmedStandbySocketMonitorMixin
 
 from ..devices.speaker_models import normalize_mac
@@ -46,7 +54,7 @@ class KefPowerController(
             self._loaded_state = self._state_store.load()
 
         self._backend = W2Backend(log)
-        self._speaker: Optional[KefConnector] = None
+        self._speaker_connection = SpeakerConnectionState()
         # Lock order for future nested sections: action/discovery locks first,
         # then state/ip locks, and never call network or persistence work while
         # holding _ip_lock or _state_lock.
@@ -54,80 +62,41 @@ class KefPowerController(
         # non-blocking: no sync network, no sync disk, no unbounded lock waits.
         # Network sends go through bounded raw_http; logging is async. New WM
         # handlers should capture event mono, dispatch off-pump, and return.
-        self._speaker_lock = threading.Lock()
         self._action_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._ip_lock = threading.Lock()
-        self._event_listener_lock = threading.Lock()
         self._discovery_lock = threading.Lock()
         self._blind_discovery_lock = threading.Lock()
-        self._speaker_event_monitor_lock = threading.Lock()
-        self._speaker_event_monitor_stop = threading.Event()
-        self._prewarmed_standby_lock = threading.Lock()
-        self._prewarmed_standby_stop = threading.Event()
-        self._prewarmed_standby_thread: threading.Thread | None = None
-        self._prewarmed_standby_holders = []
-        self._prewarmed_standby_restart_reason: str | None = None
         self._fast_standby_send_cache = FastStandbySendCache()
-        self._display_off_dispatcher_lock = threading.Lock()
         # Construction/cleanup placeholder.  start_display_off_standby_dispatcher
-        # replaces it immediately before starting the resident worker.
-        self._display_off_dispatcher_queue: queue.SimpleQueue[object] = queue.SimpleQueue()
-        self._display_off_dispatcher_stop = threading.Event()
-        self._display_off_dispatcher_thread: threading.Thread | None = None
-        self._event_listeners: list[Callable[[str, dict[str, Any]], None]] = []
+        # replaces its queue immediately before starting the resident worker.
+        self._display_off_dispatcher = DisplayOffDispatcherState()
+        self._event_listeners = ControllerEventListenersState()
 
-        self._current_kef_ip = self._loaded_state.last_ip or config.kef_ip
-        self._target_kef_mac = self._loaded_state.last_mac or normalize_mac(config.kef_mac)
-        self._speaker_name = self._loaded_state.last_speaker_name or ""
-        self._speaker_model = self._loaded_state.last_speaker_model or ""
-        self._speaker_firmware = self._loaded_state.last_firmware_version or ""
-        self._last_matched_by = self._loaded_state.matched_by or ""
-        self._identity_available = bool(self._current_kef_ip)
-        self._identity_probe_failures = 0
-        self._last_mac_discovery_mono = 0.0
-        self._last_blind_discovery_mono = 0.0
-        self._speaker_event_monitor_running = False
-        self._speaker_event_monitor_restart_reason: str | None = None
-        self._prewarmed_standby_running = False
-        self._prewarmed_standby_last_ip = ""
-        self._prewarmed_standby_last_ok_mono = 0.0
-        self._prewarmed_standby_failures = 0
-        self._prewarmed_standby_last_error = ""
-        self._prewarmed_standby_ready_logged = False
-        self._speaker_event_poll_failures = 0
+        self._identity = IdentityState(
+            current_ip=self._loaded_state.last_ip or config.kef_ip,
+            target_mac=self._loaded_state.last_mac or normalize_mac(config.kef_mac),
+            speaker_name=self._loaded_state.last_speaker_name or "",
+            speaker_model=self._loaded_state.last_speaker_model or "",
+            speaker_firmware=self._loaded_state.last_firmware_version or "",
+            last_matched_by=self._loaded_state.matched_by or "",
+        )
+        self._identity.available = bool(self._identity.current_ip)
+        self._speaker_events = SpeakerEventMonitorState()
+        self._prewarmed = PrewarmedStandbyState()
         # UI polling retries quickly so a speaker that just came back online
         # becomes usable straight away.  Keep the retries, but rate-limit the
         # matching network-error diagnostics instead of writing one line per
         # field every poll cycle while the speaker is unreachable.
-        self._last_ui_poll_failure_log_mono = 0.0
-        self._speaker_runtime_input_source = ""
-        self._speaker_runtime_volume: int | None = None
-        self._speaker_runtime_power_on: bool | None = None
-
-        self._generation = 0
-        self._desired_state = ""
-        self._desired_reason = ""
-        self._display_off_standby_intent = None
-        self._controller_active_power_actions = 0
-        self._last_resume_event_mono = 0.0
-        self._last_wake_schedule_mono = 0.0
-        self._session_ending = False
-        self._session_locked = False
-        self._last_windows_event_name = ""
-        self._last_windows_event_mono = 0.0
-
-        self._system_sleep_pending = False
-        self._last_system_suspend_mono = 0.0
-        self._last_system_resume_mono = 0.0
-        self._network_interface_dedup: dict[tuple[str, str, str, str], dict[str, Any]] = {}
-        self._network_interface_dedup_timer: threading.Timer | None = None
+        self._runtime_speaker = RuntimeSpeakerState()
+        self._power = PowerActionState()
+        self._windows_events = WindowsEventState()
         self._refresh_fast_standby_send_cache()
 
     def _refresh_fast_standby_send_cache(self) -> None:
         with self._ip_lock:
-            target_ip = self._current_kef_ip
-            target_mac = normalize_mac(self.config.kef_mac) or self._target_kef_mac
+            target_ip = self._identity.current_ip
+            target_mac = normalize_mac(self.config.kef_mac) or self._identity.target_mac
         self._fast_standby_send_cache.update(
             target_ip=target_ip,
             target_mac=target_mac,
@@ -135,19 +104,19 @@ class KefPowerController(
         )
 
     def add_event_listener(self, listener: Callable[[str, dict[str, Any]], None]) -> None:
-        with self._event_listener_lock:
-            self._event_listeners.append(listener)
+        with self._event_listeners.lock:
+            self._event_listeners.listeners.append(listener)
 
     def remove_event_listener(self, listener: Callable[[str, dict[str, Any]], None]) -> None:
-        with self._event_listener_lock:
+        with self._event_listeners.lock:
             try:
-                self._event_listeners.remove(listener)
+                self._event_listeners.listeners.remove(listener)
             except ValueError:
                 pass
 
     def _emit_event(self, event_name: str, **payload: Any) -> None:
-        with self._event_listener_lock:
-            listeners = list(self._event_listeners)
+        with self._event_listeners.lock:
+            listeners = list(self._event_listeners.listeners)
 
         for listener in listeners:
             try:
@@ -171,7 +140,7 @@ class KefPowerController(
 
     def _mark_power_action_started(self) -> None:
         with self._state_lock:
-            self._controller_active_power_actions += 1
+            self._power.active_actions += 1
 
     def _emit_power_action_started_event(self, action: str, reason: str) -> None:
         self._emit_event("power_action_started", action=action, reason=reason)
@@ -183,7 +152,7 @@ class KefPowerController(
     def _emit_power_action_finished(self, action: str, reason: str, outcome: str) -> None:
         success = power_action_outcome_is_success(outcome)
         with self._state_lock:
-            self._controller_active_power_actions = max(0, self._controller_active_power_actions - 1)
+            self._power.active_actions = max(0, self._power.active_actions - 1)
         if (
             success
             and action in {"STANDBY", "EARLY_STANDBY", "ENDSESSION_STANDBY"}

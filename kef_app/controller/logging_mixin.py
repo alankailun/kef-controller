@@ -3,11 +3,29 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Optional
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Mapping, Optional
 
 _SLEEP_CROSSING_MIN_DURATION_S = 5.0
 _NETWORK_INTERFACE_DEDUP_WINDOW_S = 0.2
 _NETWORK_INTERFACE_DEDUP_FLUSH_GRACE_S = 0.05
+
+
+@dataclass(frozen=True, slots=True)
+class BoundStructuredLogger:
+    """Immutable structured-log context for one action or operation."""
+
+    owner: object
+    fields: Mapping[str, object]
+
+    def write(self, tag: str, *, log_level: object = None, mono: object = None, **fields: object) -> None:
+        overlap = self.fields.keys() & fields.keys()
+        if overlap:
+            names = ", ".join(sorted(overlap))
+            raise ValueError(f"Bound log fields cannot be overridden: {names}")
+        payload = {**self.fields, **fields}
+        self.owner._log_structured(tag, log_level=log_level, mono=mono, **payload)
 
 
 def _get_pykefcontrol_version() -> str:
@@ -63,6 +81,12 @@ class ControllerLoggingMixin:
     def _log_structured(self, tag: str, *, log_level: object = None, mono: object = None, **fields):
         self._write_structured_log(tag, log_level=log_level, mono=mono, **fields)
 
+    def _bind_log(self, **fields: object) -> BoundStructuredLogger:
+        return BoundStructuredLogger(self, MappingProxyType(dict(fields)))
+
+    def _action_log(self, action: str, generation: int | None, reason: str) -> BoundStructuredLogger:
+        return self._bind_log(action=action, gen=generation, reason=reason)
+
     def _write_structured_log(self, tag: str, *, log_level: object = None, mono: object = None, **fields):
         log_level_value = self._coerce_log_level(log_level) or self._get_structured_log_level(tag, fields)
         if not self.log.isEnabledFor(log_level_value):
@@ -85,17 +109,14 @@ class ControllerLoggingMixin:
 
     def _log_action_begin(self, action: str, generation: int | None, reason: str) -> float:
         start_mono = self.mono()
-        self._log_structured("BEGIN", action=action, gen=generation, reason=reason, mono=f"{start_mono:.3f}")
+        self._action_log(action, generation, reason).write("BEGIN", mono=f"{start_mono:.3f}")
         return start_mono
 
     def _log_action_end(self, action: str, generation: int | None, reason: str, outcome: str, start_mono: float):
         end_mono = self.mono()
         self._log_action_sleep_crossing(action, generation, reason, start_mono, end_mono)
-        self._log_structured(
+        self._action_log(action, generation, reason).write(
             "END",
-            action=action,
-            gen=generation,
-            reason=reason,
             outcome=outcome,
             duration_ms=int((end_mono - start_mono) * 1000),
             mono=f"{end_mono:.3f}",
@@ -114,9 +135,9 @@ class ControllerLoggingMixin:
             return
 
         with self._state_lock:
-            sleep_pending = bool(self._system_sleep_pending)
-            suspend_mono = float(self._last_system_suspend_mono or 0.0)
-            resume_mono = float(self._last_system_resume_mono or 0.0)
+            sleep_pending = bool(self._windows_events.system_sleep_pending)
+            suspend_mono = float(self._windows_events.last_system_suspend_mono or 0.0)
+            resume_mono = float(self._windows_events.last_system_resume_mono or 0.0)
 
         suspend_inside_action = start_mono <= suspend_mono <= end_mono
         started_after_pending_suspend = sleep_pending and suspend_mono > 0 and suspend_mono <= start_mono
@@ -124,12 +145,9 @@ class ControllerLoggingMixin:
         if not (suspend_inside_action or started_after_pending_suspend or resume_inside_action):
             return
 
-        self._log_structured(
+        self._action_log(action, generation, reason).write(
             "STEP",
             log_level="info",
-            action=action,
-            gen=generation,
-            reason=reason,
             step="system_sleep_crossed",
             action_crossed_system_sleep=True,
             resumed_while_action_pending=True,
@@ -144,7 +162,7 @@ class ControllerLoggingMixin:
         if self._state_store is None:
             return False
         identity = self.get_current_identity()
-        identity.matched_by = self._last_matched_by or identity.matched_by
+        identity.matched_by = self._identity.last_matched_by or identity.matched_by
         return self._state_store.save(identity, source=source)
 
     def log_banner(self):
@@ -201,14 +219,14 @@ class ControllerLoggingMixin:
 
     def _record_power_event_state(self, name: str, event_mono: float) -> None:
         with self._state_lock:
-            self._last_windows_event_name = name
-            self._last_windows_event_mono = event_mono
+            self._windows_events.last_event_name = name
+            self._windows_events.last_event_mono = event_mono
             if name == "PBT_APMSUSPEND":
-                self._system_sleep_pending = True
-                self._last_system_suspend_mono = event_mono
+                self._windows_events.system_sleep_pending = True
+                self._windows_events.last_system_suspend_mono = event_mono
             elif name in {"PBT_APMRESUMESUSPEND", "PBT_APMRESUMEAUTOMATIC"}:
-                self._last_system_resume_mono = event_mono
-                self._system_sleep_pending = False
+                self._windows_events.last_system_resume_mono = event_mono
+                self._windows_events.system_sleep_pending = False
 
     def log_power_setting_event(self, change, wparam: int, lparam: int, *, event_mono: float | None = None):
         event_mono = self.mono() if event_mono is None else event_mono
@@ -218,8 +236,8 @@ class ControllerLoggingMixin:
 
     def _record_power_setting_event_state(self, change, event_mono: float) -> None:
         with self._state_lock:
-            self._last_windows_event_name = change.name
-            self._last_windows_event_mono = event_mono
+            self._windows_events.last_event_name = change.name
+            self._windows_events.last_event_mono = event_mono
 
     def _log_power_setting_event_line(self, change, wparam: int, lparam: int, event_mono: float) -> None:
         self._log_structured(
@@ -242,12 +260,12 @@ class ControllerLoggingMixin:
 
     def _record_session_event_state(self, name: str, event_mono: float) -> None:
         with self._state_lock:
-            self._last_windows_event_name = name
-            self._last_windows_event_mono = event_mono
+            self._windows_events.last_event_name = name
+            self._windows_events.last_event_mono = event_mono
             if name == "WTS_SESSION_LOCK":
-                self._session_locked = True
+                self._power.session_locked = True
             elif name == "WTS_SESSION_UNLOCK":
-                self._session_locked = False
+                self._power.session_locked = False
 
     def _log_session_event_line(self, name: str, wparam: int, lparam: int, event_mono: float) -> None:
         self._log_structured(
@@ -332,7 +350,7 @@ class ControllerLoggingMixin:
 
         expired_summary = None
         with self._state_lock:
-            existing = self._network_interface_dedup.get(key)
+            existing = self._windows_events.network_interface_dedup.get(key)
             if existing is not None and event_mono - float(existing["first_mono"]) <= _NETWORK_INTERFACE_DEDUP_WINDOW_S:
                 existing["last_mono"] = event_mono
                 existing["repeats"] = int(existing["repeats"]) + 1
@@ -343,7 +361,7 @@ class ControllerLoggingMixin:
                 return True
 
             expired_summary = existing
-            self._network_interface_dedup[key] = summary
+            self._windows_events.network_interface_dedup[key] = summary
             self._ensure_network_interface_dedup_timer_locked(event_mono)
 
         if expired_summary is not None:
@@ -352,26 +370,26 @@ class ControllerLoggingMixin:
         return False
 
     def _ensure_network_interface_dedup_timer_locked(self, event_mono: float) -> None:
-        if self._network_interface_dedup_timer is not None:
+        if self._windows_events.network_interface_dedup_timer is not None:
             return
         due_mono = event_mono + _NETWORK_INTERFACE_DEDUP_WINDOW_S + _NETWORK_INTERFACE_DEDUP_FLUSH_GRACE_S
         delay_s = max(0.01, due_mono - self.mono())
         timer = threading.Timer(delay_s, self._flush_network_interface_dedup_due)
         timer.daemon = True
-        self._network_interface_dedup_timer = timer
+        self._windows_events.network_interface_dedup_timer = timer
         timer.start()
 
     def _flush_network_interface_dedup_due(self, now_mono: float | None = None) -> None:
         now_mono = self.mono() if now_mono is None else now_mono
         due_summaries: list[dict[str, object]] = []
         with self._state_lock:
-            self._network_interface_dedup_timer = None
+            self._windows_events.network_interface_dedup_timer = None
             next_due_mono: float | None = None
-            for key, summary in list(self._network_interface_dedup.items()):
+            for key, summary in list(self._windows_events.network_interface_dedup.items()):
                 first_mono = float(summary.get("first_mono") or 0.0)
                 due_mono = first_mono + _NETWORK_INTERFACE_DEDUP_WINDOW_S + _NETWORK_INTERFACE_DEDUP_FLUSH_GRACE_S
                 if now_mono >= due_mono:
-                    self._network_interface_dedup.pop(key, None)
+                    self._windows_events.network_interface_dedup.pop(key, None)
                     due_summaries.append(summary)
                     continue
                 if next_due_mono is None or due_mono < next_due_mono:
@@ -381,7 +399,7 @@ class ControllerLoggingMixin:
                 delay_s = max(0.01, next_due_mono - now_mono)
                 timer = threading.Timer(delay_s, self._flush_network_interface_dedup_due)
                 timer.daemon = True
-                self._network_interface_dedup_timer = timer
+                self._windows_events.network_interface_dedup_timer = timer
                 timer.start()
 
         for summary in due_summaries:
@@ -413,5 +431,4 @@ class ControllerLoggingMixin:
             repeats=repeats,
             window_ms=int(max(0.0, last_mono - first_mono) * 1000),
             target_ip=summary.get("target_ip", "<empty>"),
-            mono=f"{self.mono():.3f}",
         )

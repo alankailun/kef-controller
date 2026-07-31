@@ -22,10 +22,10 @@ class ControllerDeviceControlsMixin:
     def _log_ui_poll_failure(self, *, reason: str, trigger: str, step: str, error: Exception) -> None:
         now = self.mono()
         with self._state_lock:
-            last_logged = self._last_ui_poll_failure_log_mono
+            last_logged = self._runtime_speaker.last_ui_poll_failure_log_mono
             if now - last_logged < _UI_POLL_FAILURE_LOG_INTERVAL_S:
                 return
-            self._last_ui_poll_failure_log_mono = now
+            self._runtime_speaker.last_ui_poll_failure_log_mono = now
 
         self._log_structured(
             "WARN",
@@ -41,7 +41,7 @@ class ControllerDeviceControlsMixin:
 
     def _clear_ui_poll_failure_rate_limit(self) -> None:
         with self._state_lock:
-            self._last_ui_poll_failure_log_mono = 0.0
+            self._runtime_speaker.last_ui_poll_failure_log_mono = 0.0
 
     def _read_ui_value(
         self,
@@ -59,17 +59,18 @@ class ControllerDeviceControlsMixin:
 
         try:
             return read_value(fresh), True
-        except Exception as exc:
+        except Exception as initial_error:
+            error = initial_error
             self.reset_speaker()
             if not fresh:
                 # Cached UI polls avoid connector construction in the common
                 # case, but get one fresh retry before reporting a failure.
                 try:
                     return read_value(True), True
-                except Exception as retry_exc:
-                    exc = retry_exc
+                except Exception as retry_error:
+                    error = retry_error
             if self._is_ui_poll_trigger(trigger):
-                self._log_ui_poll_failure(reason=reason, trigger=trigger, step=step, error=exc)
+                self._log_ui_poll_failure(reason=reason, trigger=trigger, step=step, error=error)
                 return None, False
             self._log_structured(
                 "WARN",
@@ -77,8 +78,7 @@ class ControllerDeviceControlsMixin:
                 reason=reason,
                 trigger=trigger,
                 step=step,
-                error=repr(exc),
-                mono=f"{self.mono():.3f}",
+                error=repr(error),
             )
             return None, False
 
@@ -92,19 +92,19 @@ class ControllerDeviceControlsMixin:
     ) -> bool:
         changed = False
         with self._state_lock:
-            if input_source is not None and input_source != self._speaker_runtime_input_source:
-                self._speaker_runtime_input_source = input_source
+            if input_source is not None and input_source != self._runtime_speaker.input_source:
+                self._runtime_speaker.input_source = input_source
                 changed = True
-            if volume is not None and volume != self._speaker_runtime_volume:
-                self._speaker_runtime_volume = volume
+            if volume is not None and volume != self._runtime_speaker.volume:
+                self._runtime_speaker.volume = volume
                 changed = True
-            if speaker_on is not None and speaker_on != self._speaker_runtime_power_on:
-                self._speaker_runtime_power_on = speaker_on
+            if speaker_on is not None and speaker_on != self._runtime_speaker.power_on:
+                self._runtime_speaker.power_on = speaker_on
                 changed = True
 
-            current_input = self._speaker_runtime_input_source or None
-            current_volume = self._speaker_runtime_volume
-            current_power = self._speaker_runtime_power_on
+            current_input = self._runtime_speaker.input_source or None
+            current_volume = self._runtime_speaker.volume
+            current_power = self._runtime_speaker.power_on
 
         if changed:
             self._emit_event(
@@ -118,12 +118,12 @@ class ControllerDeviceControlsMixin:
 
     def _clear_speaker_event_poll_failures(self) -> None:
         with self._state_lock:
-            self._speaker_event_poll_failures = 0
+            self._runtime_speaker.event_poll_failures = 0
 
     def _reset_speaker_event_subscription(self, speaker: KefConnector | None) -> bool:
         if speaker is None:
             return False
-        with self._speaker_lock:
+        with self._speaker_connection.lock:
             try:
                 speaker.polling_queue = None
                 speaker.last_polled = None
@@ -142,8 +142,8 @@ class ControllerDeviceControlsMixin:
     ) -> tuple[int, int, bool]:
         threshold = max(1, int(self.config.speaker_event_recovery_failure_threshold))
         with self._state_lock:
-            self._speaker_event_poll_failures += 1
-            failures = self._speaker_event_poll_failures
+            self._runtime_speaker.event_poll_failures += 1
+            failures = self._runtime_speaker.event_poll_failures
 
         recovered = False
         if failures == 1:
@@ -170,7 +170,6 @@ class ControllerDeviceControlsMixin:
                 failures=failures,
                 threshold=threshold,
                 target_ip=self.get_current_kef_ip() or "<empty>",
-                mono=f"{self.mono():.3f}",
             )
         elif failures >= threshold:
             self.reset_speaker()
@@ -180,7 +179,7 @@ class ControllerDeviceControlsMixin:
                 force=True,
             )
             with self._state_lock:
-                self._speaker_event_poll_failures = 0
+                self._runtime_speaker.event_poll_failures = 0
             self._log_structured(
                 "STEP",
                 log_level="info",
@@ -193,7 +192,6 @@ class ControllerDeviceControlsMixin:
                 threshold=threshold,
                 ip_refresh_attempted=recovered,
                 target_ip=self.get_current_kef_ip() or "<empty>",
-                mono=f"{self.mono():.3f}",
             )
 
         return failures, threshold, recovered
@@ -202,14 +200,14 @@ class ControllerDeviceControlsMixin:
         if not self.config.home_event_poll_enabled:
             return False
 
-        with self._speaker_event_monitor_lock:
-            if self._speaker_event_monitor_running:
-                if self._speaker_event_monitor_stop.is_set():
-                    self._speaker_event_monitor_restart_reason = reason
+        with self._speaker_events.lock:
+            if self._speaker_events.running:
+                if self._speaker_events.stop.is_set():
+                    self._speaker_events.restart_reason = reason
                 return False
-            self._speaker_event_monitor_running = True
-            self._speaker_event_monitor_restart_reason = None
-            self._speaker_event_monitor_stop.clear()
+            self._speaker_events.running = True
+            self._speaker_events.restart_reason = None
+            self._speaker_events.stop.clear()
 
         def run() -> None:
             self._run_speaker_event_monitor(reason)
@@ -219,21 +217,21 @@ class ControllerDeviceControlsMixin:
         return True
 
     def stop_speaker_event_monitor(self) -> None:
-        self._speaker_event_monitor_stop.set()
+        self._speaker_events.stop.set()
 
     def _finish_speaker_event_monitor(self) -> str | None:
-        with self._speaker_event_monitor_lock:
-            self._speaker_event_monitor_running = False
-            restart_reason = self._speaker_event_monitor_restart_reason
-            self._speaker_event_monitor_restart_reason = None
+        with self._speaker_events.lock:
+            self._speaker_events.running = False
+            restart_reason = self._speaker_events.restart_reason
+            self._speaker_events.restart_reason = None
             return restart_reason
 
     def _speaker_event_monitor_pause_cause(self) -> str:
         with self._state_lock:
-            if self._system_sleep_pending:
+            if self._windows_events.system_sleep_pending:
                 return "system_sleep_pending"
-        with self._prewarmed_standby_lock:
-            if self._prewarmed_standby_failures > 0:
+        with self._prewarmed.lock:
+            if self._prewarmed.failures > 0:
                 return "prewarmed_standby_unavailable"
         return ""
 
@@ -246,27 +244,26 @@ class ControllerDeviceControlsMixin:
             step="monitor",
             status="started",
             timeout_s=f"{self.config.home_event_poll_timeout:.1f}",
-            mono=f"{self.mono():.3f}",
         )
         try:
-            while not self._speaker_event_monitor_stop.is_set():
+            while not self._speaker_events.stop.is_set():
                 if not self.config.home_event_poll_enabled:
-                    if self._speaker_event_monitor_stop.wait(_EVENT_MONITOR_RETRY_DELAY_S):
+                    if self._speaker_events.stop.wait(_EVENT_MONITOR_RETRY_DELAY_S):
                         return
                     continue
 
                 if self._is_controller_power_action_active():
-                    if self._speaker_event_monitor_stop.wait(_EVENT_MONITOR_POWER_ACTION_DELAY_S):
+                    if self._speaker_events.stop.wait(_EVENT_MONITOR_POWER_ACTION_DELAY_S):
                         return
                     continue
 
                 if self._speaker_event_monitor_pause_cause():
-                    if self._speaker_event_monitor_stop.wait(_EVENT_MONITOR_RETRY_DELAY_S):
+                    if self._speaker_events.stop.wait(_EVENT_MONITOR_RETRY_DELAY_S):
                         return
                     continue
 
                 if not self.get_current_kef_ip():
-                    if self._speaker_event_monitor_stop.wait(_EVENT_MONITOR_RETRY_DELAY_S):
+                    if self._speaker_events.stop.wait(_EVENT_MONITOR_RETRY_DELAY_S):
                         return
                     continue
 
@@ -279,7 +276,7 @@ class ControllerDeviceControlsMixin:
                     delay = _EVENT_MONITOR_IDLE_DELAY_S
                 else:
                     delay = _EVENT_MONITOR_RETRY_DELAY_S
-                if self._speaker_event_monitor_stop.wait(delay):
+                if self._speaker_events.stop.wait(delay):
                     return
         finally:
             restart_reason = self._finish_speaker_event_monitor()
@@ -290,7 +287,6 @@ class ControllerDeviceControlsMixin:
                 reason=reason,
                 step="monitor",
                 status="stopped",
-                mono=f"{self.mono():.3f}",
             )
             if restart_reason and self.config.home_event_poll_enabled:
                 self.start_speaker_event_monitor(restart_reason)
@@ -364,7 +360,6 @@ class ControllerDeviceControlsMixin:
                 fallback_identity=identity_seen,
                 fallback_ip_refresh=ip_refreshed,
                 reachable=reachable,
-                mono=f"{self.mono():.3f}",
             )
         if input_source is not None or volume is not None or speaker_on is not None:
             self._set_speaker_runtime_state(
@@ -391,7 +386,7 @@ class ControllerDeviceControlsMixin:
                 speaker = self.get_speaker(fresh=False)
                 events = speaker.poll_speaker(timeout=max(1, int(timeout)))
         except Exception as exc:
-            pause_cause = "monitor_stopping" if self._speaker_event_monitor_stop.is_set() else self._speaker_event_monitor_pause_cause()
+            pause_cause = "monitor_stopping" if self._speaker_events.stop.is_set() else self._speaker_event_monitor_pause_cause()
             if pause_cause:
                 self._log_structured(
                     "STEP",
@@ -401,7 +396,6 @@ class ControllerDeviceControlsMixin:
                     status="paused_failure_suppressed",
                     cause=pause_cause,
                     error=repr(exc),
-                    mono=f"{self.mono():.3f}",
                 )
                 return None, None, None
 
@@ -425,7 +419,6 @@ class ControllerDeviceControlsMixin:
                 threshold=threshold,
                 ip_refresh_attempted=recovered,
                 error=repr(exc),
-                mono=f"{self.mono():.3f}",
             )
             return None, None, None
 
@@ -460,7 +453,6 @@ class ControllerDeviceControlsMixin:
             input_source=input_source or "<unchanged>",
             volume=volume if volume is not None else "<unchanged>",
             speaker_on=speaker_on if speaker_on is not None else "<unchanged>",
-            mono=f"{self.mono():.3f}",
         )
         return input_source, volume, speaker_on
 
@@ -489,7 +481,6 @@ class ControllerDeviceControlsMixin:
                 trigger=trigger,
                 status="failed",
                 error=repr(exc),
-                mono=f"{self.mono():.3f}",
             )
             return {}
 
@@ -507,7 +498,6 @@ class ControllerDeviceControlsMixin:
             ssid=info.get("ssid", "<empty>") if info else "<empty>",
             frequency=info.get("frequency", "<empty>") if info else "<empty>",
             bssid=info.get("bssid", "<empty>") if info else "<empty>",
-            mono=f"{self.mono():.3f}",
         )
         return info
 
@@ -521,7 +511,6 @@ class ControllerDeviceControlsMixin:
                 requested_input=requested_input,
                 normalized_input=new_input or "<empty>",
                 cause="unsupported_input_source",
-                mono=f"{self.mono():.3f}",
             )
             return False
         # Live UI controls respect the discovery cooldowns: a forced recovery
@@ -534,7 +523,7 @@ class ControllerDeviceControlsMixin:
         if not self.get_current_kef_ip():
             return False
         if not self._action_lock.acquire(timeout=2.0):
-            self._log_structured("SKIP", action="CHANGE_INPUT", cause="action_lock_busy", mono=f"{self.mono():.3f}")
+            self._log_structured("SKIP", action="CHANGE_INPUT", cause="action_lock_busy")
             return False
 
         try:
@@ -554,7 +543,6 @@ class ControllerDeviceControlsMixin:
                             attempt=attempt,
                             cause="source_not_verified",
                             actual_input=actual_input or "<unknown>",
-                            mono=f"{self.mono():.3f}",
                         )
                         self.reset_speaker()
                         continue
@@ -569,7 +557,6 @@ class ControllerDeviceControlsMixin:
                         attempt=attempt,
                         status="success",
                         actual_input=actual_input,
-                        mono=f"{self.mono():.3f}",
                     )
                     return True
                 except Exception as exc:
@@ -581,7 +568,6 @@ class ControllerDeviceControlsMixin:
                         new_input=new_input,
                         attempt=attempt,
                         error=repr(exc),
-                        mono=f"{self.mono():.3f}",
                     )
             return False
         finally:
@@ -596,7 +582,7 @@ class ControllerDeviceControlsMixin:
                 return speaker.volume
         except Exception as exc:
             self.reset_speaker()
-            self._log_structured("WARN", action="GET_VOLUME", error=repr(exc), mono=f"{self.mono():.3f}")
+            self._log_structured("WARN", action="GET_VOLUME", error=repr(exc))
             return None
 
     def set_volume(self, level: int) -> bool:
@@ -610,12 +596,11 @@ class ControllerDeviceControlsMixin:
                 action="SET_VOLUME",
                 requested_level=requested_level,
                 cause="invalid_volume_level",
-                mono=f"{self.mono():.3f}",
             )
             return False
         level = coerced_level
         if not self._action_lock.acquire(timeout=2.0):
-            self._log_structured("SKIP", action="SET_VOLUME", cause="action_lock_busy", mono=f"{self.mono():.3f}")
+            self._log_structured("SKIP", action="SET_VOLUME", cause="action_lock_busy")
             return False
         try:
             with temporary_socket_timeout(self.config.socket_timeout):
@@ -627,12 +612,11 @@ class ControllerDeviceControlsMixin:
                 action="SET_VOLUME",
                 level=level,
                 status="success",
-                mono=f"{self.mono():.3f}",
             )
             return True
         except Exception as exc:
             self.reset_speaker()
-            self._log_structured("WARN", action="SET_VOLUME", level=level, error=repr(exc), mono=f"{self.mono():.3f}")
+            self._log_structured("WARN", action="SET_VOLUME", level=level, error=repr(exc))
             return False
         finally:
             self._action_lock.release()

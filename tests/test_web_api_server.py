@@ -4,6 +4,7 @@ import threading
 import time
 import tempfile
 import unittest
+from http.client import HTTPConnection
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urljoin, urlparse
@@ -52,15 +53,22 @@ class WebApiServerTests(unittest.TestCase):
             self.assertEqual(denied.exception.code, 403)
             denied.exception.close()
 
-            oversized = Request(
-                f"{base}api/refresh?token={token}",
-                data=b"x" * ((1 << 20) + 1),
-                headers={"Content-Type": "application/json"},
-            )
-            with self.assertRaises(HTTPError) as rejected:
-                urlopen(oversized)
-            self.assertEqual(rejected.exception.code, 413)
-            rejected.exception.close()
+            # Test the advertised request size without streaming an oversized
+            # body.  On Windows, a client still uploading that body can race
+            # the server's immediate 413 response and receive a connection
+            # abort instead of the HTTP status we are verifying.
+            parsed = urlparse(server.url)
+            connection = HTTPConnection(parsed.hostname, parsed.port)
+            try:
+                connection.putrequest("POST", f"/api/refresh?token={token}")
+                connection.putheader("Content-Type", "application/json")
+                connection.putheader("Content-Length", str((1 << 20) + 1))
+                connection.endheaders()
+                response = connection.getresponse()
+                self.assertEqual(response.status, 413)
+                response.read()
+            finally:
+                connection.close()
         finally:
             server.stop()
 

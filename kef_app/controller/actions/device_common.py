@@ -44,7 +44,6 @@ class ControllerDeviceCommonMixin:
             step=step,
             current_gen=self._current_generation(),
             cause="generation_changed",
-            mono=f"{self.mono():.3f}",
         )
 
     def _run_generation_pre_delay(
@@ -68,7 +67,6 @@ class ControllerDeviceCommonMixin:
             step="pre_delay",
             attempt=attempt,
             delay_s=f"{delay:.2f}",
-            mono=f"{self.mono():.3f}",
         )
         if not self._interruptible_sleep(delay, generation, sleep_label):
             return "aborted_during_pre_delay"
@@ -121,7 +119,6 @@ class ControllerDeviceCommonMixin:
             cause="target_identity_not_verified",
             target_mac=self.get_effective_target_mac() or "<empty>",
             target_ip=self.get_current_kef_ip() or "<empty>",
-            mono=f"{self.mono():.3f}",
         )
         return False
 
@@ -164,7 +161,6 @@ class ControllerDeviceCommonMixin:
             attempt=attempt,
             fresh=fresh,
             status="sent",
-            mono=f"{self.mono():.3f}",
         )
         self._ensure_standby_confirmed(
             action=action,
@@ -254,7 +250,6 @@ class ControllerDeviceCommonMixin:
             step="verify_standby",
             status="begin",
             timeout_s=f"{timeout:.2f}",
-            mono=f"{self.mono():.3f}",
         )
         verified, details = self._wait_for_standby_confirmation(timeout=timeout)
         if verified:
@@ -266,7 +261,6 @@ class ControllerDeviceCommonMixin:
                 reason=reason,
                 step="verify_standby",
                 status="confirmed",
-                mono=f"{self.mono():.3f}",
                 **details,
             )
             return
@@ -278,7 +272,6 @@ class ControllerDeviceCommonMixin:
             reason=reason,
             step="verify_standby",
             status="failed",
-            mono=f"{self.mono():.3f}",
             **details,
         )
         raise StandbyVerificationError(
@@ -335,7 +328,6 @@ class ControllerDeviceCommonMixin:
                     reason=reason,
                     attempt=attempt,
                     error=repr(exc),
-                    mono=f"{self.mono():.3f}",
                     **build_retry_fields(attempt, exc),
                 )
             finally:
@@ -348,7 +340,6 @@ class ControllerDeviceCommonMixin:
             reason=reason,
             step="attempt_loop",
             status="exhausted",
-            mono=f"{self.mono():.3f}",
         )
         return "failed_all_attempts"
 
@@ -361,7 +352,7 @@ class ControllerDeviceCommonMixin:
                 return normalize_input_source(speaker.source)
         except Exception as exc:
             self.reset_speaker()
-            self._log_structured("WARN", action="GET_INPUT_SOURCE", error=repr(exc), mono=f"{self.mono():.3f}")
+            self._log_structured("WARN", action="GET_INPUT_SOURCE", error=repr(exc))
             return None
 
     def _wait_for_input_source(self, expected_input: str, timeout: float = _CHANGE_INPUT_VERIFY_TIMEOUT) -> Optional[str]:
@@ -378,11 +369,11 @@ class ControllerDeviceCommonMixin:
         return observed
 
     def reset_speaker(self):
-        with self._speaker_lock:
-            self._speaker = None
+        with self._speaker_connection.lock:
+            self._speaker_connection.connector = None
 
     def get_speaker(self, fresh: bool = False) -> KefConnector:
-        with self._speaker_lock:
-            if fresh or self._speaker is None:
-                self._speaker = self._backend.create_connector(self.get_current_kef_ip())
-            return self._speaker
+        with self._speaker_connection.lock:
+            if fresh or self._speaker_connection.connector is None:
+                self._speaker_connection.connector = self._backend.create_connector(self.get_current_kef_ip())
+            return self._speaker_connection.connector

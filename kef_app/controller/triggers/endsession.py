@@ -22,7 +22,6 @@ class QueryEndSessionTrigger:
             wparam=wparam,
             lparam=f"0x{lparam:08X}",
             flags=flags,
-            mono=f"{controller.mono():.3f}",
         )
         controller._log_structured(
             "STEP",
@@ -30,7 +29,6 @@ class QueryEndSessionTrigger:
             reason=self.default_reason,
             step="generation_refresh",
             status="wake_threads_interrupted_wait_endsession",
-            mono=f"{controller.mono():.3f}",
         )
 
         is_rm_closeapp = bool(lparam & ENDSESSION_CLOSEAPP) and not bool(lparam & (ENDSESSION_LOGOFF | ENDSESSION_CRITICAL))
@@ -41,7 +39,6 @@ class QueryEndSessionTrigger:
                 reason=self.default_reason,
                 step="request_self_close",
                 status="rm_closeapp_fast_exit",
-                mono=f"{controller.mono():.3f}",
             )
             return True
 
@@ -53,7 +50,6 @@ class QueryEndSessionTrigger:
             step="request_self_close",
             status="wait_for_wm_endsession_or_system_teardown",
             endsession_standby_sent=standby_sent,
-            mono=f"{controller.mono():.3f}",
         )
         return False
 
@@ -73,7 +69,6 @@ class EndSessionTrigger:
             ending=ending,
             lparam=f"0x{lparam:08X}",
             flags=flags,
-            mono=f"{controller.mono():.3f}",
         )
         if ending:
             controller._new_generation("sleep", self.default_reason)
@@ -83,10 +78,8 @@ class EndSessionTrigger:
                 reason=self.default_reason,
                 step="fast_exit",
                 status=("skip_standby_to_avoid_app_hang" if controller.config.fast_exit_on_endsession else "no_fast_exit"),
-                mono=f"{controller.mono():.3f}",
             )
 
 
 QUERY_END_SESSION_TRIGGER = QueryEndSessionTrigger()
 END_SESSION_TRIGGER = EndSessionTrigger()
-

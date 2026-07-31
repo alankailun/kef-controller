@@ -133,9 +133,6 @@ class ControllerFastStandbyMixin:
             return
 
         fields = {
-            "action": action,
-            "gen": generation,
-            "reason": reason,
             "step": "prewarmed_standby_send",
             "status": prewarmed_result.status,
             "target_ip": current_ip,
@@ -144,7 +141,6 @@ class ControllerFastStandbyMixin:
             "deadline_s": f"{self.config.prewarmed_send_deadline_s:.2f}",
             "bypass_action_lock": True,
             "read_response": False,
-            "mono": f"{self.mono():.3f}",
         }
         if extra_fields:
             fields.update(extra_fields)
@@ -159,7 +155,7 @@ class ControllerFastStandbyMixin:
             fields["cause"] = host_unreachable_cause
             fields["host_unreachable"] = True
 
-        self._log_structured(
+        self._action_log(action, generation, reason).write(
             "STEP" if prewarmed_result.success or not prewarmed_result.attempted else "WARN",
             log_level="info",
             **fields,
@@ -193,9 +189,6 @@ class ControllerFastStandbyMixin:
             outcome = ""
 
         fields = {
-            "action": action,
-            "gen": generation,
-            "reason": reason,
             "step": "fire_and_forget_shutdown",
             "status": status,
             "target_ip": current_ip,
@@ -205,7 +198,6 @@ class ControllerFastStandbyMixin:
             "duration_ms": result.duration_ms,
             "bypass_action_lock": True,
             "read_response": False,
-            "mono": f"{self.mono():.3f}",
         }
         if result.all_host_unreachable:
             fields["cause"] = host_unreachable_cause
@@ -218,7 +210,7 @@ class ControllerFastStandbyMixin:
             fields["cause"] = f"bounded_send_{result.abort_reason}"
 
         log_tag = "WARN" if outcome and not power_action_outcome_is_success(outcome) else "STEP"
-        self._log_structured(log_tag, log_level="info", **fields)
+        self._action_log(action, generation, reason).write(log_tag, log_level="info", **fields)
 
     def _try_fast_standby_send(
         self,

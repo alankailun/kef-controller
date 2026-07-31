@@ -48,20 +48,20 @@ def power_action_outcome_is_success(outcome: str) -> bool:
 class ControllerStateMixin:
     def _new_generation(self, desired_state: str, reason: str, *, mono: str | None = None) -> int:
         with self._state_lock:
-            self._generation += 1
-            generation = self._generation
-            self._desired_state = desired_state
-            self._desired_reason = reason
-            self._log_structured("STATE", desired=desired_state, gen=generation, reason=reason, mono=mono or f"{self.mono():.3f}")
+            self._power.generation += 1
+            generation = self._power.generation
+            self._power.desired_state = desired_state
+            self._power.desired_reason = reason
+            self._log_structured("STATE", desired=desired_state, gen=generation, reason=reason, mono=mono)
             return generation
 
     def _current_generation(self) -> int:
         with self._state_lock:
-            return self._generation
+            return self._power.generation
 
     def _current_desired_state(self) -> tuple[str, str]:
         with self._state_lock:
-            return self._desired_state, self._desired_reason
+            return self._power.desired_state, self._power.desired_reason
 
     @staticmethod
     def _display_off_intent_snapshot(intent: DisplayOffStandbyIntent) -> DisplayOffStandbyIntentSnapshot:
@@ -86,22 +86,22 @@ class ControllerStateMixin:
         the resident dispatcher before doing diagnostic bookkeeping.
         """
         with self._state_lock:
-            previous = self._display_off_standby_intent
+            previous = self._power.display_off_standby_intent
             if previous is not None and not previous.cancelled:
                 previous.cancelled = True
                 previous.cancel_event.set()
 
-            self._generation += 1
-            self._desired_state = "sleep"
-            self._desired_reason = reason
+            self._power.generation += 1
+            self._power.desired_state = "sleep"
+            self._power.desired_reason = reason
             intent = DisplayOffStandbyIntent(
-                generation=self._generation,
+                generation=self._power.generation,
                 trigger_name=trigger_name,
                 reason=reason,
                 event_mono=event_mono,
                 cancel_event=threading.Event(),
             )
-            self._display_off_standby_intent = intent
+            self._power.display_off_standby_intent = intent
             return self._display_off_intent_snapshot(intent)
 
     def _cancel_display_off_standby_intent(
@@ -112,7 +112,7 @@ class ControllerStateMixin:
     ) -> DisplayOffStandbyIntentSnapshot | None:
         """Invalidate an outstanding display-off task without losing send state."""
         with self._state_lock:
-            intent = self._display_off_standby_intent
+            intent = self._power.display_off_standby_intent
             if (
                 intent is None
                 or intent.cancelled
@@ -127,28 +127,28 @@ class ControllerStateMixin:
             # retry.  Do not call _new_generation here: display-on decides its
             # desired state only after it has observed the old send status.
             if advance_generation:
-                self._generation += 1
+                self._power.generation += 1
             return snapshot
 
     def _display_off_intent_is_active(self, generation: int) -> bool:
         with self._state_lock:
-            intent = self._display_off_standby_intent
+            intent = self._power.display_off_standby_intent
             return bool(
                 intent is not None
                 and intent.generation == generation
                 and not intent.cancelled
-                and self._generation == generation
+                and self._power.generation == generation
             )
 
     def _update_display_off_standby_intent(self, generation: int, send_status: str) -> bool:
         """CAS-style, monotonic state transition for a display-off task."""
         with self._state_lock:
-            intent = self._display_off_standby_intent
+            intent = self._power.display_off_standby_intent
             if (
                 intent is None
                 or intent.generation != generation
                 or intent.cancelled
-                or self._generation != generation
+                or self._power.generation != generation
             ):
                 return False
             if send_status not in _CANCELLABLE_STANDBY_STATUS_TRANSITIONS.get(intent.send_status, ()):
@@ -158,23 +158,23 @@ class ControllerStateMixin:
 
     def _set_session_ending(self, ending: bool):
         with self._state_lock:
-            self._session_ending = ending
+            self._power.session_ending = ending
 
     def _is_session_ending(self) -> bool:
         with self._state_lock:
-            return self._session_ending
+            return self._power.session_ending
 
     def _set_session_locked(self, locked: bool) -> None:
         with self._state_lock:
-            self._session_locked = locked
+            self._power.session_locked = locked
 
     def _is_session_locked(self) -> bool:
         with self._state_lock:
-            return self._session_locked
+            return self._power.session_locked
 
     def _is_controller_power_action_active(self) -> bool:
         with self._state_lock:
-            return self._controller_active_power_actions > 0
+            return self._power.active_actions > 0
 
     def is_power_action_active(self) -> bool:
         """Return whether any controller-owned wake or standby action is running."""
@@ -206,7 +206,6 @@ class ControllerStateMixin:
                     gen=generation,
                     current_gen=self._current_generation(),
                     reason="generation_changed_during_sleep",
-                    mono=f"{self.mono():.3f}",
                 )
                 return False
 
@@ -234,7 +233,6 @@ class ControllerStateMixin:
                     reason=reason,
                     current_gen=self._current_generation(),
                     cause="generation_changed_while_waiting_action_lock",
-                    mono=f"{self.mono():.3f}",
                 )
                 return "stale_generation"
 
@@ -248,7 +246,6 @@ class ControllerStateMixin:
                         reason=reason,
                         cause="action_lock_timeout",
                         timeout_s=f"{timeout:.2f}",
-                        mono=f"{self.mono():.3f}",
                     )
                 return "action_lock_timeout"
 
@@ -258,7 +255,7 @@ class ControllerStateMixin:
     def _should_dedupe_resume_and_mark(self, reason: str) -> bool:
         with self._state_lock:
             now = self.mono()
-            if (now - self._last_resume_event_mono) < self.config.resume_dedup_window:
+            if (now - self._power.last_resume_event_mono) < self.config.resume_dedup_window:
                 self._log_structured(
                     "SKIP",
                     action="WAKE",
@@ -268,15 +265,15 @@ class ControllerStateMixin:
                     mono=f"{now:.3f}",
                 )
                 return True
-            self._last_resume_event_mono = now
+            self._power.last_resume_event_mono = now
             return False
 
     def _should_dedupe_wake_schedule_and_mark(self, reason: str) -> bool:
         with self._state_lock:
             now = self.mono()
             if (
-                self._last_wake_schedule_mono > 0
-                and (now - self._last_wake_schedule_mono) < self.config.resume_dedup_window
+                self._power.last_wake_schedule_mono > 0
+                and (now - self._power.last_wake_schedule_mono) < self.config.resume_dedup_window
             ):
                 self._log_structured(
                     "SKIP",
@@ -287,9 +284,9 @@ class ControllerStateMixin:
                     mono=f"{now:.3f}",
                 )
                 return True
-            self._last_wake_schedule_mono = now
+            self._power.last_wake_schedule_mono = now
             return False
 
     def _mark_wake_scheduled(self) -> None:
         with self._state_lock:
-            self._last_wake_schedule_mono = self.mono()
+            self._power.last_wake_schedule_mono = self.mono()

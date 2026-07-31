@@ -215,18 +215,18 @@ class PrewarmedStandbySocketMonitorMixin:
             return False
 
         stale_holders: list[PrewarmedSocketHolder] = []
-        with self._prewarmed_standby_lock:
-            if self._prewarmed_standby_running:
-                if self._prewarmed_standby_stop.is_set():
-                    self._prewarmed_standby_restart_reason = reason
+        with self._prewarmed.lock:
+            if self._prewarmed.running:
+                if self._prewarmed.stop.is_set():
+                    self._prewarmed.restart_reason = reason
                 return False
-            stale_holders = self._prewarmed_standby_holders
-            self._prewarmed_standby_holders = []
-            self._prewarmed_standby_running = True
-            self._prewarmed_standby_restart_reason = None
-            self._prewarmed_standby_failures = 0
-            self._prewarmed_standby_last_error = ""
-            self._prewarmed_standby_stop.clear()
+            stale_holders = self._prewarmed.holders
+            self._prewarmed.holders = []
+            self._prewarmed.running = True
+            self._prewarmed.restart_reason = None
+            self._prewarmed.failures = 0
+            self._prewarmed.last_error = ""
+            self._prewarmed.stop.clear()
 
         for holder in stale_holders:
             holder.close()
@@ -236,44 +236,44 @@ class PrewarmedStandbySocketMonitorMixin:
             daemon=True,
             name="PrewarmedStandbySocket",
         )
-        with self._prewarmed_standby_lock:
-            self._prewarmed_standby_thread = thread
+        with self._prewarmed.lock:
+            self._prewarmed.thread = thread
         thread.start()
         return True
 
     def stop_prewarmed_standby_socket_monitor(self) -> None:
-        self._prewarmed_standby_stop.set()
+        self._prewarmed.stop.set()
 
     def _finish_prewarmed_standby_socket_monitor(self) -> None:
-        with self._prewarmed_standby_lock:
-            self._prewarmed_standby_running = False
-            self._prewarmed_standby_thread = None
-            restart_reason = self._prewarmed_standby_restart_reason
-            self._prewarmed_standby_restart_reason = None
+        with self._prewarmed.lock:
+            self._prewarmed.running = False
+            self._prewarmed.thread = None
+            restart_reason = self._prewarmed.restart_reason
+            self._prewarmed.restart_reason = None
 
         if restart_reason and self.config.prewarmed_standby_enabled:
             self.start_prewarmed_standby_socket_monitor(restart_reason)
 
     def _close_prewarmed_socket_holders(self) -> None:
-        with self._prewarmed_standby_lock:
-            holders = self._prewarmed_standby_holders
-            self._prewarmed_standby_holders = []
+        with self._prewarmed.lock:
+            holders = self._prewarmed.holders
+            self._prewarmed.holders = []
         for holder in holders:
             holder.close()
 
     def _take_prewarmed_holder(self, target_ip: str) -> PrewarmedSocketHolder | None:
         selected = None
         stale = []
-        with self._prewarmed_standby_lock:
+        with self._prewarmed.lock:
             remaining = []
-            for holder in self._prewarmed_standby_holders:
+            for holder in self._prewarmed.holders:
                 if holder.ip != target_ip:
                     stale.append(holder)
                 elif selected is None:
                     selected = holder
                 else:
                     remaining.append(holder)
-            self._prewarmed_standby_holders = remaining
+            self._prewarmed.holders = remaining
 
         for holder in stale:
             holder.close()
@@ -285,10 +285,10 @@ class PrewarmedStandbySocketMonitorMixin:
 
     def _return_prewarmed_holder(self, holder: PrewarmedSocketHolder) -> bool:
         should_keep = False
-        with self._prewarmed_standby_lock:
-            matching_count = sum(1 for current in self._prewarmed_standby_holders if current.ip == holder.ip)
+        with self._prewarmed.lock:
+            matching_count = sum(1 for current in self._prewarmed.holders if current.ip == holder.ip)
             if holder.sock is not None and matching_count < _PREWARM_PERSISTENT_SOCKET_POOL_SIZE:
-                self._prewarmed_standby_holders.append(holder)
+                self._prewarmed.holders.append(holder)
                 should_keep = True
         if not should_keep:
             holder.close()
@@ -305,12 +305,11 @@ class PrewarmedStandbySocketMonitorMixin:
             interval_s=f"{self.config.prewarmed_keepalive_interval_s:.1f}",
             timeout_s=f"{self.config.prewarmed_socket_timeout_s:.2f}",
             persist_socket=self.config.prewarmed_persist_socket,
-            mono=f"{self.mono():.3f}",
         )
         try:
-            while not self._prewarmed_standby_stop.is_set():
+            while not self._prewarmed.stop.is_set():
                 delay = self._prewarmed_standby_tick(reason)
-                if self._prewarmed_standby_stop.wait(delay):
+                if self._prewarmed.stop.wait(delay):
                     return
         finally:
             # A suspend worker may have just been dispatched off-pump and still need
@@ -324,7 +323,6 @@ class PrewarmedStandbySocketMonitorMixin:
                 reason=reason,
                 step="monitor",
                 status="stopped",
-                mono=f"{self.mono():.3f}",
             )
 
     def _prewarmed_standby_tick(self, reason: str) -> float:
@@ -339,14 +337,14 @@ class PrewarmedStandbySocketMonitorMixin:
             self._close_prewarmed_socket_holders()
             return _PREWARM_RETRY_DELAY_S
 
-        last_ip = self._prewarmed_standby_last_ip
+        last_ip = self._prewarmed.last_ip
         if last_ip and last_ip != target_ip:
             self._close_prewarmed_socket_holders()
-            with self._prewarmed_standby_lock:
-                self._prewarmed_standby_failures = 0
-                self._prewarmed_standby_last_error = ""
-                self._prewarmed_standby_ready_logged = False
-                self._prewarmed_standby_last_ok_mono = 0.0
+            with self._prewarmed.lock:
+                self._prewarmed.failures = 0
+                self._prewarmed.last_error = ""
+                self._prewarmed.ready_logged = False
+                self._prewarmed.last_ok_mono = 0.0
 
         started = self.mono()
         try:
@@ -370,7 +368,6 @@ class PrewarmedStandbySocketMonitorMixin:
                     status="replaced_failed_connection",
                     target_ip=target_ip,
                     error=repr(exc),
-                    mono=f"{self.mono():.3f}",
                 )
             else:
                 return self._record_prewarmed_keepalive_failure(reason, target_ip, exc)
@@ -382,16 +379,16 @@ class PrewarmedStandbySocketMonitorMixin:
 
     def _ensure_persistent_prewarmed_socket(self, target_ip: str) -> None:
         stale = []
-        with self._prewarmed_standby_lock:
+        with self._prewarmed.lock:
             holders = []
-            for holder in self._prewarmed_standby_holders:
+            for holder in self._prewarmed.holders:
                 if holder.ip == target_ip:
                     holders.append(holder)
                 else:
                     stale.append(holder)
             stale.extend(holders[_PREWARM_PERSISTENT_SOCKET_POOL_SIZE:])
             holders = holders[:_PREWARM_PERSISTENT_SOCKET_POOL_SIZE]
-            self._prewarmed_standby_holders = holders
+            self._prewarmed.holders = holders
             missing = max(0, _PREWARM_PERSISTENT_SOCKET_POOL_SIZE - len(holders))
 
         for holder in stale:
@@ -413,8 +410,8 @@ class PrewarmedStandbySocketMonitorMixin:
                 holder.close()
             raise
 
-        with self._prewarmed_standby_lock:
-            self._prewarmed_standby_holders.extend(new_holders)
+        with self._prewarmed.lock:
+            self._prewarmed.holders.extend(new_holders)
 
     def _probe_prewarmed_keepalive(self, target_ip: str) -> None:
         request = _build_keepalive_request_bytes(target_ip)
@@ -442,14 +439,14 @@ class PrewarmedStandbySocketMonitorMixin:
         self._return_prewarmed_holder(holder)
 
     def _record_prewarmed_keepalive_success(self, reason: str, target_ip: str, duration_ms: int) -> None:
-        with self._prewarmed_standby_lock:
-            previous_failures = self._prewarmed_standby_failures
-            ready_logged = self._prewarmed_standby_ready_logged and self._prewarmed_standby_last_ip == target_ip
-            self._prewarmed_standby_failures = 0
-            self._prewarmed_standby_last_error = ""
-            self._prewarmed_standby_last_ip = target_ip
-            self._prewarmed_standby_last_ok_mono = self.mono()
-            self._prewarmed_standby_ready_logged = True
+        with self._prewarmed.lock:
+            previous_failures = self._prewarmed.failures
+            ready_logged = self._prewarmed.ready_logged and self._prewarmed.last_ip == target_ip
+            self._prewarmed.failures = 0
+            self._prewarmed.last_error = ""
+            self._prewarmed.last_ip = target_ip
+            self._prewarmed.last_ok_mono = self.mono()
+            self._prewarmed.ready_logged = True
 
         if ready_logged and previous_failures == 0:
             return
@@ -464,7 +461,6 @@ class PrewarmedStandbySocketMonitorMixin:
             target_ip=target_ip,
             duration_ms=duration_ms,
             mode=("persistent_socket" if self.config.prewarmed_persist_socket else "short_connection"),
-            mono=f"{self.mono():.3f}",
         )
 
     def _prewarmed_keepalive_failure_delay(self, failures: int) -> float:
@@ -476,11 +472,11 @@ class PrewarmedStandbySocketMonitorMixin:
         return max(base_interval, _PREWARM_FAILURE_BACKOFF_MAX_S)
 
     def _record_prewarmed_keepalive_failure(self, reason: str, target_ip: str, exc: OSError) -> float:
-        with self._prewarmed_standby_lock:
-            self._prewarmed_standby_failures += 1
-            failures = self._prewarmed_standby_failures
-            self._prewarmed_standby_last_error = repr(exc)
-            self._prewarmed_standby_ready_logged = False
+        with self._prewarmed.lock:
+            self._prewarmed.failures += 1
+            failures = self._prewarmed.failures
+            self._prewarmed.last_error = repr(exc)
+            self._prewarmed.ready_logged = False
         next_delay_s = self._prewarmed_keepalive_failure_delay(failures)
 
         log_level = (
@@ -499,13 +495,12 @@ class PrewarmedStandbySocketMonitorMixin:
             target_ip=target_ip,
             next_delay_s=f"{next_delay_s:.1f}",
             error=repr(exc),
-            mono=f"{self.mono():.3f}",
         )
         return next_delay_s
 
     def _has_recent_prewarmed_keepalive(self) -> bool:
-        with self._prewarmed_standby_lock:
-            last_ok_mono = float(self._prewarmed_standby_last_ok_mono or 0.0)
+        with self._prewarmed.lock:
+            last_ok_mono = float(self._prewarmed.last_ok_mono or 0.0)
         if last_ok_mono <= 0:
             return False
         max_age_s = max(5.0, float(self.config.prewarmed_keepalive_interval_s) * 2.5)
@@ -513,10 +508,10 @@ class PrewarmedStandbySocketMonitorMixin:
 
     def get_prewarmed_standby_health(self) -> dict[str, object]:
         """Return a small, lock-safe snapshot for the optional UI diagnostics."""
-        with self._prewarmed_standby_lock:
-            last_ok_mono = float(self._prewarmed_standby_last_ok_mono or 0.0)
-            failures = int(self._prewarmed_standby_failures)
-            last_error = str(self._prewarmed_standby_last_error or "")
+        with self._prewarmed.lock:
+            last_ok_mono = float(self._prewarmed.last_ok_mono or 0.0)
+            failures = int(self._prewarmed.failures)
+            last_error = str(self._prewarmed.last_error or "")
         return {
             "last_heartbeat_age_s": round(max(0.0, self.mono() - last_ok_mono), 1) if last_ok_mono else None,
             "failures": failures,
@@ -686,7 +681,7 @@ class PrewarmedStandbySocketMonitorMixin:
         started = self.mono()
         mode = "persistent_socket" if self.config.prewarmed_persist_socket else "short_connection"
         with self._state_lock:
-            event_mono = float(self._last_windows_event_mono or 0.0)
+            event_mono = float(self._windows_events.last_event_mono or 0.0)
         fields: dict[str, object] = {
             "action": "PREWARMED_STANDBY_SOCKET",
             "reason": reason,

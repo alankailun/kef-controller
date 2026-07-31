@@ -219,8 +219,8 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
             deadline = time.monotonic() + 1.0
             while len(speaker.requests) < 3 and time.monotonic() < deadline:
                 time.sleep(0.01)
-            with controller._prewarmed_standby_lock:
-                holders = list(controller._prewarmed_standby_holders)
+            with controller._prewarmed.lock:
+                holders = list(controller._prewarmed.holders)
 
             self.assertEqual(len(holders), 2)
             self.assertTrue(all(holder.sock is not None for holder in holders))
@@ -241,8 +241,8 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
 
             delay = controller._prewarmed_standby_tick("unit_test")
 
-            with controller._prewarmed_standby_lock:
-                holders = list(controller._prewarmed_standby_holders)
+            with controller._prewarmed.lock:
+                holders = list(controller._prewarmed.holders)
             self.assertEqual(delay, 20.0)
             self.assertEqual(len(holders), 2)
             self.assertTrue(all(holder.sock is not None for holder in holders))
@@ -260,30 +260,30 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         controller._log_structured = Mock()
         sock = Mock()
         holder = PrewarmedSocketHolder(sock, "127.0.0.1", controller.mono())
-        with controller._prewarmed_standby_lock:
-            controller._prewarmed_standby_holders = [holder]
-            controller._prewarmed_standby_running = True
-        controller._prewarmed_standby_stop.set()
+        with controller._prewarmed.lock:
+            controller._prewarmed.holders = [holder]
+            controller._prewarmed.running = True
+        controller._prewarmed.stop.set()
 
         controller._run_prewarmed_standby_socket_monitor("unit_test")
 
-        with controller._prewarmed_standby_lock:
-            holders = list(controller._prewarmed_standby_holders)
+        with controller._prewarmed.lock:
+            holders = list(controller._prewarmed.holders)
         self.assertEqual(holders, [holder])
         sock.close.assert_not_called()
 
         taken = controller._take_prewarmed_socket_holder("127.0.0.1")
 
         self.assertIs(taken, sock)
-        with controller._prewarmed_standby_lock:
-            self.assertEqual(controller._prewarmed_standby_holders, [])
+        with controller._prewarmed.lock:
+            self.assertEqual(controller._prewarmed.holders, [])
 
     def test_monitor_start_clears_stale_holders_before_rebuilding_pool(self):
         controller = self.make_controller(80, prewarmed_persist_socket=True)
         stale_sock = Mock()
         stale_holder = PrewarmedSocketHolder(stale_sock, "127.0.0.1", controller.mono())
-        with controller._prewarmed_standby_lock:
-            controller._prewarmed_standby_holders = [stale_holder]
+        with controller._prewarmed.lock:
+            controller._prewarmed.holders = [stale_holder]
         thread = Mock()
 
         with patch("kef_app.controller.standby.prewarmed_socket.threading.Thread", return_value=thread):
@@ -292,22 +292,22 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         self.assertTrue(started)
         stale_sock.close.assert_called_once()
         thread.start.assert_called_once()
-        with controller._prewarmed_standby_lock:
-            self.assertEqual(controller._prewarmed_standby_holders, [])
-            self.assertIs(controller._prewarmed_standby_thread, thread)
+        with controller._prewarmed.lock:
+            self.assertEqual(controller._prewarmed.holders, [])
+            self.assertIs(controller._prewarmed.thread, thread)
 
     def test_monitor_start_resets_keepalive_failure_backoff(self):
         controller = self.make_controller(80, prewarmed_persist_socket=True)
-        with controller._prewarmed_standby_lock:
-            controller._prewarmed_standby_failures = 100
+        with controller._prewarmed.lock:
+            controller._prewarmed.failures = 100
         thread = Mock()
 
         with patch("kef_app.controller.standby.prewarmed_socket.threading.Thread", return_value=thread):
             started = controller.start_prewarmed_standby_socket_monitor("resume")
 
         self.assertTrue(started)
-        with controller._prewarmed_standby_lock:
-            self.assertEqual(controller._prewarmed_standby_failures, 0)
+        with controller._prewarmed.lock:
+            self.assertEqual(controller._prewarmed.failures, 0)
 
     def test_keepalive_failures_back_off_until_success_resets_counter(self):
         controller = self.make_controller(80, prewarmed_persist_socket=False, prewarmed_keepalive_interval_s=5.0)
@@ -319,22 +319,22 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         self.assertEqual(delays[:2], [5.0, 5.0])
         self.assertEqual(delays[2:5], [30.0, 30.0, 30.0])
         self.assertEqual(delays[5:], [60.0, 60.0])
-        with controller._prewarmed_standby_lock:
-            self.assertEqual(controller._prewarmed_standby_failures, 7)
+        with controller._prewarmed.lock:
+            self.assertEqual(controller._prewarmed.failures, 7)
 
         controller._probe_prewarmed_keepalive = Mock()
         delay = controller._prewarmed_standby_tick("unit_test")
 
         self.assertEqual(delay, 5.0)
-        with controller._prewarmed_standby_lock:
-            self.assertEqual(controller._prewarmed_standby_failures, 0)
+        with controller._prewarmed.lock:
+            self.assertEqual(controller._prewarmed.failures, 0)
 
     def test_health_snapshot_reports_latest_heartbeat_and_retry_error(self):
         controller = self.make_controller(80, prewarmed_persist_socket=True)
-        with controller._prewarmed_standby_lock:
-            controller._prewarmed_standby_last_ok_mono = controller.mono() - 2.0
-            controller._prewarmed_standby_failures = 1
-            controller._prewarmed_standby_last_error = "TimeoutError('timed out')"
+        with controller._prewarmed.lock:
+            controller._prewarmed.last_ok_mono = controller.mono() - 2.0
+            controller._prewarmed.failures = 1
+            controller._prewarmed.last_error = "TimeoutError('timed out')"
 
         health = controller.get_prewarmed_standby_health()
 
@@ -346,8 +346,8 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         controller = self.make_controller(80, prewarmed_persist_socket=True)
         healthy_socket = Mock()
         healthy_holder = PrewarmedSocketHolder(healthy_socket, "127.0.0.1", controller.mono())
-        with controller._prewarmed_standby_lock:
-            controller._prewarmed_standby_holders = [healthy_holder]
+        with controller._prewarmed.lock:
+            controller._prewarmed.holders = [healthy_holder]
 
         delay = controller._record_prewarmed_keepalive_failure(
             "unit_test",
@@ -356,9 +356,9 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         )
 
         self.assertEqual(delay, 20.0)
-        with controller._prewarmed_standby_lock:
-            self.assertEqual(controller._prewarmed_standby_holders, [healthy_holder])
-            self.assertEqual(controller._prewarmed_standby_failures, 1)
+        with controller._prewarmed.lock:
+            self.assertEqual(controller._prewarmed.holders, [healthy_holder])
+            self.assertEqual(controller._prewarmed.failures, 1)
         healthy_socket.close.assert_not_called()
 
     def test_cached_prewarmed_send_uses_snapshot_bytes_and_matching_socket(self):
@@ -392,8 +392,8 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         first_socket.sendall.side_effect = OSError("stale pooled socket")
         second_socket = Mock()
         second_socket.getsockopt.return_value = 0
-        with controller._prewarmed_standby_lock:
-            controller._prewarmed_standby_holders = [
+        with controller._prewarmed.lock:
+            controller._prewarmed.holders = [
                 PrewarmedSocketHolder(first_socket, "127.0.0.1", controller.mono()),
                 PrewarmedSocketHolder(second_socket, "127.0.0.1", controller.mono()),
             ]
@@ -412,8 +412,8 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         first_socket = Mock()
         second_socket = Mock()
         second_socket.getsockopt.return_value = 0
-        with controller._prewarmed_standby_lock:
-            controller._prewarmed_standby_holders = [
+        with controller._prewarmed.lock:
+            controller._prewarmed.holders = [
                 PrewarmedSocketHolder(first_socket, "127.0.0.1", controller.mono()),
                 PrewarmedSocketHolder(second_socket, "127.0.0.1", controller.mono()),
             ]

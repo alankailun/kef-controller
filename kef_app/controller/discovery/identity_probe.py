@@ -40,7 +40,6 @@ class ControllerIdentityProbeMixin:
             actual_mac=(identity.mac_display or identity.mac) if identity else "<empty>",
             speaker_model=identity.speaker_model if identity else "<empty>",
             error=error or None,
-            mono=f"{self.mono():.3f}",
         )
 
     def _log_http_identity_result(
@@ -65,7 +64,6 @@ class ControllerIdentityProbeMixin:
             actual_mac=(identity.mac_display or identity.mac) if identity else "<empty>",
             speaker_model=identity.speaker_model if identity else "<empty>",
             speaker_name=identity.speaker_name if identity else "<empty>",
-            mono=f"{self.mono():.3f}",
         )
 
     def _can_use_cached_current_target(self, identity: SpeakerIdentity, trigger: str) -> bool:
@@ -74,8 +72,8 @@ class ControllerIdentityProbeMixin:
         configured_ip = str(self.config.kef_ip or "").strip()
 
         with self._ip_lock:
-            cached_mac = self._target_kef_mac
-            cached_model = self._speaker_model
+            cached_mac = self._identity.target_mac
+            cached_model = self._identity.speaker_model
 
         return can_use_cached_current_target(
             identity=identity,
@@ -93,8 +91,8 @@ class ControllerIdentityProbeMixin:
         configured_ip = str(self.config.kef_ip or "").strip()
 
         with self._ip_lock:
-            cached_mac = self._target_kef_mac
-            cached_model = self._speaker_model
+            cached_mac = self._identity.target_mac
+            cached_model = self._identity.speaker_model
 
         return can_use_cached_target_without_probe(
             trigger=trigger,
@@ -114,7 +112,6 @@ class ControllerIdentityProbeMixin:
                 trigger=trigger,
                 cause="empty_current_ip",
                 target_mac=self.get_effective_target_mac() or "<empty>",
-                mono=f"{self.mono():.3f}",
             )
             return False
 
@@ -157,7 +154,6 @@ class ControllerIdentityProbeMixin:
             mac=(info.mac_display or info.mac) if info else "<empty>",
             speaker_model=info.speaker_model if info else "<empty>",
             speaker_name=info.speaker_name if info else "<empty>",
-            mono=f"{self.mono():.3f}",
         )
         return info
 
@@ -177,7 +173,6 @@ class ControllerIdentityProbeMixin:
                 cause="urgent_standby_fast_path",
                 current_ip=current_ip,
                 target_mac=self.get_effective_target_mac() or "<empty>",
-                mono=f"{self.mono():.3f}",
             )
             return True
 
@@ -210,7 +205,6 @@ class ControllerIdentityProbeMixin:
                 current_ip=current_ip,
                 target_mac=self.get_effective_target_mac() or "<empty>",
                 speaker_model=info.speaker_model or "<empty>",
-                mono=f"{self.mono():.3f}",
             )
         elif not info or not info.speaker_model or not info.mac:
             self._log_backend_identity_partial(
@@ -232,7 +226,6 @@ class ControllerIdentityProbeMixin:
                 cause="identity_probe_failed",
                 trigger=trigger,
                 current_ip=current_ip,
-                mono=f"{self.mono():.3f}",
             )
             return False
 
@@ -257,7 +250,6 @@ class ControllerIdentityProbeMixin:
                 speaker_name=info.speaker_name or "",
                 matched=matched,
                 match_reason=match_reason,
-                mono=f"{self.mono():.3f}",
             )
         if not matched:
             self._log_structured(
@@ -270,7 +262,6 @@ class ControllerIdentityProbeMixin:
                 target_mac=self.get_effective_target_mac() or "<empty>",
                 actual_name=info.speaker_name or "<empty>",
                 actual_mac=info.mac_display or info.mac or "<empty>",
-                mono=f"{self.mono():.3f}",
             )
             self.reset_speaker()
             return False
@@ -339,6 +330,5 @@ class ControllerIdentityProbeMixin:
                 fallback_identity=identity_seen,
                 fallback_ip_refresh=ip_refreshed,
                 reachable=reachable,
-                mono=f"{self.mono():.3f}",
             )
         return identity_seen, ip_refreshed

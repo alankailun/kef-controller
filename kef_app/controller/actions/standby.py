@@ -27,35 +27,6 @@ class FastStandbyPolicy:
     skip_if_session_ending: bool = False
 
 
-@dataclass(frozen=True, slots=True)
-class VerifiedStandbyPolicy:
-    action: str
-    begin_step: str
-    success_step: str
-    lock_purpose: str
-    lock_timeout_field: str
-    identity_step: str
-    success_outcome: str
-    failed_outcome: str
-    failed_status: str | None = None
-    skip_if_session_ending: bool = False
-    attempt: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class EndSessionStandbyPolicy:
-    action: str
-    begin_step: str
-    success_step: str
-    disabled_field: str
-    disabled_cause: str
-    failed_outcome: str
-    fire_and_forget_outcome: str
-
-
-StandbyLogPolicy = FastStandbyPolicy | VerifiedStandbyPolicy | EndSessionStandbyPolicy
-
-
 PREEMPTIVE_STANDBY_POLICY = FastStandbyPolicy(
     action="EARLY_STANDBY",
     begin_step="lock_fast_path",
@@ -81,62 +52,31 @@ FAST_SUSPEND_STANDBY_POLICY = FastStandbyPolicy(
     skip_if_session_ending=True,
 )
 
-STANDARD_STANDBY_POLICY = VerifiedStandbyPolicy(
-    action="STANDBY",
-    begin_step="shutdown_request",
-    success_step="shutdown_request",
-    lock_purpose="standby",
-    lock_timeout_field="suspend_action_lock_timeout",
-    identity_step="standby_before_request",
-    success_outcome="success_attempt_1",
-    failed_outcome="failed_no_retry_before_suspend",
-    failed_status="no_retry_before_suspend",
-    skip_if_session_ending=True,
-    attempt=1,
-)
-
-ENDSESSION_STANDBY_POLICY = EndSessionStandbyPolicy(
-    action="ENDSESSION_STANDBY",
-    begin_step="shutdown_request",
-    success_step="shutdown_request",
-    disabled_field="endsession_standby_on_shutdown",
-    disabled_cause="disabled",
-    failed_outcome="failed_fast_endsession",
-    fire_and_forget_outcome="sent_unconfirmed_fire_and_forget",
-)
+_STANDARD_STANDBY_ACTION = "STANDBY"
+_ENDSESSION_STANDBY_ACTION = "ENDSESSION_STANDBY"
 
 
 class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
-    def _config_value(self, field_name: str):
-        return getattr(self.config, field_name)
-
-    def _standby_log_fields(self, policy: StandbyLogPolicy, generation: int | None, reason: str) -> dict[str, object]:
-        return {"action": policy.action, "gen": generation, "reason": reason}
-
     def _log_standby(
         self,
         tag: str,
-        policy: StandbyLogPolicy,
+        action: str | FastStandbyPolicy,
         generation: int | None,
         reason: str,
         *,
         log_level: object = None,
         **fields: object,
     ) -> None:
-        self._log_structured(
-            tag,
-            log_level=log_level,
-            **self._standby_log_fields(policy, generation, reason),
-            **fields,
-        )
+        action_name = action.action if isinstance(action, FastStandbyPolicy) else action
+        self._action_log(action_name, generation, reason).write(tag, log_level=log_level, **fields)
 
-    def _standby_skip_session_ending(self, policy: FastStandbyPolicy | VerifiedStandbyPolicy, generation: int | None, reason: str) -> tuple[bool, str]:
-        if not policy.skip_if_session_ending or not self._is_session_ending():
+    def _standby_skip_session_ending(self, action: str | FastStandbyPolicy, generation: int | None, reason: str) -> tuple[bool, str]:
+        if not self._is_session_ending():
             return False, ""
         outcome = "skipped_session_ending"
         self._log_standby(
             "SKIP",
-            policy,
+            action,
             generation,
             reason,
             cause="session_ending",
@@ -145,28 +85,30 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
 
     def _standby_skip_disabled(
         self,
-        policy: FastStandbyPolicy | EndSessionStandbyPolicy,
+        action: str | FastStandbyPolicy,
         generation: int | None,
         reason: str,
         *,
         extra_fields: dict[str, object] | None = None,
     ) -> tuple[bool, str]:
-        if not policy.disabled_field or bool(self._config_value(policy.disabled_field)):
+        field_name = action.disabled_field if isinstance(action, FastStandbyPolicy) else "endsession_standby_on_shutdown"
+        disabled_cause = action.disabled_cause if isinstance(action, FastStandbyPolicy) else "disabled"
+        if not field_name or bool(getattr(self.config, field_name)):
             return False, ""
         outcome = "disabled"
         self._log_standby(
             "SKIP",
-            policy,
+            action,
             generation,
             reason,
-            cause=policy.disabled_cause,
+            cause=disabled_cause,
             **(extra_fields or {}),
         )
         return True, outcome
 
     def _run_standby_action(
         self,
-        policy: StandbyLogPolicy,
+        action: str,
         *,
         generation: int | None,
         reason: str,
@@ -174,20 +116,20 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         defer_started_event: bool = False,
     ) -> bool:
         outcome = "unknown"
-        start_mono = self._log_action_begin(policy.action, generation, reason)
+        start_mono = self._log_action_begin(action, generation, reason)
         if defer_started_event:
             self._mark_power_action_started()
         else:
-            self._emit_power_action_started(policy.action, reason)
+            self._emit_power_action_started(action, reason)
 
         try:
             success, outcome = run()
             return success
         finally:
             if defer_started_event:
-                self._emit_power_action_started_event(policy.action, reason)
-            self._emit_power_action_finished(policy.action, reason, outcome)
-            self._log_action_end(policy.action, generation, reason, outcome, start_mono)
+                self._emit_power_action_started_event(action, reason)
+            self._emit_power_action_finished(action, reason, outcome)
+            self._log_action_end(action, generation, reason, outcome, start_mono)
 
     def _abort_bounded_standby_if_needed(
         self,
@@ -221,35 +163,30 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         )
         return outcome
 
-    def _execute_verified_standby_policy(
-        self,
-        policy: VerifiedStandbyPolicy,
-        generation: int | None,
-        reason: str,
-    ) -> tuple[bool, str]:
+    def _execute_verified_standby(self, generation: int | None, reason: str) -> tuple[bool, str]:
         self._log_standby(
             "STEP",
-            policy,
+            _STANDARD_STANDBY_ACTION,
             generation,
             reason,
-            step=policy.begin_step,
+            step="shutdown_request",
         )
 
-        skipped, outcome = self._standby_skip_session_ending(policy, generation, reason)
+        skipped, outcome = self._standby_skip_session_ending(_STANDARD_STANDBY_ACTION, generation, reason)
         if skipped:
             return False, outcome
-        if not self._ensure_target_identity(policy.action, reason, policy.identity_step):
+        if not self._ensure_target_identity(_STANDARD_STANDBY_ACTION, reason, "standby_before_request"):
             return False, "skipped_target_identity_not_verified"
 
         if generation is None:
             return False, "skipped_missing_generation"
 
         outcome = self._acquire_generation_action_lock(
-            action=policy.action,
+            action=_STANDARD_STANDBY_ACTION,
             generation=generation,
             reason=reason,
-            lock_timeout=float(self._config_value(policy.lock_timeout_field)),
-            purpose=policy.lock_purpose,
+            lock_timeout=float(self.config.suspend_action_lock_timeout),
+            purpose="standby",
         )
         if outcome is not None:
             return power_action_outcome_is_success(outcome), outcome
@@ -257,40 +194,40 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         try:
             try:
                 self._perform_standby_request(
-                    action=policy.action,
+                    action=_STANDARD_STANDBY_ACTION,
                     generation=generation,
                     reason=reason,
-                    attempt=policy.attempt or 1,
+                    attempt=1,
                     fresh=False,
                     verify_timeout=_STANDBY_VERIFY_TIMEOUT,
                 )
-                return True, policy.success_outcome
+                return True, "success_attempt_1"
             except Exception as exc:
                 self.reset_speaker()
                 self._log_standby(
                     "WARN",
-                    policy,
+                    _STANDARD_STANDBY_ACTION,
                     generation,
                     reason,
-                    attempt=policy.attempt or 1,
+                    attempt=1,
                     cause=("standby_not_verified" if isinstance(exc, StandbyVerificationError) else "shutdown_failed"),
-                    status=policy.failed_status,
+                    status="no_retry_before_suspend",
                     error=repr(exc),
                 )
-                return False, policy.failed_outcome
+                return False, "failed_no_retry_before_suspend"
         finally:
             self._action_lock.release()
 
-    def _execute_end_session_policy(self, policy: EndSessionStandbyPolicy, reason: str, flags: str) -> tuple[bool, str]:
+    def _execute_end_session(self, reason: str, flags: str) -> tuple[bool, str]:
         deadline_mono = self.mono() + _ENDSESSION_FAST_STANDBY_BUDGET_S
         current_ip = self.get_current_kef_ip()
         self._log_standby(
             "STEP",
-            policy,
+            _ENDSESSION_STANDBY_ACTION,
             None,
             reason,
             log_level="info",
-            step=policy.begin_step,
+            step="shutdown_request",
             status="begin",
             flags=flags,
             target_ip=current_ip or "<empty>",
@@ -303,7 +240,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         if not current_ip:
             self._log_standby(
                 "SKIP",
-                policy,
+                _ENDSESSION_STANDBY_ACTION,
                 None,
                 reason,
                 cause="no_current_ip",
@@ -321,7 +258,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             outcome = f"aborted_bounded_{abort_reason}"
             self._log_standby(
                 "ABORT",
-                policy,
+                _ENDSESSION_STANDBY_ACTION,
                 None,
                 reason,
                 step="before_fast_send",
@@ -339,12 +276,12 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             "budget_ms": _ENDSESSION_FAST_STANDBY_BUDGET_MS,
         }
         fast_send_outcome = self._try_fast_standby_send(
-            action=policy.action,
+            action=_ENDSESSION_STANDBY_ACTION,
             generation=None,
             reason=reason,
             current_ip=current_ip,
             extra_fields=extra_fields,
-            success_outcome=policy.fire_and_forget_outcome,
+            success_outcome="sent_unconfirmed_fire_and_forget",
             host_unreachable_status="host_unreachable_best_effort",
             host_unreachable_cause="endsession_network_or_speaker_unreachable",
             deadline_mono=deadline_mono,
@@ -354,10 +291,10 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
 
         self._log_standby(
             "WARN",
-            policy,
+            _ENDSESSION_STANDBY_ACTION,
             None,
             reason,
-            step=policy.success_step,
+            step="shutdown_request",
             status="standard_fallback_disabled",
             cause="endsession_fast_send_failed",
             flags=flags,
@@ -365,7 +302,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             deadline_mono=f"{deadline_mono:.3f}",
             budget_ms=_ENDSESSION_FAST_STANDBY_BUDGET_MS,
         )
-        return False, policy.failed_outcome
+        return False, "failed_fast_endsession"
 
     def _perform_fast_shutdown(
         self,
@@ -456,7 +393,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             )
 
         return self._run_standby_action(
-            policy,
+            policy.action,
             generation=generation,
             reason=reason,
             run=run,
@@ -480,17 +417,17 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
     def standby_kef_end_session(self, reason: str, flags: str) -> bool:
         def run() -> tuple[bool, str]:
             skipped, outcome = self._standby_skip_disabled(
-                ENDSESSION_STANDBY_POLICY,
+                _ENDSESSION_STANDBY_ACTION,
                 None,
                 reason,
                 extra_fields={"flags": flags},
             )
             if skipped:
                 return False, outcome
-            return self._execute_end_session_policy(ENDSESSION_STANDBY_POLICY, reason, flags)
+            return self._execute_end_session(reason, flags)
 
         return self._run_standby_action(
-            ENDSESSION_STANDBY_POLICY,
+            _ENDSESSION_STANDBY_ACTION,
             generation=None,
             reason=reason,
             run=run,
@@ -512,8 +449,8 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
 
     def standby_kef(self, generation: int, reason: str) -> bool:
         return self._run_standby_action(
-            STANDARD_STANDBY_POLICY,
+            _STANDARD_STANDBY_ACTION,
             generation=generation,
             reason=reason,
-            run=lambda: self._execute_verified_standby_policy(STANDARD_STANDBY_POLICY, generation, reason),
+            run=lambda: self._execute_verified_standby(generation, reason),
         )

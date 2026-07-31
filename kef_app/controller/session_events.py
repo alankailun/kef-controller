@@ -52,41 +52,41 @@ class ControllerSessionEventsMixin:
 
     def start_display_off_standby_dispatcher(self) -> bool:
         """Start the resident worker used by off-pump standby fast paths."""
-        with self._display_off_dispatcher_lock:
-            thread = self._display_off_dispatcher_thread
+        with self._display_off_dispatcher.lock:
+            thread = self._display_off_dispatcher.thread
             if thread is not None and thread.is_alive():
                 return False
-            self._display_off_dispatcher_stop.clear()
-            self._display_off_dispatcher_queue = queue.SimpleQueue()
+            self._display_off_dispatcher.stop.clear()
+            self._display_off_dispatcher.queue = queue.SimpleQueue()
             thread = threading.Thread(
                 target=self._run_display_off_standby_dispatcher,
                 daemon=True,
                 name="DisplayOffStandbyDispatcher",
             )
-            self._display_off_dispatcher_thread = thread
+            self._display_off_dispatcher.thread = thread
             thread.start()
             return True
 
     def stop_display_off_standby_dispatcher(self) -> None:
-        self._display_off_dispatcher_stop.set()
-        with self._display_off_dispatcher_lock:
-            self._display_off_dispatcher_queue.put(None)
+        self._display_off_dispatcher.stop.set()
+        with self._display_off_dispatcher.lock:
+            self._display_off_dispatcher.queue.put(None)
 
     def _enqueue_display_off_standby_task(self, task: _DisplayOffStandbyTask | _BoundedStandbyTask) -> None:
-        if self._display_off_dispatcher_stop.is_set():
+        if self._display_off_dispatcher.stop.is_set():
             # stop_display_off_standby_dispatcher is a terminal cleanup action.
             # Never append work to a live-but-exiting worker's queue.
             return
         self.start_display_off_standby_dispatcher()
-        with self._display_off_dispatcher_lock:
-            if self._display_off_dispatcher_stop.is_set():
+        with self._display_off_dispatcher.lock:
+            if self._display_off_dispatcher.stop.is_set():
                 return
-            self._display_off_dispatcher_queue.put(task)
+            self._display_off_dispatcher.queue.put(task)
 
     def _run_display_off_standby_dispatcher(self) -> None:
         """Keep one task failure from taking down future display-off work."""
-        while not self._display_off_dispatcher_stop.is_set():
-            task = self._display_off_dispatcher_queue.get()
+        while not self._display_off_dispatcher.stop.is_set():
+            task = self._display_off_dispatcher.queue.get()
             if task is None:
                 continue
             try:
@@ -111,12 +111,8 @@ class ControllerSessionEventsMixin:
         include_current_state: bool = False,
     ) -> None:
         fields = {
-            "action": "EARLY_STANDBY",
-            "gen": task.generation,
-            "reason": task.reason,
             "step": step,
             "cause": cause,
-            "mono": f"{self.mono():.3f}",
         }
         if include_current_state:
             desired_state, desired_reason = self._current_desired_state()
@@ -125,7 +121,7 @@ class ControllerSessionEventsMixin:
                 current_desired=desired_state or "<empty>",
                 current_reason=desired_reason or "<empty>",
             )
-        self._log_structured("STEP", log_level="info", **fields)
+        self._action_log("EARLY_STANDBY", task.generation, task.reason).write("STEP", log_level="info", **fields)
 
     def _wait_for_display_off_retry(self, task: _DisplayOffStandbyTask, delay_s: float, step: str) -> bool:
         if task.cancel_event.wait(delay_s):
@@ -136,7 +132,7 @@ class ControllerSessionEventsMixin:
                 include_current_state=True,
             )
             return False
-        if self._display_off_dispatcher_stop.is_set():
+        if self._display_off_dispatcher.stop.is_set():
             self._log_cancellable_retry_stop(
                 task,
                 step="cancellable_retry_cancelled",
@@ -159,7 +155,6 @@ class ControllerSessionEventsMixin:
             reason=task.reason,
             step=step,
             delay_s=f"{delay_s:.2f}",
-            mono=f"{self.mono():.3f}",
         )
         return True
 
@@ -193,7 +188,6 @@ class ControllerSessionEventsMixin:
             outcome=outcome,
             attempt=attempt,
             since_event_ms=int(max(0.0, self.mono() - task.event_mono) * 1000),
-            mono=f"{self.mono():.3f}",
         )
         return True
 
@@ -218,7 +212,6 @@ class ControllerSessionEventsMixin:
                 cache_version=cached_result.cache_version,
                 cache_age_ms=cached_result.cache_age_ms,
                 duration_ms=cached_result.duration_ms,
-                mono=f"{self.mono():.3f}",
             )
             return self._complete_display_off_fast_send(
                 task,
@@ -236,7 +229,6 @@ class ControllerSessionEventsMixin:
                 step="cancellable_fast_send",
                 attempt=attempt,
                 status="skipped_no_current_ip",
-                mono=f"{self.mono():.3f}",
             )
             self._update_display_off_standby_intent(task.generation, "retry_waiting")
             return False
@@ -323,7 +315,6 @@ class ControllerSessionEventsMixin:
                 step=f"before_{task.trigger_name}_dispatcher_send",
                 cause=abort_reason,
                 deadline_mono=f"{task.deadline_mono:.3f}",
-                mono=f"{self.mono():.3f}",
             )
             return
 
@@ -370,7 +361,6 @@ class ControllerSessionEventsMixin:
                 reason=reason,
                 step=step_label,
                 delay_s=f"{delay:.2f}",
-                mono=f"{self.mono():.3f}",
             )
             if not self._interruptible_sleep(delay, generation, step_label):
                 return
@@ -388,18 +378,16 @@ class ControllerSessionEventsMixin:
                 action="WAKE",
                 reason="startup",
                 cause="startup_wake_disabled",
-                mono=f"{self.mono():.3f}",
             )
             return
 
         generation = self._new_generation("wake", "startup")
         self._log_structured(
             "STEP",
-            action="WAKE",
-            reason="startup",
-            step="startup_delay",
-            delay_s=f"{self.config.startup_delay:.2f}",
-            mono=f"{self.mono():.3f}",
+                action="WAKE",
+                reason="startup",
+                step="startup_delay",
+                delay_s=f"{self.config.startup_delay:.2f}",
         )
         if not self._interruptible_sleep(self.config.startup_delay, generation, "startup_delay"):
             return
@@ -476,7 +464,6 @@ class ControllerSessionEventsMixin:
                 gen=generation,
                 reason=reason,
                 cause="sleep_standby_disabled",
-                mono=f"{self.mono():.3f}",
             )
             return False
 
@@ -493,7 +480,6 @@ class ControllerSessionEventsMixin:
             deadline_mono=f"{deadline_mono:.3f}",
             budget_ms=int(_SUSPEND_STANDBY_EVENT_BUDGET_S * 1000),
             mode="fast_request" if fast_path_enabled else "verified_request",
-            mono=f"{self.mono():.3f}",
         )
 
         self._enqueue_display_off_standby_task(
@@ -516,7 +502,6 @@ class ControllerSessionEventsMixin:
                 action=trigger.action_name,
                 reason=reason,
                 cause=trigger.disabled_cause,
-                mono=f"{self.mono():.3f}",
             )
             return False
         if self._is_session_ending():
@@ -525,7 +510,6 @@ class ControllerSessionEventsMixin:
                 action=trigger.action_name,
                 reason=reason,
                 cause="session_ending",
-                mono=f"{self.mono():.3f}",
             )
             return False
 
@@ -558,7 +542,6 @@ class ControllerSessionEventsMixin:
                 step="schedule_cancellable_dispatcher",
                 trigger=trigger_name,
                 event_mono=f"{event_mono:.3f}",
-                mono=f"{self.mono():.3f}",
             )
             return True
 
@@ -577,7 +560,6 @@ class ControllerSessionEventsMixin:
             event_mono=f"{event_mono:.3f}",
             deadline_mono=f"{deadline_mono:.3f}",
             budget_ms=int(budget_s * 1000),
-            mono=f"{self.mono():.3f}",
         )
 
         self._enqueue_display_off_standby_task(
@@ -623,7 +605,7 @@ class ControllerSessionEventsMixin:
     ) -> bool:
         entry_mono = self.mono()
         with self._state_lock:
-            event_name = self._last_windows_event_name
+            event_name = self._windows_events.last_event_name
         if self._early_standby_event_matches_reason(event_name, reason):
             fields = {
                 "action": action,
@@ -642,7 +624,6 @@ class ControllerSessionEventsMixin:
                 action=action,
                 reason=reason,
                 cause=disabled_cause,
-                mono=f"{self.mono():.3f}",
             )
             return False
         if self._is_session_ending():
@@ -651,7 +632,6 @@ class ControllerSessionEventsMixin:
                 action=action,
                 reason=reason,
                 cause="session_ending",
-                mono=f"{self.mono():.3f}",
             )
             return False
 
@@ -684,7 +664,6 @@ class ControllerSessionEventsMixin:
                 step="before_early_standby_worker_send",
                 cause=abort_reason,
                 deadline_mono=f"{deadline_mono:.3f}",
-                mono=f"{self.mono():.3f}",
             )
             return False
 
@@ -717,11 +696,8 @@ class ControllerSessionEventsMixin:
         desired_reason: str = "",
     ) -> None:
         fields: dict[str, object] = {
-            "action": "WAKE",
-            "reason": reason,
             "cause": cause,
             "event_mono": f"{event_mono:.3f}",
-            "mono": f"{self.mono():.3f}",
         }
         if desired_state or desired_reason:
             fields["desired_state"] = desired_state or "<empty>"
@@ -729,7 +705,7 @@ class ControllerSessionEventsMixin:
         # Display events are sparse, and this branch explains why an enabled
         # wake rule did not run.  Keep it in the normal diagnostic log instead
         # of hiding the only useful evidence at DEBUG level.
-        self._log_structured("SKIP", log_level="info", **fields)
+        self._bind_log(action="WAKE", reason=reason).write("SKIP", log_level="info", **fields)
 
     def on_display_on(self, event_mono: float, reason: str = "DISPLAY_ON") -> bool:
         previous_intent = self._cancel_display_off_standby_intent(expected_trigger="display_off")
@@ -782,7 +758,6 @@ class ControllerSessionEventsMixin:
             previous_send_status=previous_intent.send_status,
             event_mono=f"{event_mono:.3f}",
             delay_s=f"{self.config.display_on_wake_delay:.2f}",
-            mono=f"{self.mono():.3f}",
         )
         self._schedule_delayed_wake(
             generation,
@@ -799,7 +774,7 @@ class ControllerSessionEventsMixin:
             return
 
         if self.config.wake_on_unlock_only:
-            self._log_structured("STEP", action="WAKE", reason=reason, step="resume", status="wait_for_any_unlock", mono=f"{self.mono():.3f}")
+            self._log_structured("STEP", action="WAKE", reason=reason, step="resume", status="wait_for_any_unlock")
             return
 
         generation = self._new_generation("wake", reason)
@@ -819,11 +794,11 @@ class ControllerSessionEventsMixin:
                 since_event_ms=int(max(0.0, self.mono() - previous_intent.event_mono) * 1000),
             )
         if self._is_session_ending():
-            self._log_structured("SKIP", action="WAKE", reason=reason, cause="session_ending", mono=f"{self.mono():.3f}")
+            self._log_structured("SKIP", action="WAKE", reason=reason, cause="session_ending")
             return
 
         if not self.config.wake_on_unlock_only:
-            self._log_structured("SKIP", action="WAKE", reason=reason, cause="unlock_wake_disabled", mono=f"{self.mono():.3f}")
+            self._log_structured("SKIP", action="WAKE", reason=reason, cause="unlock_wake_disabled")
             return
         if self._should_dedupe_wake_schedule_and_mark(reason):
             return

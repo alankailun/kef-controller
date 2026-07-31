@@ -19,7 +19,6 @@ class ControllerDiscoveryRecoveryMixin:
                 "SKIP",
                 action="MANUAL_SCAN",
                 cause="blind_discovery_already_running",
-                mono=f"{self.mono():.3f}",
             )
             return []
 
@@ -29,7 +28,6 @@ class ControllerDiscoveryRecoveryMixin:
                 "BEGIN",
                 action="MANUAL_SCAN",
                 seed_ip=seed_ip or "<empty>",
-                mono=f"{self.mono():.3f}",
             )
             devices = discover_kef_devices(
                 seed_ip,
@@ -44,7 +42,6 @@ class ControllerDiscoveryRecoveryMixin:
                 action="MANUAL_SCAN",
                 outcome="found" if devices else "not_found",
                 count=len(devices),
-                mono=f"{self.mono():.3f}",
             )
             return devices
         finally:
@@ -71,7 +68,6 @@ class ControllerDiscoveryRecoveryMixin:
                 reason=reason,
                 trigger=trigger,
                 cause="empty_target_requires_manual_selection",
-                mono=f"{self.mono():.3f}",
             )
             return False
         return self.recover_target_ip(reason=reason, trigger=f"{trigger}_recover", force=force_recovery)
@@ -86,7 +82,6 @@ class ControllerDiscoveryRecoveryMixin:
                 reason=reason,
                 cause="empty_kef_mac",
                 trigger=trigger,
-                mono=f"{self.mono():.3f}",
             )
             return False
         if not self._discovery_lock.acquire(blocking=False):
@@ -96,13 +91,12 @@ class ControllerDiscoveryRecoveryMixin:
                 reason=reason,
                 cause="discovery_already_running",
                 trigger=trigger,
-                mono=f"{self.mono():.3f}",
             )
             return False
 
         try:
             now = self.mono()
-            elapsed = now - self._last_mac_discovery_mono
+            elapsed = now - self._identity.last_mac_discovery_mono
             if not force and elapsed < c.mac_discovery_cooldown:
                 self._log_structured(
                     "SKIP",
@@ -116,7 +110,7 @@ class ControllerDiscoveryRecoveryMixin:
                 )
                 return False
 
-            self._last_mac_discovery_mono = now
+            self._identity.last_mac_discovery_mono = now
             seed_ip = self.get_current_kef_ip()
             target_mac = self.get_effective_target_mac()
             self._log_structured(
@@ -171,7 +165,6 @@ class ControllerDiscoveryRecoveryMixin:
                 reason=reason,
                 cause="blind_discovery_already_running",
                 trigger=trigger,
-                mono=f"{self.mono():.3f}",
             )
             return False
 
@@ -191,7 +184,7 @@ class ControllerDiscoveryRecoveryMixin:
                 )
                 return False
 
-            elapsed = now - self._last_blind_discovery_mono
+            elapsed = now - self._identity.last_blind_discovery_mono
             if not force and elapsed < c.blind_discovery_cooldown:
                 self._log_structured(
                     "SKIP",
@@ -205,7 +198,7 @@ class ControllerDiscoveryRecoveryMixin:
                 )
                 return False
 
-            self._last_blind_discovery_mono = now
+            self._identity.last_blind_discovery_mono = now
 
             self._log_structured(
                 "BEGIN",
@@ -271,7 +264,6 @@ class ControllerDiscoveryRecoveryMixin:
                 trigger=trigger,
                 cause="no_local_route",
                 target_ip=target_ip,
-                mono=f"{self.mono():.3f}",
             )
             return False
 
