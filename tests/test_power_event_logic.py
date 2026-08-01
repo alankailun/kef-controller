@@ -102,12 +102,27 @@ class PowerEventLogicTests(unittest.TestCase):
     def test_fast_standby_policies_capture_distinct_path_shapes(self):
         self.assertIsInstance(PREEMPTIVE_STANDBY_POLICY, FastStandbyPolicy)
         self.assertEqual(PREEMPTIVE_STANDBY_POLICY.action, "EARLY_STANDBY")
-        self.assertTrue(PREEMPTIVE_STANDBY_POLICY.host_unreachable_is_success)
         self.assertEqual(PREEMPTIVE_STANDBY_POLICY.fire_and_forget_outcome, "sent_unconfirmed_fire_and_forget")
 
         self.assertIsInstance(FAST_SUSPEND_STANDBY_POLICY, FastStandbyPolicy)
         self.assertEqual(FAST_SUSPEND_STANDBY_POLICY.host_unreachable_outcome, "sent_skipped_host_unreachable")
         self.assertEqual(FAST_SUSPEND_STANDBY_POLICY.disabled_field, "suspend_fast_standby_enabled")
+
+    def test_bounded_standby_abort_log_includes_target_ip(self):
+        controller = self.make_controller()
+        controller._log_structured = Mock()
+
+        outcome = controller._abort_bounded_standby_if_needed(
+            PREEMPTIVE_STANDBY_POLICY,
+            generation=None,
+            reason="unit_test",
+            deadline_mono=controller.mono() - 1.0,
+            step="before_fast_send",
+            target_ip="192.168.1.10",
+        )
+
+        self.assertEqual(outcome, "aborted_bounded_deadline_exceeded")
+        self.assertEqual(controller._log_structured.call_args.kwargs["target_ip"], "192.168.1.10")
 
     def test_network_parameter_notifications_are_deduped_with_summary(self):
         controller = self.make_controller(kef_ip="192.168.1.10")
@@ -2148,8 +2163,10 @@ class PowerEventLogicTests(unittest.TestCase):
         message = capture.records[0].getMessage()
         self.assertIn("STEP action=WAKE | gen=7 | reason=ui_test | step=request", message)
         self.assertEqual(message.count("mono="), 1)
-        with self.assertRaisesRegex(ValueError, "cannot be overridden: action"):
-            action_log.write("STEP", action="STANDBY")
+        action_log.write("STEP", action="STANDBY")
+        self.assertIn("Bound log fields ignored conflicting values: action", capture.records[1].getMessage())
+        self.assertIn("STEP action=WAKE", capture.records[2].getMessage())
+        self.assertNotIn("action=STANDBY", capture.records[2].getMessage())
 
     def test_wake_completion_waits_for_a_real_state_poll_before_marking_on(self):
         controller = self.make_controller(kef_ip="192.168.1.10")

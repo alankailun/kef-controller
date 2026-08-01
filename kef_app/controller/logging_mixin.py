@@ -23,8 +23,11 @@ class BoundStructuredLogger:
         overlap = self.fields.keys() & fields.keys()
         if overlap:
             names = ", ".join(sorted(overlap))
-            raise ValueError(f"Bound log fields cannot be overridden: {names}")
-        payload = {**self.fields, **fields}
+            # Logging must never stop a power action. Keep the bound context
+            # authoritative and surface the programmer error separately.
+            self.owner.log.warning("Bound log fields ignored conflicting values: %s", names)
+        payload = dict(self.fields)
+        payload.update((key, value) for key, value in fields.items() if key not in self.fields)
         self.owner._log_structured(tag, log_level=log_level, mono=mono, **payload)
 
 

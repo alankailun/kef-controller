@@ -384,10 +384,10 @@ class ControllerSessionEventsMixin:
         generation = self._new_generation("wake", "startup")
         self._log_structured(
             "STEP",
-                action="WAKE",
-                reason="startup",
-                step="startup_delay",
-                delay_s=f"{self.config.startup_delay:.2f}",
+            action="WAKE",
+            reason="startup",
+            step="startup_delay",
+            delay_s=f"{self.config.startup_delay:.2f}",
         )
         if not self._interruptible_sleep(self.config.startup_delay, generation, "startup_delay"):
             return

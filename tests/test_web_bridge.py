@@ -91,6 +91,24 @@ class WebBridgeTests(unittest.TestCase):
             }
         )
 
+    def test_power_action_background_error_emits_structured_finished_toast(self) -> None:
+        bridge = WebControllerBridge.__new__(WebControllerBridge)
+        bridge._controller = Mock()
+        bridge._controller.log = Mock()
+        bridge._notify = Mock()
+        bridge._poll_speaker_state = Mock()
+
+        with patch("kef_app.ui.web_bridge.start_background_task") as start_task:
+            bridge._start_action("WebWake", lambda: True, "Wake requested", action="wake")
+
+        start_task.call_args.kwargs["on_error"](RuntimeError("unexpected failure"))
+        failure_call = bridge._notify.call_args_list[-1]
+        self.assertEqual(failure_call.args, ("error", "Speaker action failed", "unexpected failure"))
+        self.assertEqual(
+            failure_call.kwargs,
+            {"action": "WAKE", "phase": "finished", "success": False},
+        )
+
     def test_startup_update_is_scheduled_without_blocking_the_ui_thread(self) -> None:
         bridge = WebControllerBridge.__new__(WebControllerBridge)
         bridge._config = AppConfig()

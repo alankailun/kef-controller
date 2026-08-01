@@ -23,8 +23,6 @@ class FastStandbyPolicy:
     host_unreachable_outcome: str = "sent_skipped_host_unreachable"
     host_unreachable_status: str = "host_unreachable_assumed_standby"
     host_unreachable_cause: str = "host_unreachable_assume_standby"
-    host_unreachable_is_success: bool = True
-    skip_if_session_ending: bool = False
 
 
 PREEMPTIVE_STANDBY_POLICY = FastStandbyPolicy(
@@ -35,8 +33,6 @@ PREEMPTIVE_STANDBY_POLICY = FastStandbyPolicy(
     host_unreachable_outcome="sent_skipped_host_unreachable",
     host_unreachable_status="local_network_unavailable_before_suspend",
     host_unreachable_cause="local_route_unavailable_before_suspend",
-    host_unreachable_is_success=True,
-    skip_if_session_ending=True,
 )
 
 FAST_SUSPEND_STANDBY_POLICY = FastStandbyPolicy(
@@ -49,7 +45,6 @@ FAST_SUSPEND_STANDBY_POLICY = FastStandbyPolicy(
     host_unreachable_outcome="sent_skipped_host_unreachable",
     host_unreachable_status="host_unreachable_best_effort",
     host_unreachable_cause="suspend_network_or_speaker_unreachable",
-    skip_if_session_ending=True,
 )
 
 _STANDARD_STANDBY_ACTION = "STANDBY"
@@ -85,15 +80,15 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
 
     def _standby_skip_disabled(
         self,
-        action: str | FastStandbyPolicy,
+        action: str,
         generation: int | None,
         reason: str,
         *,
+        disabled_field: str,
+        disabled_cause: str = "disabled",
         extra_fields: dict[str, object] | None = None,
     ) -> tuple[bool, str]:
-        field_name = action.disabled_field if isinstance(action, FastStandbyPolicy) else "endsession_standby_on_shutdown"
-        disabled_cause = action.disabled_cause if isinstance(action, FastStandbyPolicy) else "disabled"
-        if not field_name or bool(getattr(self.config, field_name)):
+        if not disabled_field or bool(getattr(self.config, disabled_field)):
             return False, ""
         outcome = "disabled"
         self._log_standby(
@@ -160,6 +155,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             step=step,
             cause=abort_reason,
             deadline_mono=f"{deadline_mono:.3f}",
+            target_ip=target_ip or "<empty>",
         )
         return outcome
 
@@ -379,7 +375,13 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         deadline_mono: float,
     ) -> bool:
         def run() -> tuple[bool, str]:
-            skipped, outcome = self._standby_skip_disabled(policy, generation, reason)
+            skipped, outcome = self._standby_skip_disabled(
+                policy.action,
+                generation,
+                reason,
+                disabled_field=policy.disabled_field,
+                disabled_cause=policy.disabled_cause,
+            )
             if skipped:
                 return False, outcome
             skipped, outcome = self._standby_skip_session_ending(policy, generation, reason)
@@ -420,6 +422,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
                 _ENDSESSION_STANDBY_ACTION,
                 None,
                 reason,
+                disabled_field="endsession_standby_on_shutdown",
                 extra_fields={"flags": flags},
             )
             if skipped:

@@ -169,6 +169,7 @@ class WebControllerBridge(QObject):
             f"Web{action.title()}",
             power_work,
             f"{action.title()} requested",
+            action=action,
         )
 
     @Slot(int)
@@ -644,11 +645,27 @@ class WebControllerBridge(QObject):
             return None
         return {"detail": detail, "age_s": round(age_s, 1)}
 
-    def _start_action(self, name: str, work: Callable[[], object], message: str) -> None:
+    def _start_action(self, name: str, work: Callable[[], object], message: str, *, action: str) -> None:
+        normalized_action = str(action or "").upper()
+
+        def failed(exc: Exception) -> None:
+            self._notify(
+                "error",
+                "Speaker action failed",
+                str(exc),
+                action=normalized_action,
+                phase="finished",
+                success=False,
+            )
+
         self._notify("info", "Speaker action", message)
-        start_background_task(name, work, on_success=lambda _result: self._poll_speaker_state(force=True),
-                              on_error=lambda exc: self._notify("error", "Speaker action failed", str(exc)),
-                              log=self._controller.log)
+        start_background_task(
+            name,
+            work,
+            on_success=lambda _result: self._poll_speaker_state(force=True),
+            on_error=failed,
+            log=self._controller.log,
+        )
 
     def _emit_event_result(self, key: str, state: str, title: str, detail: str) -> None:
         self.toast.emit(self._encode({"kind": "event", "key": key, "state": state, "title": title, "detail": detail}))
