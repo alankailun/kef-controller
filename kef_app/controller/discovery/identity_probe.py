@@ -14,9 +14,6 @@ from .identity_helpers import (
 
 
 class ControllerIdentityProbeMixin:
-    def _should_log_identity_detail(self, trigger: str) -> bool:
-        return not self._is_ui_poll_trigger(trigger)
-
     def _log_backend_identity_partial(
         self,
         *,
@@ -26,8 +23,6 @@ class ControllerIdentityProbeMixin:
         identity: Optional[SpeakerIdentity],
         error: str = "",
     ) -> None:
-        if not self._should_log_identity_detail(trigger):
-            return
         self._log_structured(
             "STEP",
             action="DISCOVER_IP",
@@ -49,8 +44,6 @@ class ControllerIdentityProbeMixin:
         ip: str,
         identity: Optional[SpeakerIdentity],
     ) -> None:
-        if not self._should_log_identity_detail(trigger):
-            return
         self._log_structured(
             "STEP",
             action="DISCOVER_IP",
@@ -232,21 +225,19 @@ class ControllerIdentityProbeMixin:
         changed = False
         if matched:
             changed = self.update_identity_from_device_info(info, trigger=trigger)
-        should_log_success = changed or not matched or not self._is_ui_poll_trigger(trigger)
-        if should_log_success:
-            self._log_structured(
-                "STEP",
-                action="DISCOVER_IP",
-                reason=reason,
-                step="capture_identity_from_current_ip",
-                trigger=trigger,
-                current_ip=current_ip,
-                changed=changed,
-                speaker_model=info.speaker_model or "",
-                speaker_name=info.speaker_name or "",
-                matched=matched,
-                match_reason=match_reason,
-            )
+        self._log_structured(
+            "STEP",
+            action="DISCOVER_IP",
+            reason=reason,
+            step="capture_identity_from_current_ip",
+            trigger=trigger,
+            current_ip=current_ip,
+            changed=changed,
+            speaker_model=info.speaker_model or "",
+            speaker_name=info.speaker_name or "",
+            matched=matched,
+            match_reason=match_reason,
+        )
         if not matched:
             self._log_structured(
                 "WARN",
@@ -315,14 +306,13 @@ class ControllerIdentityProbeMixin:
         if not reachable:
             self.record_identity_probe_failure(reason=reason, trigger=trigger, cause="identity_refresh_failed")
 
-        if not (self._is_ui_poll_trigger(trigger) and identity_seen and not ip_refreshed):
-            self._log_structured(
-                "STEP",
-                action="IDENTITY_PROBE",
-                reason=reason,
-                trigger=trigger,
-                fallback_identity=identity_seen,
-                fallback_ip_refresh=ip_refreshed,
-                reachable=reachable,
-            )
+        self._log_structured(
+            "STEP",
+            action="IDENTITY_PROBE",
+            reason=reason,
+            trigger=trigger,
+            fallback_identity=identity_seen,
+            fallback_ip_refresh=ip_refreshed,
+            reachable=reachable,
+        )
         return identity_seen, ip_refreshed

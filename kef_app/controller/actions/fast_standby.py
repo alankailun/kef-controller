@@ -135,7 +135,7 @@ class ControllerFastStandbyMixin:
         fields = {
             "step": "prewarmed_standby_send",
             "status": prewarmed_result.status,
-            "target_ip": current_ip,
+            "current_ip": current_ip,
             "duration_ms": prewarmed_result.duration_ms,
             "mode": prewarmed_result.mode,
             "deadline_s": f"{self.config.prewarmed_send_deadline_s:.2f}",
@@ -190,7 +190,7 @@ class ControllerFastStandbyMixin:
         fields = {
             "step": "fire_and_forget_shutdown",
             "status": status,
-            "target_ip": current_ip,
+            "current_ip": current_ip,
             "attempts": result.attempts,
             "completed": result.completed,
             "pending": result.pending,

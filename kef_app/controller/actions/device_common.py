@@ -118,7 +118,7 @@ class ControllerDeviceCommonMixin:
             reason=reason,
             cause="target_identity_not_verified",
             target_mac=self.get_effective_target_mac() or "<empty>",
-            target_ip=self.get_current_kef_ip() or "<empty>",
+            current_ip=self.get_current_kef_ip() or "<empty>",
         )
         return False
 

@@ -168,7 +168,7 @@ class ControllerDeviceControlsMixin:
                 cause=cause,
                 failures=failures,
                 threshold=threshold,
-                target_ip=self.get_current_kef_ip() or "<empty>",
+                current_ip=self.get_current_kef_ip() or "<empty>",
             )
         elif failures >= threshold:
             self.reset_speaker()
@@ -189,7 +189,7 @@ class ControllerDeviceControlsMixin:
                 failures=failures,
                 threshold=threshold,
                 ip_refresh_attempted=recovered,
-                target_ip=self.get_current_kef_ip() or "<empty>",
+                current_ip=self.get_current_kef_ip() or "<empty>",
             )
 
         return failures, threshold, recovered
@@ -486,7 +486,7 @@ class ControllerDeviceControlsMixin:
             reason=reason,
             trigger=trigger,
             status="available" if info else "unavailable",
-            target_ip=self.get_current_kef_ip() or "<empty>",
+            current_ip=self.get_current_kef_ip() or "<empty>",
             signal_level=info.get("signalLevel", "<empty>") if info else "<empty>",
             ssid=info.get("ssid", "<empty>") if info else "<empty>",
             frequency=info.get("frequency", "<empty>") if info else "<empty>",

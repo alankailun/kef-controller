@@ -25,6 +25,11 @@ _TAG_LOG_LEVELS: Final[dict[str, int]] = {
     "RETRY": logging.WARNING,
     "WARN": logging.WARNING,
 }
+_UI_POLL_TRIGGER_PREFIXES: Final[tuple[str, ...]] = (
+    "ui_home_poll",
+    "ui_tray_poll",
+    "web_ui_poll",
+)
 
 
 def coerce_log_level(level: object, *, default: int = logging.INFO) -> int:
@@ -36,13 +41,25 @@ def coerce_log_level(level: object, *, default: int = logging.INFO) -> int:
     return resolved if isinstance(resolved, int) else default
 
 
-def structured_log_level(tag: str) -> int:
+def is_ui_poll_trigger(trigger: object) -> bool:
+    """Return whether ``trigger`` belongs to a high-frequency UI poll."""
+    return str(trigger or "").startswith(_UI_POLL_TRIGGER_PREFIXES)
+
+
+def structured_log_level(tag: str, fields: Mapping[str, object] | None = None) -> int:
     """Return the default severity for a structured tag.
 
     STEP and SKIP are deliberately INFO-level diagnostics.  A skipped branch
     often explains why a requested speaker action did not happen, so hiding it
     behind DEBUG leaves field diagnosis incomplete.
+
+    UI polls are the exception: they are frequent background observations, not
+    user actions.  Keeping every record at DEBUG preserves full diagnostics on
+    demand without continuously writing poll noise to disk at the default INFO
+    verbosity.
     """
+    if fields is not None and is_ui_poll_trigger(fields.get("trigger")):
+        return logging.DEBUG
     return _TAG_LOG_LEVELS.get(str(tag or "").upper(), logging.INFO)
 
 
@@ -68,7 +85,11 @@ def log_structured(
     event timestamp explicitly.  Controller actions use their own clock and
     delegate only formatting and severity policy to this module.
     """
-    level = coerce_log_level(log_level, default=structured_log_level(tag)) if log_level is not None else structured_log_level(tag)
+    level = (
+        coerce_log_level(log_level, default=structured_log_level(tag, fields))
+        if log_level is not None
+        else structured_log_level(tag, fields)
+    )
     if not log.isEnabledFor(level):
         return
     if mono is not None:

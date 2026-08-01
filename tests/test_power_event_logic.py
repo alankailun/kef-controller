@@ -108,7 +108,7 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertEqual(FAST_SUSPEND_STANDBY_POLICY.host_unreachable_outcome, "sent_skipped_host_unreachable")
         self.assertEqual(FAST_SUSPEND_STANDBY_POLICY.disabled_field, "suspend_fast_standby_enabled")
 
-    def test_bounded_standby_abort_log_includes_target_ip(self):
+    def test_bounded_standby_abort_log_includes_current_ip(self):
         controller = self.make_controller()
         controller._log_structured = Mock()
 
@@ -118,11 +118,11 @@ class PowerEventLogicTests(unittest.TestCase):
             reason="unit_test",
             deadline_mono=controller.mono() - 1.0,
             step="before_fast_send",
-            target_ip="192.168.1.10",
+            current_ip="192.168.1.10",
         )
 
         self.assertEqual(outcome, "aborted_bounded_deadline_exceeded")
-        self.assertEqual(controller._log_structured.call_args.kwargs["target_ip"], "192.168.1.10")
+        self.assertEqual(controller._log_structured.call_args.kwargs["current_ip"], "192.168.1.10")
 
     def test_network_parameter_notifications_are_deduped_with_summary(self):
         controller = self.make_controller(kef_ip="192.168.1.10")
@@ -137,7 +137,7 @@ class PowerEventLogicTests(unittest.TestCase):
                 family=2,
                 metric=0,
                 nl_mtu=0,
-                target_ip="192.168.1.10",
+                current_ip="192.168.1.10",
                 event_mono=100.0,
             )
             second = controller._should_suppress_network_interface_event(
@@ -148,7 +148,7 @@ class PowerEventLogicTests(unittest.TestCase):
                 family=23,
                 metric=0,
                 nl_mtu=0,
-                target_ip="192.168.1.10",
+                current_ip="192.168.1.10",
                 event_mono=100.1,
             )
 
@@ -1921,7 +1921,7 @@ class PowerEventLogicTests(unittest.TestCase):
                 call.args == ("SKIP",)
                 and call.kwargs.get("action") == "DISCOVER_IP"
                 and call.kwargs.get("cause") == "no_local_route"
-                and call.kwargs.get("target_ip") == "192.168.1.10"
+                and call.kwargs.get("current_ip") == "192.168.1.10"
                 for call in controller._log_structured.mock_calls
             )
         )

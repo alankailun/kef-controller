@@ -22,6 +22,7 @@ _STATIC_CONTENT_TYPES = {
     ".js": "text/javascript; charset=utf-8",
 }
 _MAX_API_BODY_BYTES = 1 << 20
+WEBVIEW_HOST_URL_ENV = "KEF_CONTROLLER_WEBVIEW_HOST_URL"
 
 
 class WebApiServer:
@@ -40,11 +41,16 @@ class WebApiServer:
         self._stopping = False
 
     @property
-    def url(self) -> str:
+    def origin(self) -> str:
         if self._server is None:
             raise RuntimeError("Web API server has not been started")
         host, port = self._server.server_address[:2]
-        return f"http://{host}:{port}/?token={quote(self._api_token)}"
+        return f"http://{host}:{port}/"
+
+    @property
+    def url(self) -> str:
+        """Return the authenticated host URL for the private WebView process."""
+        return f"{self.origin}?token={quote(self._api_token)}"
 
     def start(self) -> None:
         if self._server is not None:

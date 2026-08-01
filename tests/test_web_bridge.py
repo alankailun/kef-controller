@@ -43,6 +43,7 @@ class WebBridgeTests(unittest.TestCase):
         self.assertIn('const prefixLevel = original.match(/^(ERROR|WARN(?:ING)?|INFO)\\s*[:|-]?\\s*/i);', html)
         self.assertIn('const rawLevel = structured ? structured[3] : (prefixLevel ? prefixLevel[1] : "INFO");', html)
         self.assertIn('const category = categorized.match(/^(BEGIN|STEP|END|EVENT|STATE|SKIP)\\s/);', html)
+        self.assertIn('if ((lvl === "INFO" || lvl === "DEBUG") && category) {', html)
         self.assertIn('const message = category ? categorized.slice(category[0].length) : categorized;', html)
         self.assertNotIn('const isProcessLifecycle =', html)
         self.assertNotIn('const isPrewarmRetry =', html)

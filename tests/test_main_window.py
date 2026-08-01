@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 from PySide6.QtCore import QObject
 
 from kef_app.ui.main_window import KefMainWindow
+from kef_app.ui.web_api_server import WEBVIEW_HOST_URL_ENV
 
 
 class KefMainWindowHostTests(unittest.TestCase):
@@ -50,6 +51,29 @@ class KefMainWindowHostTests(unittest.TestCase):
             KefMainWindow._launch_host(window)
 
         popen.assert_not_called()
+
+    def test_launch_keeps_the_api_token_out_of_logs_and_command_line(self) -> None:
+        window = self._window()
+        token = "private-token"
+        authenticated_url = f"http://127.0.0.1:4096/?token={token}"
+        window._server.url = authenticated_url
+        window._server.origin = "http://127.0.0.1:4096/"
+        window._set_effective_visibility = Mock()
+
+        with (
+            patch("kef_app.ui.main_window.subprocess.Popen") as popen,
+            patch("kef_app.ui.main_window.log_structured") as log_structured,
+        ):
+            KefMainWindow._launch_host(window)
+
+        command = popen.call_args.args[0]
+        environment = popen.call_args.kwargs["env"]
+        self.assertIn("--webview-host", command)
+        self.assertNotIn(token, command)
+        self.assertEqual(environment[WEBVIEW_HOST_URL_ENV], authenticated_url)
+        self.assertEqual(log_structured.call_args.kwargs["url"], window._server.origin)
+        self.assertEqual(log_structured.call_args.kwargs["auth"], "token")
+        self.assertNotIn(token, str(log_structured.call_args))
 
     def test_finds_only_the_window_owned_by_the_host_process(self) -> None:
         def enumerate_windows(callback, _extra) -> None:

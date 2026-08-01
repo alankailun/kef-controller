@@ -9,9 +9,11 @@ Package as .exe:
 """
 from __future__ import annotations
 
+import os
 import sys
 
 from kef_app.platform.webview2_runtime import check_webview2_readiness
+from kef_app.ui.web_api_server import WEBVIEW_HOST_URL_ENV
 
 
 def _webview2_requirement_message() -> str:
@@ -77,11 +79,16 @@ def _run_webview_host(url: str) -> None:
     webview.start(gui="edgechromium", debug=False)
 
 
-if "--webview-host" in sys.argv:
-    host_index = sys.argv.index("--webview-host")
-    if host_index + 1 >= len(sys.argv):
+def _consume_webview_host_url() -> str:
+    """Consume the private host URL without leaving its token in child envs."""
+    url = os.environ.pop(WEBVIEW_HOST_URL_ENV, "")
+    if not url:
         raise SystemExit("Missing WebView host URL")
-    _run_webview_host(sys.argv[host_index + 1])
+    return url
+
+
+if "--webview-host" in sys.argv:
+    _run_webview_host(_consume_webview_host_url())
     raise SystemExit(0)
 
 

@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import main_gui
+from kef_app.ui.web_api_server import WEBVIEW_HOST_URL_ENV
 
 
 class _Event:
@@ -18,6 +19,12 @@ class _Event:
 
 
 class MainGuiWebViewHostTests(unittest.TestCase):
+    def test_consumes_the_private_host_url_from_the_environment(self) -> None:
+        url = "http://127.0.0.1:4096/?token=private-token"
+        with patch.dict(main_gui.os.environ, {WEBVIEW_HOST_URL_ENV: url}, clear=False):
+            self.assertEqual(main_gui._consume_webview_host_url(), url)
+            self.assertNotIn(WEBVIEW_HOST_URL_ENV, main_gui.os.environ)
+
     def test_host_starts_hidden_then_shows_after_load_and_hides_on_close(self) -> None:
         window = Mock()
         window.events = types.SimpleNamespace(closing=_Event(), loaded=_Event())

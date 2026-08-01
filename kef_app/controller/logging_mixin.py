@@ -82,7 +82,7 @@ class ControllerLoggingMixin:
         return coerce_log_level(level)
 
     def _get_structured_log_level(self, tag: str, fields: dict[str, object]) -> int:
-        return structured_log_level(tag)
+        return structured_log_level(tag, fields)
 
     def _log_structured(self, tag: str, *, log_level: object = None, mono: object = None, **fields):
         self._write_structured_log(tag, log_level=log_level, mono=mono, **fields)
@@ -165,6 +165,7 @@ class ControllerLoggingMixin:
     def log_banner(self):
         c = self.config
         pykefcontrol_version = _get_pykefcontrol_version()
+        current_ip = self.get_current_kef_ip()
 
         self._log_structured(
             "EVENT",
@@ -174,7 +175,8 @@ class ControllerLoggingMixin:
             speaker_model=c.speaker_model_label,
             backend=c.backend_name,
             pykefcontrol=pykefcontrol_version,
-            target_ip=self.get_current_kef_ip() or c.kef_ip or "<empty>",
+            current_ip=current_ip or "<empty>",
+            target_ip=c.kef_ip or "<empty>",
             target_mac=c.kef_mac or self.get_target_kef_mac() or "<empty>",
             wake_on_startup=c.wake_on_startup,
             startup_delay_s=c.startup_delay,
@@ -283,7 +285,7 @@ class ControllerLoggingMixin:
         family = getattr(event, "family", "<unknown>")
         metric = getattr(event, "metric", "<unknown>")
         nl_mtu = getattr(event, "nl_mtu", "<unknown>")
-        target_ip = self.get_current_kef_ip() or "<empty>"
+        current_ip = self.get_current_kef_ip() or "<empty>"
         if self._should_suppress_network_interface_event(
             notification=notification,
             interface=interface,
@@ -292,7 +294,7 @@ class ControllerLoggingMixin:
             family=family,
             metric=metric,
             nl_mtu=nl_mtu,
-            target_ip=target_ip,
+            current_ip=current_ip,
             event_mono=event_mono,
         ):
             return
@@ -309,7 +311,7 @@ class ControllerLoggingMixin:
             family=family,
             metric=metric,
             nl_mtu=nl_mtu,
-            target_ip=target_ip,
+            current_ip=current_ip,
             mono=f"{event_mono:.3f}",
         )
 
@@ -323,7 +325,7 @@ class ControllerLoggingMixin:
         family: object,
         metric: object,
         nl_mtu: object,
-        target_ip: str,
+        current_ip: str,
         event_mono: float,
     ) -> bool:
         if str(notification) != "ParameterNotification":
@@ -338,7 +340,7 @@ class ControllerLoggingMixin:
             "families": {str(family)},
             "metric": metric,
             "nl_mtu": nl_mtu,
-            "target_ip": target_ip,
+            "current_ip": current_ip,
             "first_mono": event_mono,
             "last_mono": event_mono,
             "repeats": 0,
@@ -426,5 +428,5 @@ class ControllerLoggingMixin:
             families=family_text,
             repeats=repeats,
             window_ms=int(max(0.0, last_mono - first_mono) * 1000),
-            target_ip=summary.get("target_ip", "<empty>"),
+            current_ip=summary.get("current_ip", "<empty>"),
         )

@@ -29,7 +29,6 @@ from .logs.log_history import (
     merge_recent_lines,
     read_log_tail_lines,
     resolve_log_history_file,
-    should_hide_from_ui_log,
 )
 from .settings.settings_service import get_speaker_power_disabled_reason, save_settings_and_sync_startup
 
@@ -426,16 +425,10 @@ class WebControllerBridge(QObject):
         return self._encode(self._logs_payload(selected_name))
 
     def _logs_payload(self, selected_name: str = "") -> list[str]:
-        # v1.6.3 merged the file tail with the in-memory UI ring. Keep that
-        # model, but filter hidden poll noise *before* applying the display cap;
-        # otherwise thousands of web_ui_poll lines displace PROCESS_START and
-        # the startup configuration banner before the UI ever sees them.
+        # Poll diagnostics are emitted at DEBUG, so normal INFO logs stay clean
+        # at the source rather than relying on a brittle presentation filter.
         log_path = resolve_log_history_file(self._config.log_file, selected_name)
-        file_lines = [
-            line
-            for line in read_log_tail_lines(log_path, max_lines=8000)
-            if not should_hide_from_ui_log(line)
-        ]
+        file_lines = read_log_tail_lines(log_path, max_lines=8000)
         if log_path != self._config.log_file:
             return file_lines[-800:]
         return merge_recent_lines(

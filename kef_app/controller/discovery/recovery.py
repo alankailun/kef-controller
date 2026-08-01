@@ -105,7 +105,7 @@ class ControllerDiscoveryRecoveryMixin:
                     cause="cooldown",
                     trigger=trigger,
                     cooldown_s=f"{c.mac_discovery_cooldown:.1f}",
-                    elapsed_s=f"{elapsed:.1f}",
+                    elapsed_ms=int(max(0.0, elapsed) * 1000),
                     mono=f"{now:.3f}",
                 )
                 return False
@@ -148,7 +148,7 @@ class ControllerDiscoveryRecoveryMixin:
                 reason=reason,
                 trigger=trigger,
                 outcome="ip_updated" if changed else "ip_confirmed",
-                ip=discovered_ip,
+                actual_ip=discovered_ip,
                 duration_ms=int((end_mono - now) * 1000),
                 mono=f"{end_mono:.3f}",
             )
@@ -193,7 +193,7 @@ class ControllerDiscoveryRecoveryMixin:
                     cause="blind_discovery_cooldown",
                     trigger=trigger,
                     cooldown_s=f"{c.blind_discovery_cooldown:.1f}",
-                    elapsed_s=f"{elapsed:.1f}",
+                    elapsed_ms=int(max(0.0, elapsed) * 1000),
                     mono=f"{now:.3f}",
                 )
                 return False
@@ -255,15 +255,15 @@ class ControllerDiscoveryRecoveryMixin:
             self._blind_discovery_lock.release()
 
     def maybe_refresh_kef_ip(self, reason: str, trigger: str, force: bool = False) -> bool:
-        target_ip = self.get_current_kef_ip()
-        if target_ip and has_best_route_to_ipv4(target_ip) is False:
+        current_ip = self.get_current_kef_ip()
+        if current_ip and has_best_route_to_ipv4(current_ip) is False:
             self._log_structured(
                 "SKIP",
                 action="DISCOVER_IP",
                 reason=reason,
                 trigger=trigger,
                 cause="no_local_route",
-                target_ip=target_ip,
+                current_ip=current_ip,
             )
             return False
 

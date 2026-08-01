@@ -487,11 +487,3 @@
     .boot-status, .boot-card { border: 1px solid var(--line); border-radius: 10px; background: var(--panel-flat); }
     .boot-status { height: 68px; }
     .boot-card { height: 146px; }
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after {
-        animation-duration: .01ms !important;
-        animation-iteration-count: 1 !important;
-        scroll-behavior: auto !important;
-        transition-duration: .01ms !important;
-      }
-    }

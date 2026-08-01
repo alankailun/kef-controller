@@ -5,7 +5,7 @@ import logging
 import unittest
 from pathlib import Path
 
-from kef_app.structured_logging import STRUCTURED_LOG_TAGS, log_structured
+from kef_app.structured_logging import STRUCTURED_LOG_TAGS, log_structured, structured_log_level
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +14,7 @@ _RAW_LOG_METHODS = {"debug", "info", "warning", "error", "critical", "exception"
 _STRUCTURED_HELPERS = {"_log_structured", "_log_standby", "write"}
 _DEPRECATED_FIELD_ALIASES = {
     "source",
+    "ip",
     "old_ip",
     "new_ip",
     "old_mac",
@@ -24,6 +25,7 @@ _DEPRECATED_FIELD_ALIASES = {
     "normalized_input",
     "known_mac",
     "mac",
+    "elapsed_s",
 }
 
 
@@ -42,6 +44,18 @@ def _is_structured_call(node: ast.Call) -> bool:
         and isinstance(node.args[0], ast.Constant)
         and isinstance(node.args[0].value, str)
         and node.args[0].value in STRUCTURED_LOG_TAGS
+    )
+
+
+def _is_current_ip_expression(node: ast.AST) -> bool:
+    if isinstance(node, ast.Name):
+        return node.id == "current_ip"
+    if isinstance(node, ast.Attribute):
+        return node.attr == "current_ip"
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get_current_kef_ip"
     )
 
 
@@ -67,12 +81,37 @@ class StructuredLoggingContractTests(unittest.TestCase):
 
         self.assertEqual([record.levelno for record in captured], [logging.INFO, logging.INFO])
 
+    def test_ui_poll_records_are_available_only_at_debug_verbosity(self) -> None:
+        logger = logging.getLogger("tests.structured_logging.ui_poll")
+        logger.handlers.clear()
+        logger.propagate = False
+        captured: list[logging.LogRecord] = []
+
+        class Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                captured.append(record)
+
+        handler = Capture()
+        logger.addHandler(handler)
+        self.addCleanup(logger.removeHandler, handler)
+
+        fields = {"action": "POLL_EXTERNAL_STATE", "trigger": "web_ui_poll_identity"}
+        self.assertEqual(structured_log_level("WARN", fields), logging.DEBUG)
+        logger.setLevel(logging.INFO)
+        log_structured(logger, "WARN", **fields)
+        self.assertEqual(captured, [])
+
+        logger.setLevel(logging.DEBUG)
+        log_structured(logger, "WARN", **fields)
+        self.assertEqual([record.levelno for record in captured], [logging.DEBUG])
+
     def test_application_code_uses_one_structured_log_wire_format(self) -> None:
         raw_log_calls: list[str] = []
         deprecated_fields: list[str] = []
         redundant_info_overrides: list[str] = []
         invalid_tags: list[str] = []
         missing_action: list[str] = []
+        ambiguous_target_ips: list[str] = []
 
         for path in _APP_ROOT.rglob("*.py"):
             if path.name == "structured_logging.py":
@@ -98,6 +137,8 @@ class StructuredLoggingContractTests(unittest.TestCase):
                         deprecated_fields.append(
                             f"{path.relative_to(_PROJECT_ROOT)}:{node.lineno}:{keyword.arg}"
                         )
+                    if keyword.arg == "target_ip" and _is_current_ip_expression(keyword.value):
+                        ambiguous_target_ips.append(f"{path.relative_to(_PROJECT_ROOT)}:{node.lineno}")
                     if (
                         keyword.arg == "log_level"
                         and isinstance(keyword.value, ast.Constant)
@@ -110,6 +151,7 @@ class StructuredLoggingContractTests(unittest.TestCase):
         self.assertEqual(redundant_info_overrides, [])
         self.assertEqual(invalid_tags, [])
         self.assertEqual(missing_action, [])
+        self.assertEqual(ambiguous_target_ips, [])
 
 
 if __name__ == "__main__":

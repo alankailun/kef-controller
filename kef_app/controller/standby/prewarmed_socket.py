@@ -363,7 +363,7 @@ class PrewarmedStandbySocketMonitorMixin:
                     reason=reason,
                     step="keepalive",
                     status="replaced_failed_connection",
-                    target_ip=target_ip,
+                    current_ip=target_ip,
                     error=repr(exc),
                 )
             else:
@@ -454,7 +454,7 @@ class PrewarmedStandbySocketMonitorMixin:
             reason=reason,
             step="keepalive",
             status="ready",
-            target_ip=target_ip,
+            current_ip=target_ip,
             duration_ms=duration_ms,
             mode=("persistent_socket" if self.config.prewarmed_persist_socket else "short_connection"),
         )
@@ -488,7 +488,7 @@ class PrewarmedStandbySocketMonitorMixin:
             step="keepalive",
             status="failed",
             failures=failures,
-            target_ip=target_ip,
+            current_ip=target_ip,
             next_delay_s=f"{next_delay_s:.1f}",
             error=repr(exc),
         )

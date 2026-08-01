@@ -4,12 +4,13 @@ from typing import Optional
 
 from ...devices.scan import is_routable_ipv4
 from ...devices.speaker_models import SpeakerIdentity, normalize_mac
+from ...structured_logging import is_ui_poll_trigger
 
 
 class ControllerIdentityStateMixin:
     @staticmethod
     def _is_ui_poll_trigger(trigger: str) -> bool:
-        return str(trigger).startswith(("ui_home_poll", "ui_tray_poll", "web_ui_poll"))
+        return is_ui_poll_trigger(trigger)
 
     def get_current_kef_ip(self) -> str:
         with self._ip_lock:
@@ -21,6 +22,12 @@ class ControllerIdentityStateMixin:
             return configured_mac
         with self._ip_lock:
             return self._identity.target_mac
+
+    def get_current_kef_target(self) -> tuple[str, str]:
+        """Snapshot the current IP and effective target MAC under one lock."""
+        configured_mac = normalize_mac(self.config.kef_mac)
+        with self._ip_lock:
+            return self._identity.current_ip, configured_mac or self._identity.target_mac
 
     def get_current_identity(self) -> SpeakerIdentity:
         with self._ip_lock:
@@ -44,7 +51,7 @@ class ControllerIdentityStateMixin:
                 action="SELECT_DEVICE",
                 trigger=trigger,
                 cause="invalid_ip",
-                ip=ip or "<empty>",
+                requested_ip=ip or "<empty>",
             )
             return False
 
@@ -141,22 +148,18 @@ class ControllerIdentityStateMixin:
             if offline:
                 self._identity.available = False
 
-        # The UI poll already emits one rate-limited network-error summary.
-        # Repeating this second identity line every two seconds made a normal
-        # temporary Wi-Fi outage look like an application failure.
-        if not self._is_ui_poll_trigger(trigger):
-            self._log_structured(
-                "WARN",
-                action="IDENTITY_PROBE",
-                step="mark_failure",
-                reason=reason,
-                trigger=trigger,
-                cause=cause,
-                current_ip=current_ip,
-                failures=failures,
-                threshold=threshold,
-                offline=offline,
-            )
+        self._log_structured(
+            "WARN",
+            action="IDENTITY_PROBE",
+            step="mark_failure",
+            reason=reason,
+            trigger=trigger,
+            cause=cause,
+            current_ip=current_ip,
+            failures=failures,
+            threshold=threshold,
+            offline=offline,
+        )
         if availability_changed:
             self._emit_identity_changed()
         return availability_changed
@@ -310,7 +313,7 @@ class ControllerIdentityStateMixin:
                 step="configured_device_target",
                 trigger=trigger,
                 cause="invalid_configured_ip",
-                ip=ignored_ip,
+                configured_ip=ignored_ip,
             )
 
         if not (ip_changed or mac_changed):

@@ -149,7 +149,7 @@ class HeadlessRuntime:
                 trigger="initial_prebuild",
                 step="prebuild_connection",
                 status="ready",
-                target_ip=self.controller.get_current_kef_ip() or "<empty>",
+                current_ip=self.controller.get_current_kef_ip() or "<empty>",
             )
         except Exception as exc:
             self._log(
@@ -157,7 +157,7 @@ class HeadlessRuntime:
                 reason="startup",
                 trigger="initial_prebuild",
                 cause="connection_prebuild_failed",
-                target_ip=self.controller.get_current_kef_ip() or "<empty>",
+                current_ip=self.controller.get_current_kef_ip() or "<empty>",
                 error=repr(exc),
             )
             self.controller.reset_speaker()
@@ -178,7 +178,7 @@ class HeadlessRuntime:
                         trigger="initial_prebuild_recovery",
                         step="prebuild_connection",
                         status="recovered",
-                        target_ip=self.controller.get_current_kef_ip() or "<empty>",
+                        current_ip=self.controller.get_current_kef_ip() or "<empty>",
                     )
                 except Exception as exc2:
                     self._log(
@@ -186,7 +186,7 @@ class HeadlessRuntime:
                         reason="startup",
                         trigger="initial_prebuild_recovery",
                         cause="connection_prebuild_failed_after_recovery",
-                        target_ip=self.controller.get_current_kef_ip() or "<empty>",
+                        current_ip=self.controller.get_current_kef_ip() or "<empty>",
                         error=repr(exc2),
                     )
                     self.controller.reset_speaker()

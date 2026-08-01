@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import os
 import subprocess
 import sys
 import time
@@ -18,7 +19,7 @@ from ..storage import UserConfigStore
 from ..structured_logging import log_structured
 from .controller_events import ControllerEventBridge
 from .logs import UILogHandler
-from .web_api_server import WebApiServer
+from .web_api_server import WEBVIEW_HOST_URL_ENV, WebApiServer
 from .web_bridge import WebControllerBridge
 
 
@@ -157,14 +158,25 @@ class KefMainWindow(QObject):
         command = [sys.executable]
         if not getattr(sys, "frozen", False):
             command.append(str(Path(__file__).resolve().parents[2] / "main_gui.py"))
-        command.extend(["--webview-host", self._server.url])
+        # Keep the credential out of the child command line. The host consumes
+        # and removes this environment variable before it starts WebView2.
+        host_environment = os.environ.copy()
+        host_environment[WEBVIEW_HOST_URL_ENV] = self._server.url
+        command.append("--webview-host")
         log_structured(
-            self._log, "EVENT", action="WEBVIEW_HOST", reason="window_show", name="HOST_LAUNCH", url=self._server.url
+            self._log,
+            "EVENT",
+            action="WEBVIEW_HOST",
+            reason="window_show",
+            name="HOST_LAUNCH",
+            url=self._server.origin,
+            auth="token",
         )
         self._host_process = subprocess.Popen(
             command,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             close_fds=True,
+            env=host_environment,
         )
         self._host_hwnd = 0
         self._find_attempts = 0

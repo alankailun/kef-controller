@@ -662,7 +662,7 @@
     const rawLevel = structured ? structured[3] : (prefixLevel ? prefixLevel[1] : "INFO");
     let lvl = rawLevel === "WARNING" ? "WARN" : rawLevel === "CRITICAL" ? "ERROR" : rawLevel;
     const category = categorized.match(/^(BEGIN|STEP|END|EVENT|STATE|SKIP)\s/);
-    if (lvl === "INFO" && category) {
+    if ((lvl === "INFO" || lvl === "DEBUG") && category) {
       lvl = category[1] === "EVENT" ? "EVENT" : category[1] === "STATE" ? "STATE" : "STEP";
     }
     if (!SEVERITY.includes(lvl)) lvl = "INFO";

@@ -16,7 +16,7 @@ class ControllerDeviceWakeMixin:
             step="wait_reachable",
             status="begin",
             timeout_s=f"{timeout:.2f}",
-            target_ip=self.get_current_kef_ip(),
+            current_ip=self.get_current_kef_ip(),
             mono=f"{start_mono:.3f}",
         )
 
@@ -40,7 +40,7 @@ class ControllerDeviceWakeMixin:
                     elapsed_ms=int((self.mono() - start_mono) * 1000),
                     last_error=last_error,
                     ip_refresh_attempted=refreshed,
-                    target_ip=self.get_current_kef_ip(),
+                    current_ip=self.get_current_kef_ip(),
                 )
                 return True
 
@@ -52,7 +52,7 @@ class ControllerDeviceWakeMixin:
                         step="wait_reachable",
                         status="reachable",
                         elapsed_ms=int((self.mono() - start_mono) * 1000),
-                        target_ip=target_ip,
+                        current_ip=target_ip,
                     )
                     return True
             except OSError as exc:
@@ -65,7 +65,7 @@ class ControllerDeviceWakeMixin:
                         status="waiting",
                         poll_s=f"{self.config.reachability_poll_interval:.2f}",
                         last_error=last_error,
-                        target_ip=self.get_current_kef_ip(),
+                        current_ip=self.get_current_kef_ip(),
                     )
                 if not self._interruptible_sleep(
                     min(self.config.reachability_poll_interval, remaining),
@@ -114,7 +114,7 @@ class ControllerDeviceWakeMixin:
                 "STEP",
                 step="set_input_source",
                 target_input=target_input,
-                target_ip=self.get_current_kef_ip(),
+                current_ip=self.get_current_kef_ip(),
             )
 
             if not self._ensure_target_identity("WAKE", reason, "wake_before_wait"):

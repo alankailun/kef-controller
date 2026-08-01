@@ -6,9 +6,6 @@ import threading
 
 from PySide6.QtCore import QObject, Signal
 
-from .log_history import should_hide_from_ui_log
-
-
 class _Emitter(QObject):
     new_line = Signal(str)
 
@@ -35,8 +32,6 @@ class UILogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            if should_hide_from_ui_log(record.getMessage()):
-                return
             line = self.format(record)
             with self._history_lock:
                 self._recent_lines.append(line)

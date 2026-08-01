@@ -134,7 +134,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         *,
         deadline_mono: float | None,
         step: str,
-        target_ip: str = "",
+        current_ip: str = "",
     ) -> str | None:
         if deadline_mono is None:
             return None
@@ -155,7 +155,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             step=step,
             cause=abort_reason,
             deadline_mono=f"{deadline_mono:.3f}",
-            target_ip=target_ip or "<empty>",
+            current_ip=current_ip or "<empty>",
         )
         return outcome
 
@@ -216,7 +216,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
 
     def _execute_end_session(self, reason: str, flags: str) -> tuple[bool, str]:
         deadline_mono = self.mono() + _ENDSESSION_FAST_STANDBY_BUDGET_S
-        current_ip = self.get_current_kef_ip()
+        current_ip, target_mac = self.get_current_kef_target()
         self._log_standby(
             "STEP",
             _ENDSESSION_STANDBY_ACTION,
@@ -225,8 +225,8 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             step="shutdown_request",
             status="begin",
             flags=flags,
-            target_ip=current_ip or "<empty>",
-            target_mac=self.get_effective_target_mac() or "<empty>",
+            current_ip=current_ip or "<empty>",
+            target_mac=target_mac or "<empty>",
             identity_check="cached_target_only",
             verify_standby=False,
             deadline_mono=f"{deadline_mono:.3f}",
@@ -259,7 +259,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
                 step="before_fast_send",
                 cause=abort_reason,
                 flags=flags,
-                target_ip=current_ip,
+                current_ip=current_ip,
                 deadline_mono=f"{deadline_mono:.3f}",
                 budget_ms=_ENDSESSION_FAST_STANDBY_BUDGET_MS,
             )
@@ -293,7 +293,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             status="standard_fallback_disabled",
             cause="endsession_fast_send_failed",
             flags=flags,
-            target_ip=current_ip,
+            current_ip=current_ip,
             deadline_mono=f"{deadline_mono:.3f}",
             budget_ms=_ENDSESSION_FAST_STANDBY_BUDGET_MS,
         )
@@ -307,7 +307,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
         reason: str,
         deadline_mono: float,
     ) -> tuple[bool, str]:
-        current_ip = self.get_current_kef_ip()
+        current_ip, target_mac = self.get_current_kef_target()
         self._log_standby(
             "STEP",
             policy,
@@ -315,8 +315,8 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             reason,
             step=policy.begin_step,
             status="begin",
-            target_ip=current_ip or "<empty>",
-            target_mac=self.get_effective_target_mac() or "<empty>",
+            current_ip=current_ip or "<empty>",
+            target_mac=target_mac or "<empty>",
             identity_check="cached_target_only",
             verify_standby=False,
         )
@@ -337,7 +337,7 @@ class ControllerDeviceStandbyMixin(ControllerFastStandbyMixin):
             reason,
             deadline_mono=deadline_mono,
             step="before_fast_send",
-            target_ip=current_ip,
+            current_ip=current_ip,
         )
         if outcome is not None:
             return power_action_outcome_is_success(outcome), outcome

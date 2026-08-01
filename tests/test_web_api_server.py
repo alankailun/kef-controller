@@ -26,6 +26,8 @@ class WebApiServerTests(unittest.TestCase):
             server = WebApiServer(root, object())
             server.start()
             try:
+                self.assertTrue(server.origin.endswith("/"))
+                self.assertNotIn("token=", server.origin)
                 with urlopen(urljoin(server.url, "styles.css")) as response:
                     self.assertEqual(response.headers.get_content_type(), "text/css")
                 with urlopen(urljoin(server.url, "texts.js")) as response:
@@ -40,6 +42,8 @@ class WebApiServerTests(unittest.TestCase):
         try:
             base = server.url.split("?", 1)[0]
             token = parse_qs(urlparse(server.url).query)["token"][0]
+            self.assertEqual(server.origin, base)
+            self.assertNotIn(token, server.origin)
             request = Request(
                 f"{base}api/refresh?token={token}",
                 data=b'{"args":[]}',
