@@ -2139,6 +2139,61 @@ class PowerEventLogicTests(unittest.TestCase):
             status="success",
         )
 
+    def test_identity_probe_failure_logs_only_the_first_failure_and_offline_threshold(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", identity_probe_failure_threshold=3)
+        controller.log.setLevel(logging.DEBUG)
+
+        class CaptureHandler(logging.Handler):
+            def __init__(self):
+                super().__init__()
+                self.records: list[logging.LogRecord] = []
+
+            def emit(self, record: logging.LogRecord) -> None:
+                self.records.append(record)
+
+        capture = CaptureHandler()
+        controller.log.addHandler(capture)
+        self.addCleanup(controller.log.removeHandler, capture)
+
+        for _ in range(5):
+            controller.record_identity_probe_failure("ui_poll", "web_ui_poll", "identity_refresh_failed")
+
+        warnings = [
+            record for record in capture.records if record.getMessage().startswith("WARN action=IDENTITY_PROBE")
+        ]
+        self.assertEqual([record.levelno for record in warnings], [logging.WARNING, logging.WARNING])
+        self.assertIn("failures=1", warnings[0].getMessage())
+        self.assertIn("failures=3", warnings[1].getMessage())
+
+    def test_ui_poll_recovery_skips_use_the_shared_debug_policy(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
+        controller._log_structured = Mock()
+        controller.get_speaker = Mock(return_value=object())
+        controller._backend.capture_identity = Mock(return_value=None)
+
+        with patch("kef_app.controller.discovery.identity_probe.identify_kef_device", return_value=None):
+            self.assertFalse(controller.capture_identity_from_current_ip("ui_poll", "web_ui_poll_identity"))
+
+        with controller._ip_lock:
+            controller._identity.last_mac_discovery_mono = controller.mono()
+            controller._identity.last_blind_discovery_mono = controller.mono()
+        self.assertFalse(controller.maybe_refresh_kef_ip_by_mac("ui_poll", "web_ui_poll_refresh"))
+        self.assertFalse(controller.maybe_refresh_kef_ip_by_blind("ui_poll", "web_ui_poll_refresh"))
+
+        skip_calls = [
+            call
+            for call in controller._log_structured.mock_calls
+            if call.args == ("SKIP",) and str(call.kwargs.get("trigger", "")).startswith("web_ui_poll")
+        ]
+        skip_causes = {
+            call.kwargs.get("cause")
+            for call in skip_calls
+        }
+        self.assertTrue(
+            {"identity_probe_failed", "cooldown", "blind_discovery_cooldown"}.issubset(skip_causes)
+        )
+        self.assertTrue(all("log_level" not in call.kwargs for call in skip_calls))
+
     def test_action_logger_binds_context_and_centralizes_default_mono(self):
         controller = self.make_controller()
         controller.log.setLevel(logging.DEBUG)

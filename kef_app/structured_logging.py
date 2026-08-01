@@ -30,6 +30,9 @@ _UI_POLL_TRIGGER_PREFIXES: Final[tuple[str, ...]] = (
     "ui_tray_poll",
     "web_ui_poll",
 )
+# A UI poll may escalate into an offline warning or a recovery operation. Its
+# repeated progress and "not run this time" diagnostics are noise at INFO.
+_UI_POLL_DEMOTABLE_TAGS: Final[frozenset[str]] = frozenset({"STEP", "SKIP"})
 
 
 def coerce_log_level(level: object, *, default: int = logging.INFO) -> int:
@@ -53,14 +56,19 @@ def structured_log_level(tag: str, fields: Mapping[str, object] | None = None) -
     often explains why a requested speaker action did not happen, so hiding it
     behind DEBUG leaves field diagnosis incomplete.
 
-    UI polls are the exception: they are frequent background observations, not
-    user actions.  Keeping every record at DEBUG preserves full diagnostics on
-    demand without continuously writing poll noise to disk at the default INFO
-    verbosity.
+    Routine UI-poll steps and skipped branches are the exception: they are
+    frequent background observations, not user actions.  Warnings and
+    recovery boundaries retain their normal severity so an offline speaker
+    remains diagnosable at the default INFO verbosity.
     """
-    if fields is not None and is_ui_poll_trigger(fields.get("trigger")):
+    normalized_tag = str(tag or "").upper()
+    if (
+        fields is not None
+        and normalized_tag in _UI_POLL_DEMOTABLE_TAGS
+        and is_ui_poll_trigger(fields.get("trigger"))
+    ):
         return logging.DEBUG
-    return _TAG_LOG_LEVELS.get(str(tag or "").upper(), logging.INFO)
+    return _TAG_LOG_LEVELS.get(normalized_tag, logging.INFO)
 
 
 def format_structured_message(tag: str, fields: Mapping[str, object]) -> str:

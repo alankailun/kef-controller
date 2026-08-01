@@ -361,6 +361,35 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
             self.assertEqual(controller._prewarmed.failures, 1)
         healthy_socket.close.assert_not_called()
 
+    def test_keepalive_failure_logs_only_the_first_and_every_third_failure_at_info(self):
+        controller = self.make_controller(80, prewarmed_persist_socket=True)
+        controller.log.setLevel(logging.DEBUG)
+
+        class CaptureHandler(logging.Handler):
+            def __init__(self) -> None:
+                super().__init__()
+                self.records: list[logging.LogRecord] = []
+
+            def emit(self, record: logging.LogRecord) -> None:
+                self.records.append(record)
+
+        capture = CaptureHandler()
+        controller.log.addHandler(capture)
+        self.addCleanup(controller.log.removeHandler, capture)
+
+        for _ in range(6):
+            controller._record_prewarmed_keepalive_failure("unit_test", "127.0.0.1", TimeoutError("timed out"))
+
+        records = [
+            record
+            for record in capture.records
+            if record.getMessage().startswith("STEP action=PREWARMED_STANDBY_SOCKET")
+        ]
+        self.assertEqual(
+            [record.levelno for record in records],
+            [logging.INFO, logging.DEBUG, logging.INFO, logging.DEBUG, logging.DEBUG, logging.INFO],
+        )
+
     def test_cached_prewarmed_send_uses_snapshot_bytes_and_matching_socket(self):
         with _LoopbackHttpSpeaker() as speaker:
             controller = self.make_controller(speaker.port, prewarmed_persist_socket=True)

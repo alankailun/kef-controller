@@ -478,7 +478,7 @@ class PrewarmedStandbySocketMonitorMixin:
         log_level = (
             "info"
             if failures in {1, _PREWARM_FAILURE_LOG_THRESHOLD} or failures % _PREWARM_FAILURE_LOG_THRESHOLD == 0
-            else None
+            else "debug"
         )
         self._log_structured(
             "STEP",

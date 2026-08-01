@@ -9,6 +9,7 @@ from pykefcontrol.kef_connector import KefConnector
 from ..network_timeout import temporary_socket_timeout
 from ...devices.transport import is_host_unreachable
 from ...devices.speaker_models import normalize_input_source
+from ...structured_logging import is_ui_poll_trigger
 
 
 T = TypeVar("T")
@@ -69,7 +70,7 @@ class ControllerDeviceControlsMixin:
                     return read_value(True), True
                 except Exception as retry_error:
                     error = retry_error
-            if self._is_ui_poll_trigger(trigger):
+            if is_ui_poll_trigger(trigger):
                 self._log_ui_poll_failure(reason=reason, trigger=trigger, step=step, error=error)
                 return None, False
             self._log_structured(

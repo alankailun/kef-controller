@@ -4,14 +4,9 @@ from typing import Optional
 
 from ...devices.scan import is_routable_ipv4
 from ...devices.speaker_models import SpeakerIdentity, normalize_mac
-from ...structured_logging import is_ui_poll_trigger
 
 
 class ControllerIdentityStateMixin:
-    @staticmethod
-    def _is_ui_poll_trigger(trigger: str) -> bool:
-        return is_ui_poll_trigger(trigger)
-
     def get_current_kef_ip(self) -> str:
         with self._ip_lock:
             return self._identity.current_ip
@@ -144,22 +139,27 @@ class ControllerIdentityStateMixin:
             self._identity.probe_failures += 1
             failures = self._identity.probe_failures
             offline = failures >= threshold
+            threshold_crossed = failures == threshold
             availability_changed = offline and self._identity.available
             if offline:
                 self._identity.available = False
 
-        self._log_structured(
-            "WARN",
-            action="IDENTITY_PROBE",
-            step="mark_failure",
-            reason=reason,
-            trigger=trigger,
-            cause=cause,
-            current_ip=current_ip,
-            failures=failures,
-            threshold=threshold,
-            offline=offline,
-        )
+        # UI polls repeat every few seconds.  The first failure and the point
+        # at which it becomes offline are useful state transitions; subsequent
+        # identical failures only displace the original diagnosis.
+        if failures == 1 or threshold_crossed:
+            self._log_structured(
+                "WARN",
+                action="IDENTITY_PROBE",
+                step="mark_failure",
+                reason=reason,
+                trigger=trigger,
+                cause=cause,
+                current_ip=current_ip,
+                failures=failures,
+                threshold=threshold,
+                offline=offline,
+            )
         if availability_changed:
             self._emit_identity_changed()
         return availability_changed

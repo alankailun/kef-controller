@@ -81,7 +81,7 @@ class StructuredLoggingContractTests(unittest.TestCase):
 
         self.assertEqual([record.levelno for record in captured], [logging.INFO, logging.INFO])
 
-    def test_ui_poll_records_are_available_only_at_debug_verbosity(self) -> None:
+    def test_ui_poll_steps_and_skips_are_available_only_at_debug_verbosity(self) -> None:
         logger = logging.getLogger("tests.structured_logging.ui_poll")
         logger.handlers.clear()
         logger.propagate = False
@@ -96,14 +96,24 @@ class StructuredLoggingContractTests(unittest.TestCase):
         self.addCleanup(logger.removeHandler, handler)
 
         fields = {"action": "POLL_EXTERNAL_STATE", "trigger": "web_ui_poll_identity"}
-        self.assertEqual(structured_log_level("WARN", fields), logging.DEBUG)
+        self.assertEqual(structured_log_level("STEP", fields), logging.DEBUG)
+        self.assertEqual(structured_log_level("SKIP", fields), logging.DEBUG)
         logger.setLevel(logging.INFO)
-        log_structured(logger, "WARN", **fields)
+        log_structured(logger, "STEP", **fields)
+        log_structured(logger, "SKIP", **fields)
         self.assertEqual(captured, [])
 
         logger.setLevel(logging.DEBUG)
-        log_structured(logger, "WARN", **fields)
-        self.assertEqual([record.levelno for record in captured], [logging.DEBUG])
+        log_structured(logger, "STEP", **fields)
+        log_structured(logger, "SKIP", **fields)
+        self.assertEqual([record.levelno for record in captured], [logging.DEBUG, logging.DEBUG])
+
+    def test_ui_poll_failures_and_recovery_records_keep_normal_severity(self) -> None:
+        fields = {"action": "DISCOVER_IP", "trigger": "web_ui_poll_identity"}
+
+        self.assertEqual(structured_log_level("WARN", fields), logging.WARNING)
+        self.assertEqual(structured_log_level("BEGIN", fields), logging.INFO)
+        self.assertEqual(structured_log_level("END", fields), logging.INFO)
 
     def test_application_code_uses_one_structured_log_wire_format(self) -> None:
         raw_log_calls: list[str] = []
