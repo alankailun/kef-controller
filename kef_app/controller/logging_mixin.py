@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import logging
 import threading
 import time
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Mapping, Optional
+
+from ..structured_logging import coerce_log_level, format_structured_message, structured_log_level
 
 _SLEEP_CROSSING_MIN_DURATION_S = 5.0
 _NETWORK_INTERFACE_DEDUP_WINDOW_S = 0.2
@@ -25,7 +26,12 @@ class BoundStructuredLogger:
             names = ", ".join(sorted(overlap))
             # Logging must never stop a power action. Keep the bound context
             # authoritative and surface the programmer error separately.
-            self.owner.log.warning("Bound log fields ignored conflicting values: %s", names)
+            self.owner._log_structured(
+                "WARN",
+                action="STRUCTURED_LOGGING",
+                cause="bound_fields_conflict",
+                conflicting_fields=names,
+            )
         payload = dict(self.fields)
         payload.update((key, value) for key, value in fields.items() if key not in self.fields)
         self.owner._log_structured(tag, log_level=log_level, mono=mono, **payload)
@@ -50,6 +56,22 @@ def _get_pykefcontrol_version() -> str:
 
 
 class ControllerLoggingMixin:
+    """Controller-side structured logging with a stable envelope.
+
+    Core envelope fields are intentionally small and have fixed meanings:
+
+    * ``action`` is the stable operation identifier (for example ``WAKE``).
+    * ``gen`` is that power action's generation, when the operation has one.
+    * ``reason`` is the external initiating event (``startup``, ``web_ui``,
+      or a Windows event name).
+    * ``trigger`` is the specific caller or observation path under that
+      initiating event.  New code must use ``trigger`` rather than ``source``.
+
+    Result fields retain their existing, non-interchangeable roles: ``status``
+    describes a step's observed result, ``cause`` explains a skipped, retried,
+    warned, or aborted branch, and ``outcome`` is reserved for an action's END
+    record.  Operation-specific payload fields remain free-form by design.
+    """
     def mono(self) -> float:
         return time.monotonic()
 
@@ -57,29 +79,10 @@ class ControllerLoggingMixin:
     def _coerce_log_level(level: object) -> Optional[int]:
         if level is None:
             return None
-        if isinstance(level, int):
-            return level
-        normalized = str(level).strip().upper()
-        return getattr(logging, normalized, None)
+        return coerce_log_level(level)
 
     def _get_structured_log_level(self, tag: str, fields: dict[str, object]) -> int:
-        if tag in {"WARN", "RETRY", "ABORT"}:
-            return logging.WARNING
-        if tag in {"BEGIN", "END", "EVENT", "STATE"}:
-            return logging.INFO
-        if tag == "SKIP":
-            return logging.DEBUG
-        if tag == "STEP":
-            action = str(fields.get("action") or "")
-            step = str(fields.get("step") or "")
-            if (
-                action in {"EARLY_STANDBY", "STANDBY", "ENDSESSION_STANDBY"}
-                and step == "shutdown_request"
-                and str(fields.get("status") or "") == "sent"
-            ):
-                return logging.INFO
-            return logging.DEBUG
-        return logging.INFO
+        return structured_log_level(tag)
 
     def _log_structured(self, tag: str, *, log_level: object = None, mono: object = None, **fields):
         self._write_structured_log(tag, log_level=log_level, mono=mono, **fields)
@@ -100,15 +103,7 @@ class ControllerLoggingMixin:
         elif "mono" not in fields:
             fields["mono"] = f"{self.mono():.3f}"
 
-        parts = []
-        for key, value in fields.items():
-            if value is None:
-                continue
-            parts.append(f"{key}={value}")
-        if parts:
-            self.log.log(log_level_value, f"{tag} " + " | ".join(parts))
-        else:
-            self.log.log(log_level_value, tag)
+        self.log.log(log_level_value, format_structured_message(tag, fields))
 
     def _log_action_begin(self, action: str, generation: int | None, reason: str) -> float:
         start_mono = self.mono()
@@ -150,7 +145,6 @@ class ControllerLoggingMixin:
 
         self._action_log(action, generation, reason).write(
             "STEP",
-            log_level="info",
             step="system_sleep_crossed",
             action_crossed_system_sleep=True,
             resumed_while_action_pending=True,
@@ -161,50 +155,46 @@ class ControllerLoggingMixin:
             mono=f"{end_mono:.3f}",
         )
 
-    def _persist_runtime_state(self, source: str) -> bool:
+    def _persist_runtime_state(self, trigger: str) -> bool:
         if self._state_store is None:
             return False
         identity = self.get_current_identity()
         identity.matched_by = self._identity.last_matched_by or identity.matched_by
-        return self._state_store.save(identity, source=source)
+        return self._state_store.save(identity, trigger=trigger)
 
     def log_banner(self):
         c = self.config
         pykefcontrol_version = _get_pykefcontrol_version()
 
-        self.log.info("=" * 64)
-        self.log.info(
-            f"  {c.speaker_model_label} power controller | "
-            f"backend={c.backend_name} / pykefcontrol={pykefcontrol_version}"
+        self._log_structured(
+            "EVENT",
+            action="PROCESS",
+            reason="startup",
+            name="CONTROLLER_BANNER",
+            speaker_model=c.speaker_model_label,
+            backend=c.backend_name,
+            pykefcontrol=pykefcontrol_version,
+            target_ip=self.get_current_kef_ip() or c.kef_ip or "<empty>",
+            target_mac=c.kef_mac or self.get_target_kef_mac() or "<empty>",
+            wake_on_startup=c.wake_on_startup,
+            startup_delay_s=c.startup_delay,
+            resume_delay_s=c.resume_wake_delay,
+            unlock_delay_s=c.unlock_wake_delay,
+            home_poll_s=c.home_external_poll_interval,
+            tray_poll_s=c.tray_identity_poll_interval,
+            home_event_poll=c.home_event_poll_enabled,
+            event_timeout_s=c.home_event_poll_timeout,
+            event_reconcile_s=c.home_event_reconcile_interval,
+            event_recovery_failures=c.speaker_event_recovery_failure_threshold,
+            offline_threshold=c.identity_probe_failure_threshold,
+            prewarmed_enabled=c.prewarmed_standby_enabled,
+            prewarmed_interval_s=c.prewarmed_keepalive_interval_s,
+            prewarmed_deadline_s=c.prewarmed_send_deadline_s,
+            prewarmed_persist_socket=c.prewarmed_persist_socket,
+            config_file=c.config_file,
+            state_file=c.state_file,
+            log_file=c.log_file,
         )
-        self.log.info(
-            "  Speaker target: "
-            f"ip={self.get_current_kef_ip() or c.kef_ip or '<empty>'} | "
-            f"target_mac={c.kef_mac or self.get_target_kef_mac() or '<empty>'}"
-        )
-        self.log.info(
-            "  Startup / wake: "
-            f"wake_on_startup={c.wake_on_startup} | startup_delay={c.startup_delay}s | "
-            f"resume_delay={c.resume_wake_delay}s | unlock_delay={c.unlock_wake_delay}s"
-        )
-        self.log.info(
-            "  Polling / logging: "
-            f"home_poll={c.home_external_poll_interval}s | tray_poll={c.tray_identity_poll_interval}s | "
-            f"home_event_poll={c.home_event_poll_enabled} | event_timeout={c.home_event_poll_timeout}s | "
-            f"event_reconcile={c.home_event_reconcile_interval}s | "
-            f"event_recovery_failures={c.speaker_event_recovery_failure_threshold} | "
-            f"offline_threshold={c.identity_probe_failure_threshold}"
-        )
-        self.log.info(
-            "  Standby prewarm: "
-            f"enabled={c.prewarmed_standby_enabled} | interval={c.prewarmed_keepalive_interval_s}s | "
-            f"deadline={c.prewarmed_send_deadline_s}s | persist_socket={c.prewarmed_persist_socket}"
-        )
-        self.log.info(
-            "  Files: "
-            f"config={c.config_file} | state={c.state_file} | log={c.log_file}"
-        )
-        self.log.info("=" * 64)
 
     def log_power_event(self, name: str, wparam: int, lparam: int, *, event_mono: float | None = None):
         event_mono = self.mono() if event_mono is None else event_mono
@@ -212,6 +202,7 @@ class ControllerLoggingMixin:
 
         self._log_structured(
             "EVENT",
+            action="WINDOW_POWER_EVENT",
             kind="POWER",
             name=name,
             wparam=f"0x{wparam:04X}",
@@ -245,6 +236,7 @@ class ControllerLoggingMixin:
     def _log_power_setting_event_line(self, change, wparam: int, lparam: int, event_mono: float) -> None:
         self._log_structured(
             "EVENT",
+            action="WINDOW_POWER_EVENT",
             kind="POWER_SETTING",
             name=change.name,
             guid=change.guid,
@@ -273,6 +265,7 @@ class ControllerLoggingMixin:
     def _log_session_event_line(self, name: str, wparam: int, lparam: int, event_mono: float) -> None:
         self._log_structured(
             "EVENT",
+            action="WINDOW_SESSION_EVENT",
             kind="SESSION",
             name=name,
             wparam=f"0x{wparam:04X}",
@@ -306,7 +299,7 @@ class ControllerLoggingMixin:
 
         self._log_structured(
             "EVENT",
-            log_level="info",
+            action="NETWORK_INTERFACE_EVENT",
             kind="NETWORK",
             name="INTERFACE_CHANGE",
             notification=notification,
@@ -423,7 +416,7 @@ class ControllerLoggingMixin:
 
         self._log_structured(
             "EVENT",
-            log_level="info",
+            action="NETWORK_INTERFACE_EVENT",
             kind="NETWORK",
             name="INTERFACE_CHANGE_DEDUP",
             notification=summary.get("notification", "<unknown>"),

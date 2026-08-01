@@ -297,7 +297,6 @@ class PrewarmedStandbySocketMonitorMixin:
     def _run_prewarmed_standby_socket_monitor(self, reason: str) -> None:
         self._log_structured(
             "STEP",
-            log_level="info",
             action="PREWARMED_STANDBY_SOCKET",
             reason=reason,
             step="monitor",
@@ -318,7 +317,6 @@ class PrewarmedStandbySocketMonitorMixin:
             self._finish_prewarmed_standby_socket_monitor()
             self._log_structured(
                 "STEP",
-                log_level="info",
                 action="PREWARMED_STANDBY_SOCKET",
                 reason=reason,
                 step="monitor",
@@ -361,7 +359,6 @@ class PrewarmedStandbySocketMonitorMixin:
                     return self._record_prewarmed_keepalive_failure(reason, target_ip, replenish_exc)
                 self._log_structured(
                     "STEP",
-                    log_level="info",
                     action="PREWARMED_STANDBY_SOCKET",
                     reason=reason,
                     step="keepalive",
@@ -453,7 +450,6 @@ class PrewarmedStandbySocketMonitorMixin:
 
         self._log_structured(
             "STEP",
-            log_level="info",
             action="PREWARMED_STANDBY_SOCKET",
             reason=reason,
             step="keepalive",
@@ -693,7 +689,7 @@ class PrewarmedStandbySocketMonitorMixin:
         }
         if event_mono > 0:
             fields["since_windows_event_ms"] = int(max(0.0, started - event_mono) * 1000)
-        self._log_structured("STEP", log_level="info", **fields)
+        self._log_structured("STEP", **fields)
 
         if self.config.prewarmed_persist_socket:
             outcome = self._send_standby_over_prewarmed_pool(

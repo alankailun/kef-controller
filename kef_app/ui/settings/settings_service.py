@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from ...config import AppConfig
+from ...structured_logging import log_structured
 from ...storage import UserConfigStore
 from ...devices.speaker_models import INPUT_SOURCE_OPTIONS
 from ...platform.windows import (
@@ -254,9 +255,14 @@ def save_settings_and_sync_startup(
         if config_ok:
             config_ok = config_store.save(updated)
         if config_ok:
-            log.info(
-                "Windows startup retained its active registration after an update attempt | "
-                f"method={actual_startup_mode}"
+            log_structured(
+                log,
+                "STEP",
+                action="STARTUP_REGISTRATION",
+                reason="startup_update",
+                step="reconcile",
+                status="retained_existing_registration",
+                actual_mode=actual_startup_mode,
             )
 
     return SettingsSaveResult(

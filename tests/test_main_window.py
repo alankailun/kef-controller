@@ -80,7 +80,7 @@ class KefMainWindowHostTests(unittest.TestCase):
         window._terminate_host_tree = Mock()
         window._host_window_responds = Mock(return_value=True)
 
-        with patch("kef_app.ui.main_window.time.monotonic", side_effect=[191.0, 206.1, 206.1]):
+        with patch("kef_app.ui.main_window.time.monotonic", side_effect=[191.0, 191.0, 206.1, 206.1, 206.1]):
             self.assertIsNone(window._host_restart_reason(True))
             reason = window._host_restart_reason(True)
             self.assertEqual(reason, "stopped sending UI heartbeats for 91.0s")

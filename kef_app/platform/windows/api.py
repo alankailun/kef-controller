@@ -9,6 +9,8 @@ from ctypes import wintypes
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+from ...structured_logging import log_structured
+
 MB_ICONINFORMATION = 0x40
 ERROR_ALREADY_EXISTS = 183
 ERROR_SUCCESS = 0
@@ -374,11 +376,13 @@ def ensure_single_instance(log, mutex_name: str) -> Optional[int]:
     last_error = ctypes.get_last_error()
 
     if not handle:
-        log.info(f"Failed to create single-instance mutex; skipping the check | err={last_error}")
+        log_structured(
+            log, "WARN", action="SINGLE_INSTANCE", reason="startup", cause="mutex_create_failed", error_code=last_error
+        )
         return None
 
     if last_error == ERROR_ALREADY_EXISTS:
-        log.info("Another KEF Controller instance is already running; exiting this instance")
+        log_structured(log, "EVENT", action="SINGLE_INSTANCE", reason="startup", name="EXISTING_INSTANCE_DETECTED")
         try:
             ctypes.windll.user32.MessageBoxW(
                 0,
@@ -387,11 +391,13 @@ def ensure_single_instance(log, mutex_name: str) -> Optional[int]:
                 MB_ICONINFORMATION,
             )
         except Exception as exc:
-            log.info(f"Failed to show the already-running message box | {exc}")
+            log_structured(
+                log, "WARN", action="SINGLE_INSTANCE", reason="startup", cause="message_box_show_failed", error=repr(exc)
+            )
         CloseHandle(handle)
         sys.exit(0)
 
-    log.info("Single-instance mutex acquired")
+    log_structured(log, "EVENT", action="SINGLE_INSTANCE", reason="startup", name="MUTEX_ACQUIRED")
     return handle
 
 

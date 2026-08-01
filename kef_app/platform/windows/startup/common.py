@@ -5,6 +5,8 @@ import subprocess
 import sys
 from dataclasses import dataclass
 
+from ....structured_logging import log_structured
+
 
 STARTUP_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 TASK_XML_NS = {"task": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
@@ -19,6 +21,9 @@ _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 class NullLogger:
     def info(self, _message: str) -> None:
         return None
+
+    def isEnabledFor(self, _level: int) -> bool:
+        return False
 
 
 @dataclass(slots=True)
@@ -64,7 +69,16 @@ def format_process_error(completed: subprocess.CompletedProcess[str], default: s
 
 
 def log_startup_failure(logger, action: str, task_name: str, detail: str) -> None:
-    logger.info(f"Windows startup update failed | action={action} | task={task_name} | detail={detail}")
+    log_structured(
+        logger,
+        "WARN",
+        action="STARTUP_REGISTRATION",
+        reason="startup_update",
+        trigger=action,
+        cause="windows_update_failed",
+        task=task_name,
+        error=detail,
+    )
 
 
 def hidden_run(args: list[str], timeout: int) -> subprocess.CompletedProcess[str]:

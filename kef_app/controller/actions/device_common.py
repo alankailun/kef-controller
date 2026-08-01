@@ -153,7 +153,6 @@ class ControllerDeviceCommonMixin:
         self._request_shutdown(fresh=fresh, timeout=self.config.socket_timeout)
         self._log_structured(
             "STEP",
-            log_level="info",
             action=action,
             gen=generation,
             reason=reason,
@@ -243,7 +242,6 @@ class ControllerDeviceCommonMixin:
     ) -> None:
         self._log_structured(
             "STEP",
-            log_level="info",
             action=action,
             gen=generation,
             reason=reason,
@@ -255,7 +253,6 @@ class ControllerDeviceCommonMixin:
         if verified:
             self._log_structured(
                 "STEP",
-                log_level="info",
                 action=action,
                 gen=generation,
                 reason=reason,

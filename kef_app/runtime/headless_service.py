@@ -15,6 +15,7 @@ import win32gui
 
 from ..config import AppConfig
 from ..controller import KefPowerController
+from ..structured_logging import log_structured
 from .logging_setup import shutdown_logger
 from ..platform.windows import (
     DEVICE_NOTIFY_WINDOW_HANDLE,
@@ -61,13 +62,32 @@ def log_startup_context(log: logging.Logger, process_start_wall: str):
     raw_cmdline = get_raw_command_line()
     script_path = os.path.abspath(sys.argv[0]) if sys.argv else "<unknown>"
 
-    log.info(
-        f"PROCESS_START | wall={process_start_wall} pid={pid} ppid={ppid} "
-        f"parent_image={parent_image} launch_hint={launch_hint}"
+    log_structured(
+        log,
+        "EVENT",
+        action="PROCESS",
+        reason="startup",
+        name="PROCESS_START",
+        wall=process_start_wall,
+        pid=pid,
+        ppid=ppid,
+        parent_image=parent_image,
+        launch_hint=launch_hint,
     )
-    log.info(f"PROCESS_CONTEXT | cwd={os.getcwd()} executable={sys.executable} script={script_path}")
-    log.info(f"PROCESS_COMMAND_LINE | raw={raw_cmdline}")
-    log.info(f"PROCESS_ARGV | argv={argv_repr}")
+    log_structured(
+        log,
+        "EVENT",
+        action="PROCESS",
+        reason="startup",
+        name="PROCESS_CONTEXT",
+        cwd=os.getcwd(),
+        executable=sys.executable,
+        script=script_path,
+    )
+    log_structured(
+        log, "EVENT", action="PROCESS", reason="startup", name="PROCESS_COMMAND_LINE", raw=raw_cmdline
+    )
+    log_structured(log, "EVENT", action="PROCESS", reason="startup", name="PROCESS_ARGV", argv=argv_repr)
 
 
 class HeadlessRuntime:
@@ -80,6 +100,23 @@ class HeadlessRuntime:
         self._hwnd: int = 0
         self._hwnd_lock = threading.Lock()
 
+    def _log(
+        self,
+        tag: str,
+        *,
+        reason: str = "runtime",
+        trigger: str | None = None,
+        **fields: object,
+    ) -> None:
+        log_structured(
+            self.log,
+            tag,
+            action="HEADLESS_RUNTIME",
+            reason=reason,
+            trigger=trigger,
+            **fields,
+        )
+
     def request_stop(self) -> None:
         with self._hwnd_lock:
             hwnd = self._hwnd
@@ -87,7 +124,7 @@ class HeadlessRuntime:
             try:
                 win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
             except Exception as exc:
-                self.log.info(f"request_stop could not post WM_CLOSE | {exc}")
+                self._log("WARN", trigger="request_stop", cause="post_wm_close_failed", error=repr(exc))
 
     def run(self):
         self.controller.log_banner()
@@ -106,14 +143,22 @@ class HeadlessRuntime:
                 reason="startup_prebuild",
                 trigger="startup_http_identity",
             )
-            self.log.info(
-                f"Prebuilt the initial KEF connection | ip={self.controller.get_current_kef_ip()} | "
-                f"mono={self.controller.mono():.3f}"
+            self._log(
+                "STEP",
+                reason="startup",
+                trigger="initial_prebuild",
+                step="prebuild_connection",
+                status="ready",
+                target_ip=self.controller.get_current_kef_ip() or "<empty>",
             )
         except Exception as exc:
-            self.log.info(
-                f"Initial KEF prebuild failed; continuing and retrying later | "
-                f"ip={self.controller.get_current_kef_ip()} | mono={self.controller.mono():.3f} | {exc}"
+            self._log(
+                "WARN",
+                reason="startup",
+                trigger="initial_prebuild",
+                cause="connection_prebuild_failed",
+                target_ip=self.controller.get_current_kef_ip() or "<empty>",
+                error=repr(exc),
             )
             self.controller.reset_speaker()
             if self.controller.maybe_refresh_kef_ip(reason="startup_prebuild", trigger="startup_prebuild", force=True):
@@ -127,14 +172,22 @@ class HeadlessRuntime:
                         reason="startup_prebuild",
                         trigger="startup_http_identity_recover_success",
                     )
-                    self.log.info(
-                        f"Recovered the IP and prebuilt the KEF connection | "
-                        f"ip={self.controller.get_current_kef_ip()} | mono={self.controller.mono():.3f}"
+                    self._log(
+                        "STEP",
+                        reason="startup",
+                        trigger="initial_prebuild_recovery",
+                        step="prebuild_connection",
+                        status="recovered",
+                        target_ip=self.controller.get_current_kef_ip() or "<empty>",
                     )
                 except Exception as exc2:
-                    self.log.info(
-                        f"Prebuild still failed after IP recovery | ip={self.controller.get_current_kef_ip()} | "
-                        f"mono={self.controller.mono():.3f} | {exc2}"
+                    self._log(
+                        "WARN",
+                        reason="startup",
+                        trigger="initial_prebuild_recovery",
+                        cause="connection_prebuild_failed_after_recovery",
+                        target_ip=self.controller.get_current_kef_ip() or "<empty>",
+                        error=repr(exc2),
                     )
                     self.controller.reset_speaker()
 
@@ -171,28 +224,39 @@ class HeadlessRuntime:
                 if session_notify_registered and hwnd:
                     try:
                         WTSUnRegisterSessionNotification(hwnd)
-                        self.log.info(f"Unregistered session notifications | hwnd={hwnd}")
+                        self._log("EVENT", trigger="cleanup", name="SESSION_NOTIFICATIONS_UNREGISTERED", hwnd=hwnd)
                     except Exception as exc:
-                        self.log.info(f"Failed to unregister session notifications | hwnd={hwnd} | {exc}")
+                        self._log(
+                            "WARN", trigger="cleanup", cause="session_notifications_unregister_failed", hwnd=hwnd, error=repr(exc)
+                        )
                     finally:
                         session_notify_registered = False
 
                 for setting_name, handle in power_notify_handles:
                     try:
                         UnregisterPowerSettingNotification(handle)
-                        self.log.info(f"Unregistered power setting notification | setting={setting_name} | handle={handle}")
+                        self._log(
+                            "EVENT", trigger="cleanup", name="POWER_SETTING_UNREGISTERED", setting=setting_name, handle=handle
+                        )
                     except Exception as exc:
-                        self.log.info(
-                            f"Failed to unregister power setting notification | setting={setting_name} | handle={handle} | {exc}"
+                        self._log(
+                            "WARN",
+                            trigger="cleanup",
+                            cause="power_setting_unregister_failed",
+                            setting=setting_name,
+                            handle=handle,
+                            error=repr(exc),
                         )
                 power_notify_handles = []
 
                 if network_interface_monitor is not None:
                     try:
                         network_interface_monitor.close()
-                        self.log.info("Unregistered network interface change notifications")
+                        self._log("EVENT", trigger="cleanup", name="NETWORK_NOTIFICATIONS_UNREGISTERED")
                     except Exception as exc:
-                        self.log.info(f"Failed to unregister network interface change notifications | {exc}")
+                        self._log(
+                            "WARN", trigger="cleanup", cause="network_notifications_unregister_failed", error=repr(exc)
+                        )
                     finally:
                         network_interface_monitor = None
 
@@ -200,9 +264,9 @@ class HeadlessRuntime:
                 try:
                     if win32gui.IsWindow(hwnd):
                         win32gui.DestroyWindow(hwnd)
-                        self.log.info(f"Destroyed the hidden message window | hwnd={hwnd}")
+                        self._log("EVENT", trigger="cleanup", name="MESSAGE_WINDOW_DESTROYED", hwnd=hwnd)
                 except Exception as exc:
-                    self.log.info(f"Failed to destroy the hidden message window | hwnd={hwnd} | {exc}")
+                    self._log("WARN", trigger="cleanup", cause="message_window_destroy_failed", hwnd=hwnd, error=repr(exc))
                 finally:
                     hwnd = None
 
@@ -212,9 +276,15 @@ class HeadlessRuntime:
             if allow_destroy_window and class_registered and wc is not None:
                 try:
                     win32gui.UnregisterClass(wc.lpszClassName, wc.hInstance)
-                    self.log.info(f"Unregistered the window class | class={wc.lpszClassName}")
+                    self._log("EVENT", trigger="cleanup", name="WINDOW_CLASS_UNREGISTERED", window_class=wc.lpszClassName)
                 except Exception as exc:
-                    self.log.info(f"Failed to unregister the window class | class={wc.lpszClassName} | {exc}")
+                    self._log(
+                        "WARN",
+                        trigger="cleanup",
+                        cause="window_class_unregister_failed",
+                        window_class=wc.lpszClassName,
+                        error=repr(exc),
+                    )
                 else:
                     class_registered = False
 
@@ -224,13 +294,15 @@ class HeadlessRuntime:
             except ValueError:
                 signal_label = str(signum)
 
-            self.log.info(f"Received exit signal | signal={signal_label}")
+            self._log("EVENT", trigger="signal_handler", name="EXIT_SIGNAL_RECEIVED", signal=signal_label)
             try:
                 if hwnd and win32gui.IsWindow(hwnd):
                     win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
                     return
             except Exception as exc:
-                self.log.info(f"Could not post WM_CLOSE during signal handling; cleaning up directly | {exc}")
+                self._log(
+                    "WARN", trigger="signal_handler", cause="post_wm_close_failed", error=repr(exc)
+                )
 
             cleanup_resources(allow_destroy_window=True)
             raise SystemExit(0)
@@ -245,9 +317,11 @@ class HeadlessRuntime:
                 try:
                     signal.signal(sig, handle_signal)
                 except (ValueError, OSError) as exc:
-                    self.log.info(f"Could not register signal handler | signal={sig_name} | {exc}")
+                    self._log(
+                        "WARN", trigger="signal_registration", cause="signal_handler_register_failed", signal=sig_name, error=repr(exc)
+                    )
         else:
-            self.log.info("HeadlessRuntime is running on a background thread, so signal handlers were not registered")
+            self._log("SKIP", trigger="signal_registration", cause="background_thread")
 
         def wnd_proc(hwnd_, msg, wparam, lparam):
             try:
@@ -256,12 +330,21 @@ class HeadlessRuntime:
                     try:
                         create_shutdown_block_reason(hwnd_, "Putting the KEF speaker into standby")
                         shutdown_block_active = True
-                        self.log.info(
-                            f"Created shutdown block reason while sending speaker standby | hwnd={hwnd_}"
+                        self._log(
+                            "EVENT",
+                            reason="windows_end_session",
+                            trigger="wm_queryendsession",
+                            name="SHUTDOWN_BLOCK_CREATED",
+                            hwnd=hwnd_,
                         )
                     except Exception as exc:
-                        self.log.info(
-                            f"Could not create shutdown block reason; continuing with bounded standby | hwnd={hwnd_} | {exc}"
+                        self._log(
+                            "WARN",
+                            reason="windows_end_session",
+                            trigger="wm_queryendsession",
+                            cause="shutdown_block_create_failed",
+                            hwnd=hwnd_,
+                            error=repr(exc),
                         )
 
                     try:
@@ -270,29 +353,53 @@ class HeadlessRuntime:
                         if shutdown_block_active:
                             try:
                                 destroy_shutdown_block_reason(hwnd_)
-                                self.log.info(
-                                    f"Destroyed shutdown block reason after speaker standby | hwnd={hwnd_}"
+                                self._log(
+                                    "EVENT",
+                                    reason="windows_end_session",
+                                    trigger="wm_queryendsession",
+                                    name="SHUTDOWN_BLOCK_DESTROYED",
+                                    hwnd=hwnd_,
                                 )
                             except Exception as exc:
-                                self.log.info(
-                                    f"Could not destroy shutdown block reason | hwnd={hwnd_} | {exc}"
+                                self._log(
+                                    "WARN",
+                                    reason="windows_end_session",
+                                    trigger="wm_queryendsession",
+                                    cause="shutdown_block_destroy_failed",
+                                    hwnd=hwnd_,
+                                    error=repr(exc),
                                 )
                     if should_post_self_close:
                         try:
                             win32gui.PostMessage(hwnd_, win32con.WM_CLOSE, 0, 0)
-                            self.log.info(
-                                f"WM_QUERYENDSESSION(CLOSEAPP) posted WM_CLOSE to self so the app can exit through its own cleanup path | hwnd={hwnd_}"
+                            self._log(
+                                "EVENT",
+                                reason="windows_end_session",
+                                trigger="wm_queryendsession",
+                                name="WM_CLOSE_POSTED",
+                                hwnd=hwnd_,
                             )
                         except Exception as exc:
-                            self.log.info(f"WM_QUERYENDSESSION could not post WM_CLOSE | hwnd={hwnd_} | {exc}")
+                            self._log(
+                                "WARN",
+                                reason="windows_end_session",
+                                trigger="wm_queryendsession",
+                                cause="post_wm_close_failed",
+                                hwnd=hwnd_,
+                                error=repr(exc),
+                            )
                     return True
 
                 if msg == win32con.WM_ENDSESSION:
                     ending = bool(wparam)
                     self.controller.on_end_session(ending, lparam)
                     if ending and self.config.fast_exit_on_endsession:
-                        self.log.info(
-                            f"WM_ENDSESSION with ending=True is exiting the message loop quickly to avoid Application Hang | hwnd={hwnd_}"
+                        self._log(
+                            "EVENT",
+                            reason="windows_end_session",
+                            trigger="wm_endsession",
+                            name="MESSAGE_LOOP_QUICK_EXIT",
+                            hwnd=hwnd_,
                         )
                         cleanup_resources(allow_destroy_window=False)
                         win32gui.PostQuitMessage(0)
@@ -372,7 +479,7 @@ class HeadlessRuntime:
                         state_recorded_mono = self.controller.mono()
                         self.controller._log_structured(
                             "EVENT",
-                            log_level="info",
+                            action="WINDOW_SESSION_EVENT",
                             kind="SESSION",
                             name="WTS_SESSION_LOCK_MSG_ENTRY",
                             wparam=f"0x{wparam:04X}",
@@ -396,13 +503,18 @@ class HeadlessRuntime:
                         return 0
                     if wparam == WTS_SESSION_DESKTOP_READY:
                         self.controller.log_session_event("WTS_SESSION_DESKTOP_READY", wparam, lparam)
-                        self.log.info("WTS_SESSION_DESKTOP_READY is recorded for diagnostics only and does not trigger wake")
+                        self._log(
+                            "SKIP",
+                            reason="WTS_SESSION_DESKTOP_READY",
+                            trigger="session_event",
+                            cause="diagnostic_only_no_wake",
+                        )
                         return 0
                     self.controller.log_session_event("WM_WTSSESSION_CHANGE_OTHER", wparam, lparam)
                     return 0
 
                 if msg == win32con.WM_CLOSE:
-                    self.log.info(f"Received WM_CLOSE | hwnd={hwnd_}")
+                    self._log("EVENT", trigger="wm_close", name="WM_CLOSE_RECEIVED", hwnd=hwnd_)
                     win32gui.DestroyWindow(hwnd_)
                     return 0
 
@@ -413,7 +525,13 @@ class HeadlessRuntime:
 
                 return win32gui.DefWindowProc(hwnd_, msg, wparam, lparam)
             except Exception:
-                self.log.error("wnd_proc hit an unhandled exception:\n%s", traceback.format_exc())
+                self._log(
+                    "ERROR",
+                    trigger="wnd_proc",
+                    cause="unhandled_exception",
+                    error=traceback.format_exc(),
+                    windows_message=msg,
+                )
                 if msg == win32con.WM_QUERYENDSESSION:
                     return True
                 if msg in (win32con.WM_ENDSESSION, WM_WTSSESSION_CHANGE):
@@ -451,9 +569,11 @@ class HeadlessRuntime:
 
             if WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION):
                 session_notify_registered = True
-                self.log.info(f"Registered session lock/unlock notifications | hwnd={hwnd} | mono={self.controller.mono():.3f}")
+                self._log("EVENT", trigger="startup_registration", name="SESSION_NOTIFICATIONS_REGISTERED", hwnd=hwnd)
             else:
-                self.log.info(f"Failed to register session notifications | hwnd={hwnd} | mono={self.controller.mono():.3f}")
+                self._log(
+                    "WARN", trigger="startup_registration", cause="session_notifications_register_failed", hwnd=hwnd
+                )
 
             for setting_name, setting_guid in POWER_SETTING_GUIDS:
                 try:
@@ -463,64 +583,100 @@ class HeadlessRuntime:
                         DEVICE_NOTIFY_WINDOW_HANDLE,
                     )
                 except Exception as exc:
-                    self.log.info(
-                        f"Failed to register power setting notification | setting={setting_name} | hwnd={hwnd} | {exc}"
+                    self._log(
+                        "WARN",
+                        trigger="startup_registration",
+                        cause="power_setting_register_failed",
+                        setting=setting_name,
+                        hwnd=hwnd,
+                        error=repr(exc),
                     )
                     continue
 
                 if handle:
                     power_notify_handles.append((setting_name, handle))
-                    self.log.info(
-                        f"Registered power setting notification | setting={setting_name} | hwnd={hwnd} | handle={handle} | "
-                        f"mono={self.controller.mono():.3f}"
+                    self._log(
+                        "EVENT",
+                        trigger="startup_registration",
+                        name="POWER_SETTING_REGISTERED",
+                        setting=setting_name,
+                        hwnd=hwnd,
+                        handle=handle,
                     )
                 else:
                     err = ctypes.get_last_error()
-                    self.log.info(
-                        f"Failed to register power setting notification | setting={setting_name} | hwnd={hwnd} | err={err} | "
-                        f"mono={self.controller.mono():.3f}"
+                    self._log(
+                        "WARN",
+                        trigger="startup_registration",
+                        cause="power_setting_register_failed",
+                        setting=setting_name,
+                        hwnd=hwnd,
+                        error_code=err,
                     )
 
             try:
                 network_interface_monitor = IpInterfaceChangeMonitor(self.controller.log_network_interface_event).start()
                 if network_interface_monitor.active:
-                    self.log.info(
-                        f"Registered network interface change notifications | mono={self.controller.mono():.3f}"
+                    self._log(
+                        "EVENT", trigger="startup_registration", name="NETWORK_NOTIFICATIONS_REGISTERED"
                     )
                 else:
-                    self.log.info(
-                        f"Failed to register network interface change notifications | "
-                        f"error={network_interface_monitor.error} | mono={self.controller.mono():.3f}"
+                    self._log(
+                        "WARN",
+                        trigger="startup_registration",
+                        cause="network_notifications_register_failed",
+                        error=network_interface_monitor.error,
                     )
             except Exception as exc:
-                self.log.info(
-                    f"Failed to register network interface change notifications | {exc} | "
-                    f"mono={self.controller.mono():.3f}"
+                self._log(
+                    "WARN",
+                    trigger="startup_registration",
+                    cause="network_notifications_register_failed",
+                    error=repr(exc),
                 )
 
-            self.log.info(f"Listening for shutdown, sleep, and session events | hwnd={hwnd} | mono={self.controller.mono():.3f}")
+            self._log("STATE", trigger="message_pump", desired="running", hwnd=hwnd)
             win32gui.PumpMessages()
-            self.log.info("PumpMessages returned")
+            self._log("EVENT", trigger="message_pump", name="MESSAGE_PUMP_RETURNED")
         except SystemExit as exc:
             exit_reason = f"SystemExit({exc.code})"
             raise
         except Exception:
             exit_reason = "UnhandledException"
             last_exception_trace = traceback.format_exc()
-            self.log.error("HeadlessRuntime hit an unhandled exception:\n%s", last_exception_trace)
+            self._log("ERROR", trigger="run", cause="unhandled_exception", error=last_exception_trace)
             raise
         finally:
-            self.log.info(
-                f"PROCESS_EXIT_BEGIN | reason={exit_reason} pid={os.getpid()} "
-                f"ppid={os.getppid()} uptime={uptime_seconds(self.process_start_mono):.1f}s cleaned_up={cleaned_up}"
+            self._log(
+                "EVENT",
+                reason="process_exit",
+                trigger="run_finally",
+                name="PROCESS_EXIT_BEGIN",
+                exit_reason=exit_reason,
+                pid=os.getpid(),
+                ppid=os.getppid(),
+                uptime_s=f"{uptime_seconds(self.process_start_mono):.1f}",
+                cleaned_up=cleaned_up,
             )
             if last_exception_trace:
-                self.log.info("PROCESS_EXIT_CONTEXT | exception_trace was logged above")
+                self._log(
+                    "EVENT",
+                    reason="process_exit",
+                    trigger="run_finally",
+                    name="PROCESS_EXIT_CONTEXT",
+                    status="exception_trace_logged",
+                )
             cleanup_resources(allow_destroy_window=True)
-            self.log.info(
-                f"PROCESS_EXIT_END | reason={exit_reason} pid={os.getpid()} "
-                f"uptime={uptime_seconds(self.process_start_mono):.1f}s class_registered={class_registered} "
-                f"session_notify_registered={session_notify_registered}"
+            self._log(
+                "EVENT",
+                reason="process_exit",
+                trigger="run_finally",
+                name="PROCESS_EXIT_END",
+                exit_reason=exit_reason,
+                pid=os.getpid(),
+                uptime_s=f"{uptime_seconds(self.process_start_mono):.1f}",
+                class_registered=class_registered,
+                session_notify_registered=session_notify_registered,
             )
             shutdown_logger(self.log)
             logging.shutdown()

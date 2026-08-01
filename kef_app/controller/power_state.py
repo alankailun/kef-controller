@@ -52,7 +52,14 @@ class ControllerStateMixin:
             generation = self._power.generation
             self._power.desired_state = desired_state
             self._power.desired_reason = reason
-            self._log_structured("STATE", desired=desired_state, gen=generation, reason=reason, mono=mono)
+            self._log_structured(
+                "STATE",
+                action="POWER_GENERATION",
+                desired=desired_state,
+                gen=generation,
+                reason=reason,
+                mono=mono,
+            )
             return generation
 
     def _current_generation(self) -> int:
@@ -202,6 +209,7 @@ class ControllerStateMixin:
             if self._should_abort_generation(generation):
                 self._log_structured(
                     "ABORT",
+                    action="INTERRUPTIBLE_SLEEP",
                     step=label,
                     gen=generation,
                     current_gen=self._current_generation(),

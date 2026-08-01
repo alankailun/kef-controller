@@ -15,6 +15,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from ..config import AppConfig
 from ..controller import KefPowerController
 from ..storage import UserConfigStore
+from ..structured_logging import log_structured
 from .controller_events import ControllerEventBridge
 from .logs import UILogHandler
 from .web_api_server import WebApiServer
@@ -157,7 +158,9 @@ class KefMainWindow(QObject):
         if not getattr(sys, "frozen", False):
             command.append(str(Path(__file__).resolve().parents[2] / "main_gui.py"))
         command.extend(["--webview-host", self._server.url])
-        self._log.info("Launching native Edge WebView2 host | url=%s", self._server.url)
+        log_structured(
+            self._log, "EVENT", action="WEBVIEW_HOST", reason="window_show", name="HOST_LAUNCH", url=self._server.url
+        )
         self._host_process = subprocess.Popen(
             command,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -183,7 +186,14 @@ class KefMainWindow(QObject):
             self._find_attempts += 1
             if not self._host_hwnd:
                 if self._find_attempts == 20:
-                    self._log.error("Native Edge WebView2 host window was not found after 10 seconds")
+                    log_structured(
+                        self._log,
+                        "ERROR",
+                        action="WEBVIEW_HOST",
+                        reason="window_show",
+                        cause="window_not_found_timeout",
+                        timeout_s=10,
+                    )
                     self._terminate_host_tree()
                     self._host_process = None
                     self._monitor.stop()
@@ -191,7 +201,9 @@ class KefMainWindow(QObject):
                 return
             self._apply_native_window_effects(self._host_hwnd)
             self._host_ready_mono = time.monotonic()
-            self._log.info("Native Edge WebView2 host is ready | hwnd=%s", self._host_hwnd)
+            log_structured(
+                self._log, "EVENT", action="WEBVIEW_HOST", reason="window_show", name="HOST_READY", hwnd=self._host_hwnd
+            )
         visible = self._effectively_visible()
         self._set_effective_visibility(visible)
         restart_reason = self._host_restart_reason(visible)
@@ -220,10 +232,14 @@ class KefMainWindow(QObject):
             return "native window stopped responding"
         if not self._heartbeat_suspect_mono:
             self._heartbeat_suspect_mono = now
-            self._log.warning(
-                "Native Edge WebView2 host missed UI heartbeats; waiting %.0fs before recovery | age_s=%.1f",
-                self._HOST_HEARTBEAT_CONFIRMATION_S,
-                activity_age,
+            log_structured(
+                self._log,
+                "WARN",
+                action="WEBVIEW_HOST",
+                reason="ui_heartbeat",
+                cause="heartbeat_missed",
+                confirmation_s=f"{self._HOST_HEARTBEAT_CONFIRMATION_S:.0f}",
+                age_s=f"{activity_age:.1f}",
             )
             return None
         if now - self._heartbeat_suspect_mono < self._HOST_HEARTBEAT_CONFIRMATION_S:
@@ -234,10 +250,14 @@ class KefMainWindow(QObject):
         if len(self._host_restart_times) >= self._HOST_MAX_RESTARTS_PER_WINDOW:
             if not self._restart_limit_reported:
                 self._restart_limit_reported = True
-                self._log.error(
-                    "Native Edge WebView2 host recovery paused after %s restarts in %.0fs; hide and reopen the window to retry",
-                    self._HOST_MAX_RESTARTS_PER_WINDOW,
-                    self._HOST_RESTART_WINDOW_S,
+                log_structured(
+                    self._log,
+                    "ERROR",
+                    action="WEBVIEW_HOST",
+                    reason="ui_heartbeat",
+                    cause="restart_limit_reached",
+                    restart_limit=self._HOST_MAX_RESTARTS_PER_WINDOW,
+                    restart_window_s=f"{self._HOST_RESTART_WINDOW_S:.0f}",
                 )
             return None
         return f"stopped sending UI heartbeats for {activity_age:.1f}s"
@@ -267,7 +287,9 @@ class KefMainWindow(QObject):
         """Recover a hung Edge renderer without restarting the controller."""
         self._host_restart_times.append(time.monotonic())
         self._heartbeat_suspect_mono = 0.0
-        self._log.warning("Native Edge WebView2 host %s; restarting it", reason)
+        log_structured(
+            self._log, "WARN", action="WEBVIEW_HOST", reason="ui_heartbeat", cause="host_restart", detail=reason
+        )
         self._terminate_host_tree()
         self._host_process = None
         self._host_hwnd = 0
@@ -290,20 +312,38 @@ class KefMainWindow(QObject):
             )
             if result.returncode == 0:
                 return
-            self._log.warning(
-                "taskkill could not end native Edge WebView2 host tree | pid=%s | exit=%s",
-                process.pid,
-                result.returncode,
+            log_structured(
+                self._log,
+                "WARN",
+                action="WEBVIEW_HOST",
+                reason="window_close",
+                cause="taskkill_failed",
+                pid=process.pid,
+                exit_code=result.returncode,
             )
         except (OSError, subprocess.TimeoutExpired):
-            self._log.warning("Unable to end native Edge WebView2 host process tree", exc_info=True)
+            log_structured(
+                self._log,
+                "WARN",
+                action="WEBVIEW_HOST",
+                reason="window_close",
+                cause="taskkill_unavailable",
+            )
         # A direct terminate is only a fallback for an unavailable or failed
         # taskkill; under normal Windows operation /T removes the native host
         # and its WebView2 children in one operation.
         try:
             process.terminate()
         except OSError:
-            self._log.debug("Native Edge WebView2 host already exited", exc_info=True)
+            log_structured(
+                self._log,
+                "STEP",
+                log_level="DEBUG",
+                action="WEBVIEW_HOST",
+                reason="window_close",
+                step="terminate",
+                status="already_exited",
+            )
 
     @classmethod
     def _find_host_window(cls, host_pid: int | None = None) -> int:
@@ -338,4 +378,11 @@ class KefMainWindow(QObject):
                     ctypes.sizeof(value),
                 )
         except (AttributeError, OSError, ValueError):
-            self._log.debug("Windows DWM effects are unavailable", exc_info=True)
+            log_structured(
+                self._log,
+                "SKIP",
+                log_level="DEBUG",
+                action="WEBVIEW_HOST",
+                reason="window_show",
+                cause="dwm_effects_unavailable",
+            )

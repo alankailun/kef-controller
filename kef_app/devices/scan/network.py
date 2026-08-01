@@ -7,6 +7,7 @@ import subprocess
 from typing import Optional
 
 from ...config import AppConfig
+from ...structured_logging import log_structured
 from ..speaker_models import normalize_mac
 
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -63,9 +64,15 @@ def build_candidate_networks(seed_ip: Optional[str], config: AppConfig, log) -> 
         if network.num_addresses <= 2:
             return
         if network.num_addresses - 2 > config.mac_discovery_max_hosts_per_network:
-            log.info(
-                f"Skipping oversized scan network | cidr={network} | "
-                f"hosts={network.num_addresses - 2} | cap={config.mac_discovery_max_hosts_per_network}"
+            log_structured(
+                log,
+                "SKIP",
+                action="NETWORK_DISCOVERY",
+                reason="candidate_networks",
+                cause="network_host_cap_exceeded",
+                network=network,
+                hosts_count=network.num_addresses - 2,
+                host_cap=config.mac_discovery_max_hosts_per_network,
             )
             return
         key = str(network)
@@ -111,7 +118,9 @@ def read_arp_table(log) -> dict[str, str]:
         )
         return parse_arp_table(completed.stdout)
     except Exception as exc:
-        log.info(f"Failed to read the ARP table | {exc}")
+        log_structured(
+            log, "WARN", action="ARP_CACHE_LOOKUP", reason="target_recovery", cause="arp_table_read_failed", error=repr(exc)
+        )
         return {}
 
 

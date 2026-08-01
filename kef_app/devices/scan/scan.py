@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Optional, TypeVar
 
 from ...config import AppConfig
+from ...structured_logging import log_structured
 from ..speaker_models import SpeakerIdentity, normalize_mac
 from .identity import identify_kef_device
 from .network import build_candidate_networks, probe_ip_port, read_arp_table
@@ -20,6 +21,19 @@ def _candidate_summary(candidate: SpeakerIdentity) -> str:
         f"{candidate.ip}:{candidate.speaker_model or '?'}:{candidate.speaker_name or '<unnamed>'}:"
         f"{candidate.mac_display or candidate.mac or '<no-mac>'}"
     )
+
+
+def _scan_log(
+    log,
+    tag: str,
+    *,
+    action: str,
+    reason: str,
+    trigger: str | None = None,
+    **fields: object,
+) -> None:
+    """Write discovery diagnostics in the shared application log format."""
+    log_structured(log, tag, action=action, reason=reason, trigger=trigger, **fields)
 
 
 def _sort_identity_key(identity: SpeakerIdentity) -> tuple[int, str]:
@@ -152,12 +166,23 @@ def _log_network_scan_finished(
     reachable_hosts: list[str],
     identities: list[SpeakerIdentity],
     started_mono: float,
+    action: str,
+    reason: str,
 ) -> None:
-    log.info(
-        f"{scan_kind} scan network finished | "
-        f"network={network} network_index={network_index}/{network_count} hosts={len(hosts)} "
-        f"reachable_hosts_count={len(reachable_hosts)} identified_kef_count={len(identities)} "
-        f"duration_ms={int((time.monotonic() - started_mono) * 1000)}"
+    _scan_log(
+        log,
+        "STEP",
+        action=action,
+        reason=reason,
+        trigger="network_scan",
+        step="network_finished",
+        status=scan_kind.lower(),
+        network=network,
+        network_index=f"{network_index}/{network_count}",
+        hosts_count=len(hosts),
+        reachable_hosts_count=len(reachable_hosts),
+        identified_kef_count=len(identities),
+        duration_ms=int((time.monotonic() - started_mono) * 1000),
     )
 
 
@@ -167,6 +192,8 @@ def _probe_seed_identity(
     log,
     *,
     phase: str,
+    action: str,
+    reason: str,
     delay_before: float = 0.0,
 ) -> Optional[SpeakerIdentity]:
     if not seed_ip:
@@ -179,16 +206,32 @@ def _probe_seed_identity(
     identity = identify_kef_device(seed_ip, config, timeout=timeout)
     duration_ms = int((time.monotonic() - started) * 1000)
     if identity:
-        log.info(
-            "Seed KEF identity probe succeeded | "
-            f"phase={phase} seed_ip={seed_ip} timeout={timeout:.2f}s "
-            f"duration_ms={duration_ms} candidate={_candidate_summary(identity)}"
+        _scan_log(
+            log,
+            "STEP",
+            action=action,
+            reason=reason,
+            trigger=phase,
+            step="seed_identity_probe",
+            status="found",
+            seed_ip=seed_ip,
+            timeout_s=f"{timeout:.2f}",
+            duration_ms=duration_ms,
+            candidate=_candidate_summary(identity),
         )
         return identity
 
-    log.info(
-        "Seed KEF identity probe missed | "
-        f"phase={phase} seed_ip={seed_ip} timeout={timeout:.2f}s duration_ms={duration_ms}"
+    _scan_log(
+        log,
+        "STEP",
+        action=action,
+        reason=reason,
+        trigger=phase,
+        step="seed_identity_probe",
+        status="not_found",
+        seed_ip=seed_ip,
+        timeout_s=f"{timeout:.2f}",
+        duration_ms=duration_ms,
     )
     return None
 
@@ -197,13 +240,25 @@ def _notify_candidate(
     on_candidate: Optional[Callable[[SpeakerIdentity], None]],
     identity: SpeakerIdentity,
     log,
+    *,
+    action: str,
+    reason: str,
 ) -> None:
     if on_candidate is None:
         return
     try:
         on_candidate(identity)
     except Exception as exc:
-        log.info(f"Speaker scan candidate callback failed | ip={identity.ip or '<empty>'} | {exc}")
+        _scan_log(
+            log,
+            "WARN",
+            action=action,
+            reason=reason,
+            trigger="candidate_callback",
+            cause="callback_failed",
+            actual_ip=identity.ip or "<empty>",
+            error=repr(exc),
+        )
 
 
 def discover_kef_devices(
@@ -215,28 +270,38 @@ def discover_kef_devices(
     should_continue: Optional[Callable[[], bool]] = None,
     on_progress: Optional[Callable[[int], None]] = None,
 ) -> list[SpeakerIdentity]:
+    action = "MANUAL_SCAN"
+    reason = "manual_request"
     networks = build_candidate_networks(seed_ip, config, log)
     if not networks:
-        log.info("No scan networks are available, so a manual KEF device scan cannot run")
+        _scan_log(log, "SKIP", action=action, reason=reason, cause="no_scan_networks")
         return []
 
     scan_started = time.monotonic()
     total_reachable_hosts = 0
     total_identified_kef = 0
-    log.info(
-        "Starting manual KEF device scan | "
-        f"seed_ip={seed_ip or '<empty>'} networks={[str(n) for n in networks]} "
-        f"probe_port={config.mac_discovery_tcp_port} probe_timeout={config.mac_discovery_probe_timeout:.2f}s "
-        f"http_timeout={config.blind_discovery_http_timeout:.2f}s probe_workers={config.mac_discovery_max_workers} "
-        f"identify_workers={config.blind_discovery_max_workers}"
+    _scan_log(
+        log,
+        "BEGIN",
+        action=action,
+        reason=reason,
+        seed_ip=seed_ip or "<empty>",
+        networks=",".join(str(network) for network in networks),
+        probe_port=config.mac_discovery_tcp_port,
+        probe_timeout_s=f"{config.mac_discovery_probe_timeout:.2f}",
+        http_timeout_s=f"{config.blind_discovery_http_timeout:.2f}",
+        probe_workers=config.mac_discovery_max_workers,
+        identify_workers=config.blind_discovery_max_workers,
     )
 
     candidates_by_ip: dict[str, SpeakerIdentity] = {}
-    seed_identity = _probe_seed_identity(seed_ip, config, log, phase="manual_scan_start")
+    seed_identity = _probe_seed_identity(
+        seed_ip, config, log, phase="manual_scan_start", action=action, reason=reason
+    )
     if seed_identity:
         total_identified_kef += 1
         candidates_by_ip[seed_identity.ip] = seed_identity
-        _notify_candidate(on_candidate, seed_identity, log)
+        _notify_candidate(on_candidate, seed_identity, log, action=action, reason=reason)
 
     probe_started = time.monotonic()
     total_hosts = 0
@@ -261,7 +326,7 @@ def discover_kef_devices(
         total_identified_kef += len(identities)
         for identity in identities:
             candidates_by_ip[identity.ip] = identity
-            _notify_candidate(on_candidate, identity, log)
+            _notify_candidate(on_candidate, identity, log, action=action, reason=reason)
         _log_network_scan_finished(
             log,
             scan_kind="Manual",
@@ -272,13 +337,22 @@ def discover_kef_devices(
             reachable_hosts=reachable_hosts,
             identities=identities,
             started_mono=network_started,
+            action=action,
+            reason=reason,
         )
 
-    log.info(
-        "Manual scan networks finished | "
-        f"networks={[str(n) for n in networks]} hosts={total_hosts} "
-        f"reachable_hosts_count={total_reachable_hosts} identified_kef_count={total_identified_kef} "
-        f"duration_ms={int((time.monotonic() - probe_started) * 1000)}"
+    _scan_log(
+        log,
+        "STEP",
+        action=action,
+        reason=reason,
+        step="networks_finished",
+        status="completed",
+        networks=",".join(str(network) for network in networks),
+        hosts_count=total_hosts,
+        reachable_hosts_count=total_reachable_hosts,
+        identified_kef_count=total_identified_kef,
+        duration_ms=int((time.monotonic() - probe_started) * 1000),
     )
 
     if seed_ip and seed_ip not in candidates_by_ip and (should_continue is None or should_continue()):
@@ -287,19 +361,28 @@ def discover_kef_devices(
             config,
             log,
             phase="manual_scan_after_network_miss",
+            action=action,
+            reason=reason,
             delay_before=_SEED_IDENTITY_RETRY_DELAY_S,
         )
         if seed_identity:
             total_identified_kef += 1
             candidates_by_ip[seed_identity.ip] = seed_identity
-            _notify_candidate(on_candidate, seed_identity, log)
+            _notify_candidate(on_candidate, seed_identity, log, action=action, reason=reason)
 
     candidates = sorted(candidates_by_ip.values(), key=_sort_identity_key)
     summary = ", ".join(_candidate_summary(candidate) for candidate in candidates) or "<none>"
-    log.info(
-        f"Manual KEF device scan finished | count={len(candidates)} "
-        f"reachable_hosts_count={total_reachable_hosts} identified_kef_count={total_identified_kef} "
-        f"duration_ms={int((time.monotonic() - scan_started) * 1000)} | candidates=[{summary}]"
+    _scan_log(
+        log,
+        "END",
+        action=action,
+        reason=reason,
+        outcome="candidates_found" if candidates else "no_candidates",
+        count=len(candidates),
+        reachable_hosts_count=total_reachable_hosts,
+        identified_kef_count=total_identified_kef,
+        duration_ms=int((time.monotonic() - scan_started) * 1000),
+        candidates=summary,
     )
     return candidates
 
@@ -312,43 +395,58 @@ def discover_kef_device_blind(
     *,
     should_continue: Optional[Callable[[], bool]] = None,
 ) -> Optional[SpeakerIdentity]:
+    action = "TARGET_SCAN"
+    reason = "target_recovery"
     normalized_known_mac = normalize_mac(known_mac)
     if not normalized_known_mac:
-        log.info("Full KEF target recovery requires a Target Speaker MAC")
+        _scan_log(log, "SKIP", action=action, reason=reason, cause="empty_target_mac")
         return None
 
     networks = build_candidate_networks(seed_ip, config, log)
     if not networks:
-        log.info("No scan networks are available, so a full device scan cannot run")
+        _scan_log(log, "SKIP", action=action, reason=reason, cause="no_scan_networks")
         return None
 
     scan_started = time.monotonic()
     total_reachable_hosts = 0
     total_identified_kef = 0
-    log.info(
-        "Starting full KEF device scan | "
-        f"known_mac={known_mac or '<empty>'} normalized={normalized_known_mac or '<empty>'} "
-        f"seed_ip={seed_ip or '<empty>'} networks={[str(n) for n in networks]} "
-        f"probe_port={config.mac_discovery_tcp_port} probe_timeout={config.mac_discovery_probe_timeout:.2f}s "
-        f"http_timeout={config.blind_discovery_http_timeout:.2f}s probe_workers={config.mac_discovery_max_workers} "
-        f"identify_workers={config.blind_discovery_max_workers}"
+    _scan_log(
+        log,
+        "BEGIN",
+        action=action,
+        reason=reason,
+        target_mac=normalized_known_mac or "<empty>",
+        seed_ip=seed_ip or "<empty>",
+        networks=",".join(str(network) for network in networks),
+        probe_port=config.mac_discovery_tcp_port,
+        probe_timeout_s=f"{config.mac_discovery_probe_timeout:.2f}",
+        http_timeout_s=f"{config.blind_discovery_http_timeout:.2f}",
+        probe_workers=config.mac_discovery_max_workers,
+        identify_workers=config.blind_discovery_max_workers,
     )
 
     if should_continue is not None and not should_continue():
-        log.info("Full KEF device scan cancelled before the seed probe")
+        _scan_log(log, "SKIP", action=action, reason=reason, cause="cancelled_before_seed_probe")
         return None
 
     candidates_by_ip: dict[str, SpeakerIdentity] = {}
-    seed_identity = _probe_seed_identity(seed_ip, config, log, phase="full_scan_start")
+    seed_identity = _probe_seed_identity(seed_ip, config, log, phase="full_scan_start", action=action, reason=reason)
     if seed_identity and (should_continue is None or should_continue()):
         total_identified_kef += 1
         candidates_by_ip[seed_identity.ip] = seed_identity
         if seed_identity.mac == normalized_known_mac:
-            log.info(
-                f"Seed identity matched the Target Speaker MAC | ip={seed_identity.ip} | "
-                f"mac={seed_identity.mac_display or seed_identity.mac} | model={seed_identity.speaker_model} | "
-                f"name={seed_identity.speaker_name or '<unnamed>'} "
-                f"duration_ms={int((time.monotonic() - scan_started) * 1000)}"
+            _scan_log(
+                log,
+                "END",
+                action=action,
+                reason=reason,
+                trigger="full_scan_start",
+                outcome="target_matched_seed",
+                actual_ip=seed_identity.ip,
+                actual_mac=seed_identity.mac_display or seed_identity.mac,
+                actual_speaker_model=seed_identity.speaker_model,
+                actual_speaker_name=seed_identity.speaker_name or "<unnamed>",
+                duration_ms=int((time.monotonic() - scan_started) * 1000),
             )
             return seed_identity.with_match("target_mac")
 
@@ -377,6 +475,8 @@ def discover_kef_device_blind(
             reachable_hosts=reachable_hosts,
             identities=identities,
             started_mono=network_started,
+            action=action,
+            reason=reason,
         )
 
         if should_continue is not None and not should_continue():
@@ -386,20 +486,35 @@ def discover_kef_device_blind(
                 break
             candidates_by_ip[identity.ip] = identity
             if normalized_known_mac and identity.mac == normalized_known_mac:
-                log.info(
-                    f"Full scan matched the Target Speaker MAC | ip={identity.ip} | "
-                    f"mac={identity.mac_display or identity.mac} | model={identity.speaker_model} | "
-                    f"name={identity.speaker_name or '<unnamed>'} "
-                    f"reachable_hosts_count={total_reachable_hosts} identified_kef_count={total_identified_kef} "
-                    f"duration_ms={int((time.monotonic() - scan_started) * 1000)}"
+                _scan_log(
+                    log,
+                    "END",
+                    action=action,
+                    reason=reason,
+                    trigger="network_scan",
+                    outcome="target_matched_network",
+                    actual_ip=identity.ip,
+                    actual_mac=identity.mac_display or identity.mac,
+                    actual_speaker_model=identity.speaker_model,
+                    actual_speaker_name=identity.speaker_name or "<unnamed>",
+                    reachable_hosts_count=total_reachable_hosts,
+                    identified_kef_count=total_identified_kef,
+                    duration_ms=int((time.monotonic() - scan_started) * 1000),
                 )
                 return identity.with_match("target_mac")
 
-    log.info(
-        "Full scan networks finished | "
-        f"networks={[str(n) for n in networks]} hosts={total_hosts} "
-        f"reachable_hosts_count={total_reachable_hosts} identified_kef_count={total_identified_kef} "
-        f"duration_ms={int((time.monotonic() - probe_started) * 1000)}"
+    _scan_log(
+        log,
+        "STEP",
+        action=action,
+        reason=reason,
+        step="networks_finished",
+        status="completed",
+        networks=",".join(str(network) for network in networks),
+        hosts_count=total_hosts,
+        reachable_hosts_count=total_reachable_hosts,
+        identified_kef_count=total_identified_kef,
+        duration_ms=int((time.monotonic() - probe_started) * 1000),
     )
 
     if seed_ip and seed_ip not in candidates_by_ip and (should_continue is None or should_continue()):
@@ -408,43 +523,67 @@ def discover_kef_device_blind(
             config,
             log,
             phase="full_scan_after_network_miss",
+            action=action,
+            reason=reason,
             delay_before=_SEED_IDENTITY_RETRY_DELAY_S,
         )
         if seed_identity:
             total_identified_kef += 1
             candidates_by_ip[seed_identity.ip] = seed_identity
             if seed_identity.mac == normalized_known_mac:
-                log.info(
-                    f"Seed retry matched the Target Speaker MAC | ip={seed_identity.ip} | "
-                    f"mac={seed_identity.mac_display or seed_identity.mac} | model={seed_identity.speaker_model} | "
-                    f"name={seed_identity.speaker_name or '<unnamed>'} "
-                    f"duration_ms={int((time.monotonic() - scan_started) * 1000)}"
+                _scan_log(
+                    log,
+                    "END",
+                    action=action,
+                    reason=reason,
+                    trigger="full_scan_after_network_miss",
+                    outcome="target_matched_seed_retry",
+                    actual_ip=seed_identity.ip,
+                    actual_mac=seed_identity.mac_display or seed_identity.mac,
+                    actual_speaker_model=seed_identity.speaker_model,
+                    actual_speaker_name=seed_identity.speaker_name or "<unnamed>",
+                    duration_ms=int((time.monotonic() - scan_started) * 1000),
                 )
                 return seed_identity.with_match("target_mac")
 
     candidates = list(candidates_by_ip.values())
     if not candidates:
-        log.info(
-            f"Full scan did not find any supported KEF device | "
-            f"known_mac={known_mac or '<empty>'} | seed_ip={seed_ip or '<empty>'} "
-            f"reachable_hosts_count={total_reachable_hosts} identified_kef_count={total_identified_kef} "
-            f"duration_ms={int((time.monotonic() - scan_started) * 1000)}"
+        _scan_log(
+            log,
+            "END",
+            action=action,
+            reason=reason,
+            outcome="no_supported_device",
+            target_mac=normalized_known_mac or "<empty>",
+            seed_ip=seed_ip or "<empty>",
+            reachable_hosts_count=total_reachable_hosts,
+            identified_kef_count=total_identified_kef,
+            duration_ms=int((time.monotonic() - scan_started) * 1000),
         )
         return None
 
     # Every MAC-matching candidate already returned above, so whatever is left
     # does not match the target and is only useful as a diagnostic summary.
     summary = ", ".join(_candidate_summary(candidate) for candidate in candidates)
-    log.info(
-        f"Full scan found KEF devices, but none matched the Target Speaker MAC | "
-        f"count={len(candidates)} target_mac={known_mac or '<empty>'} "
-        f"reachable_hosts_count={total_reachable_hosts} identified_kef_count={total_identified_kef} "
-        f"duration_ms={int((time.monotonic() - scan_started) * 1000)} | candidates=[{summary}]"
+    _scan_log(
+        log,
+        "END",
+        action=action,
+        reason=reason,
+        outcome="target_not_matched",
+        count=len(candidates),
+        target_mac=normalized_known_mac or "<empty>",
+        reachable_hosts_count=total_reachable_hosts,
+        identified_kef_count=total_identified_kef,
+        duration_ms=int((time.monotonic() - scan_started) * 1000),
+        candidates=summary,
     )
     return None
 
 
 def discover_ip_by_mac(target_mac: str, seed_ip: Optional[str], _config: AppConfig, log) -> Optional[str]:
+    action = "ARP_CACHE_LOOKUP"
+    reason = "target_recovery"
     normalized_target = normalize_mac(target_mac)
     if not normalized_target:
         return None
@@ -452,17 +591,27 @@ def discover_ip_by_mac(target_mac: str, seed_ip: Optional[str], _config: AppConf
     arp_map = read_arp_table(log)
     for ip, mac in arp_map.items():
         if mac == normalized_target:
-            log.info(
-                f"Recovered the speaker IP from the existing ARP cache | "
-                f"target_primary_mac={target_mac} | ip={ip}"
+            _scan_log(
+                log,
+                "END",
+                action=action,
+                reason=reason,
+                outcome="target_matched",
+                target_mac=normalized_target,
+                actual_ip=ip,
             )
             return ip
 
     seed_arp_mac = arp_map.get(seed_ip, "") if seed_ip else ""
-    log.info(
-        f"Existing ARP cache did not match the Target Speaker primary MAC | "
-        f"target_primary_mac={target_mac} | seed_ip={seed_ip or '<empty>'} "
-        f"seed_arp_mac={seed_arp_mac or '<empty>'} "
-        f"note=arp_mac_may_differ_from_kef_primary_mac; falling_back_to_http_full_scan"
+    _scan_log(
+        log,
+        "END",
+        action=action,
+        reason=reason,
+        outcome="target_not_matched",
+        target_mac=normalized_target,
+        seed_ip=seed_ip or "<empty>",
+        actual_mac=seed_arp_mac or "<empty>",
+        note="arp_mac_may_differ_from_kef_primary_mac;falling_back_to_http_full_scan",
     )
     return None

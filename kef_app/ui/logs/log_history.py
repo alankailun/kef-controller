@@ -5,11 +5,14 @@ import os
 import re
 from typing import Iterable
 
-_UI_HIDDEN_LOG_MARKERS = (
+_UI_HIDDEN_LOG_TRIGGERS = frozenset(
+    {
     "ui_home_poll",
     "ui_tray_poll",
     "web_ui_poll",
+    }
 )
+_STRUCTURED_FIELD_RE = re.compile(r"(?:^|\s\|\s)([a-z_]+)=([^|]*)(?=\s\||$)")
 
 
 def list_log_history_files(log_file: str) -> list[str]:
@@ -42,8 +45,15 @@ def resolve_log_history_file(log_file: str, selected_name: str) -> str:
 
 
 def should_hide_from_ui_log(line: str) -> bool:
-    text = line or ""
-    return any(marker in text for marker in _UI_HIDDEN_LOG_MARKERS)
+    """Hide only structured, known-noisy poll records.
+
+    The old implementation searched arbitrary text for a marker.  Now that
+    every app emission has a field envelope, an exact trigger comparison
+    cannot accidentally hide an unrelated diagnostic containing the same
+    characters.
+    """
+    fields = {key: value.strip() for key, value in _STRUCTURED_FIELD_RE.findall(line or "")}
+    return fields.get("trigger") in _UI_HIDDEN_LOG_TRIGGERS
 
 
 def read_log_tail_lines(path: str, max_lines: int = 400, chunk_size: int = 4096) -> list[str]:

@@ -14,6 +14,7 @@ from PySide6.QtCore import QUrl
 from ..config import AppConfig
 from ..devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source, normalize_mac
 from ..storage import UserConfigStore
+from ..runtime.logging_setup import apply_logger_level
 from ..platform.windows import (
     get_effective_startup_registration_mode,
     is_startup_registered,
@@ -236,6 +237,7 @@ class WebControllerBridge(QObject):
         for field_name in self._config_store.USER_EDITABLE_FIELDS:
             setattr(self._config, field_name, getattr(updated, field_name))
         saved = self._config_store.save(self._config)
+        apply_logger_level(self._controller.log, self._config.log_level)
         self._apply_poll_interval()
         self._notify(
             "success" if saved else "warning",
@@ -265,7 +267,7 @@ class WebControllerBridge(QObject):
             saved_mac = normalize_mac(str(getattr(identity, "mac", "") or requested_mac))
             self._config.kef_ip = saved_ip
             self._config.kef_mac = saved_mac
-            self._controller.apply_configured_device_target(source="web_settings")
+            self._controller.apply_configured_device_target(trigger="web_settings")
             saved = self._config_store.save(self._config)
             warning = status in {"mac_unverified", "mac_not_found", "unreachable"}
             self._notify(

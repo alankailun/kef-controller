@@ -157,7 +157,6 @@ class ControllerFastStandbyMixin:
 
         self._action_log(action, generation, reason).write(
             "STEP" if prewarmed_result.success or not prewarmed_result.attempted else "WARN",
-            log_level="info",
             **fields,
         )
 
@@ -210,7 +209,7 @@ class ControllerFastStandbyMixin:
             fields["cause"] = f"bounded_send_{result.abort_reason}"
 
         log_tag = "WARN" if outcome and not power_action_outcome_is_success(outcome) else "STEP"
-        self._action_log(action, generation, reason).write(log_tag, log_level="info", **fields)
+        self._action_log(action, generation, reason).write(log_tag, **fields)
 
     def _try_fast_standby_send(
         self,

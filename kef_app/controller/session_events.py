@@ -46,7 +46,13 @@ class ControllerSessionEventsMixin:
             try:
                 target()
             except Exception:
-                self.log.error("%s hit an unhandled exception:\n%s", thread_name, traceback.format_exc())
+                self._log_structured(
+                    "ERROR",
+                    action="CONTROLLER_THREAD",
+                    trigger=thread_name,
+                    cause="unhandled_exception",
+                    error=traceback.format_exc(),
+                )
 
         threading.Thread(target=guarded, daemon=True, name=thread_name).start()
 
@@ -97,9 +103,12 @@ class ControllerSessionEventsMixin:
             except Exception:
                 if isinstance(task, _DisplayOffStandbyTask):
                     self._update_display_off_standby_intent(task.generation, "failed")
-                self.log.error(
-                    "StandbyDispatcher task failed:\n%s",
-                    traceback.format_exc(),
+                self._log_structured(
+                    "ERROR",
+                    action="DISPLAY_OFF_STANDBY",
+                    trigger="standby_dispatcher",
+                    cause="task_failed",
+                    error=traceback.format_exc(),
                 )
 
     def _log_cancellable_retry_stop(
@@ -121,7 +130,7 @@ class ControllerSessionEventsMixin:
                 current_desired=desired_state or "<empty>",
                 current_reason=desired_reason or "<empty>",
             )
-        self._action_log("EARLY_STANDBY", task.generation, task.reason).write("STEP", log_level="info", **fields)
+        self._action_log("EARLY_STANDBY", task.generation, task.reason).write("STEP", **fields)
 
     def _wait_for_display_off_retry(self, task: _DisplayOffStandbyTask, delay_s: float, step: str) -> bool:
         if task.cancel_event.wait(delay_s):
@@ -149,7 +158,6 @@ class ControllerSessionEventsMixin:
             return False
         self._log_structured(
             "STEP",
-            log_level="info",
             action="EARLY_STANDBY",
             gen=task.generation,
             reason=task.reason,
@@ -201,7 +209,6 @@ class ControllerSessionEventsMixin:
         if cached_result.success:
             self._log_structured(
                 "STEP",
-                log_level="info",
                 action="EARLY_STANDBY",
                 gen=task.generation,
                 reason=task.reason,
@@ -432,11 +439,10 @@ class ControllerSessionEventsMixin:
             fields["state_recorded_ms"] = int(max(0.0, state_recorded_mono - callback_started_mono) * 1000)
             fields["schedule_duration_ms"] = int(max(0.0, finished_mono - state_recorded_mono) * 1000)
 
-        self._log_structured("STEP", log_level="info", **fields)
+        self._log_structured("STEP", **fields)
         if callback_duration_s > _PUMP_CALLBACK_SLOW_THRESHOLD_S:
             self._log_structured(
                 "WARN",
-                log_level="info",
                 action="WINDOW_MESSAGE",
                 reason=reason,
                 step="pump_callback_slow",
@@ -471,7 +477,6 @@ class ControllerSessionEventsMixin:
         fast_path_enabled = bool(self.config.suspend_fast_standby_enabled)
         self._log_structured(
             "STEP",
-            log_level="info",
             action="STANDBY",
             gen=generation,
             reason=reason,
@@ -535,7 +540,6 @@ class ControllerSessionEventsMixin:
             )
             self._log_structured(
                 "STEP",
-                log_level="info",
                 action=trigger.action_name,
                 gen=intent.generation,
                 reason=reason,
@@ -551,7 +555,6 @@ class ControllerSessionEventsMixin:
         deadline_mono = event_mono + budget_s
         self._log_structured(
             "STEP",
-            log_level="info",
             action=trigger.action_name,
             gen=generation,
             reason=reason,
@@ -616,7 +619,7 @@ class ControllerSessionEventsMixin:
             }
             if event_mono > 0:
                 fields["since_event_ms"] = int(max(0.0, entry_mono - event_mono) * 1000)
-            self._log_structured("STEP", log_level="info", **fields)
+            self._log_structured("STEP", **fields)
 
         if not enabled:
             self._log_structured(
@@ -705,7 +708,7 @@ class ControllerSessionEventsMixin:
         # Display events are sparse, and this branch explains why an enabled
         # wake rule did not run.  Keep it in the normal diagnostic log instead
         # of hiding the only useful evidence at DEBUG level.
-        self._bind_log(action="WAKE", reason=reason).write("SKIP", log_level="info", **fields)
+        self._bind_log(action="WAKE", reason=reason).write("SKIP", **fields)
 
     def on_display_on(self, event_mono: float, reason: str = "DISPLAY_ON") -> bool:
         previous_intent = self._cancel_display_off_standby_intent(expected_trigger="display_off")
@@ -750,7 +753,6 @@ class ControllerSessionEventsMixin:
         self._mark_wake_scheduled()
         self._log_structured(
             "STEP",
-            log_level="info",
             action="WAKE",
             gen=generation,
             reason=reason,

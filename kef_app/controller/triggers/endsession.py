@@ -17,6 +17,7 @@ class QueryEndSessionTrigger:
         flags = decode_query_end_session_flags(lparam)
         controller._log_structured(
             "EVENT",
+            action="WINDOW_SESSION_EVENT",
             kind="WINDOW",
             name=self.default_reason,
             wparam=wparam,
@@ -64,6 +65,7 @@ class EndSessionTrigger:
         controller._set_session_ending(ending)
         controller._log_structured(
             "EVENT",
+            action="WINDOW_SESSION_EVENT",
             kind="WINDOW",
             name=self.default_reason,
             ending=ending,

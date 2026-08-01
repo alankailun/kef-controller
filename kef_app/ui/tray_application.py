@@ -12,6 +12,7 @@ from ..config import AppConfig
 from ..storage import UserConfigStore
 from ..controller import KefPowerController
 from ..runtime.headless_service import HeadlessRuntime
+from ..structured_logging import log_structured
 from .background_tasks import start_background_task
 from .controller_events import ControllerEventBridge
 from .icons import icon_connected, icon_disconnected, icon_working
@@ -117,7 +118,9 @@ class KefTrayApp:
             if thread is None:
                 return
             thread.join()
-            self._log.info("Headless runtime stopped; requesting UI shutdown")
+            log_structured(
+                self._log, "EVENT", action="TRAY_APPLICATION", reason="runtime_exit", name="UI_SHUTDOWN_REQUESTED"
+            )
             self._runtime_exit_bridge.runtime_stopped.emit()
 
         start_background_task("RuntimeWatcher", _watch, log=self._log)
@@ -244,12 +247,21 @@ class KefTrayApp:
 
     def _shutdown_ui(self, message: str, *, stop_runtime: bool) -> None:
         if self._is_exiting:
-            self._log.info(f"{message}; UI shutdown is already in progress")
+            log_structured(
+                self._log,
+                "SKIP",
+                action="TRAY_APPLICATION",
+                reason="ui_shutdown",
+                cause="already_in_progress",
+                detail=message,
+            )
             QTimer.singleShot(0, self._app.quit)
             return
 
         self._is_exiting = True
-        self._log.info(message)
+        log_structured(
+            self._log, "EVENT", action="TRAY_APPLICATION", reason="ui_shutdown", name="UI_SHUTDOWN", detail=message
+        )
         self._identity_poll.stop()
         self._controller.stop_speaker_event_monitor()
         self._tray.hide()

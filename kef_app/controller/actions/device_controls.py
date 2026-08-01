@@ -88,7 +88,7 @@ class ControllerDeviceControlsMixin:
         input_source: Optional[str] = None,
         volume: Optional[int] = None,
         speaker_on: Optional[bool] = None,
-        source: str,
+        trigger: str,
     ) -> bool:
         changed = False
         with self._state_lock:
@@ -112,7 +112,7 @@ class ControllerDeviceControlsMixin:
                 input_source=current_input,
                 volume=current_volume,
                 speaker_on=current_power,
-                source=source,
+                trigger=trigger,
             )
         return changed
 
@@ -156,7 +156,6 @@ class ControllerDeviceControlsMixin:
                 self.reset_speaker()
             self._log_structured(
                 "STEP",
-                log_level="info",
                 action="POLL_SPEAKER_EVENTS",
                 reason=reason,
                 trigger=trigger,
@@ -182,7 +181,6 @@ class ControllerDeviceControlsMixin:
                 self._runtime_speaker.event_poll_failures = 0
             self._log_structured(
                 "STEP",
-                log_level="info",
                 action="POLL_SPEAKER_EVENTS",
                 reason=reason,
                 trigger=trigger,
@@ -238,7 +236,6 @@ class ControllerDeviceControlsMixin:
     def _run_speaker_event_monitor(self, reason: str) -> None:
         self._log_structured(
             "STEP",
-            log_level="info",
             action="POLL_SPEAKER_EVENTS",
             reason=reason,
             step="monitor",
@@ -282,7 +279,6 @@ class ControllerDeviceControlsMixin:
             restart_reason = self._finish_speaker_event_monitor()
             self._log_structured(
                 "STEP",
-                log_level="info",
                 action="POLL_SPEAKER_EVENTS",
                 reason=reason,
                 step="monitor",
@@ -339,7 +335,7 @@ class ControllerDeviceControlsMixin:
             identity_seen, ip_refreshed = self.probe_external_identity(reason=reason, trigger=trigger)
             reachable = identity_seen or ip_refreshed
         elif reachable:
-            availability_changed = self._mark_identity_probe_success(source=trigger)
+            availability_changed = self._mark_identity_probe_success(trigger=trigger)
             if availability_changed:
                 self._emit_identity_changed()
         else:
@@ -366,7 +362,7 @@ class ControllerDeviceControlsMixin:
                 input_source=input_source,
                 volume=volume,
                 speaker_on=speaker_on,
-                source=trigger,
+                trigger=trigger,
             )
         return input_source, volume, speaker_on
 
@@ -409,7 +405,6 @@ class ControllerDeviceControlsMixin:
             transient = failures < threshold
             self._log_structured(
                 "STEP" if (unreachable or transient) else "WARN",
-                log_level="info" if (unreachable or transient) else None,
                 action="POLL_SPEAKER_EVENTS",
                 reason=reason,
                 trigger=trigger,
@@ -435,14 +430,14 @@ class ControllerDeviceControlsMixin:
             return None, None, None
 
         self._clear_speaker_event_poll_failures()
-        availability_changed = self._mark_identity_probe_success(source=trigger)
+        availability_changed = self._mark_identity_probe_success(trigger=trigger)
         if availability_changed:
             self._emit_identity_changed()
         self._set_speaker_runtime_state(
             input_source=input_source,
             volume=volume,
             speaker_on=speaker_on,
-            source=trigger,
+            trigger=trigger,
         )
 
         self._log_structured(
@@ -450,7 +445,7 @@ class ControllerDeviceControlsMixin:
             action="POLL_SPEAKER_EVENTS",
             reason=reason,
             trigger=trigger,
-            input_source=input_source or "<unchanged>",
+            actual_input=input_source or "<unchanged>",
             volume=volume if volume is not None else "<unchanged>",
             speaker_on=speaker_on if speaker_on is not None else "<unchanged>",
         )
@@ -475,7 +470,6 @@ class ControllerDeviceControlsMixin:
             self.reset_speaker()
             self._log_structured(
                 "STEP",
-                log_level="info",
                 action="WIFI_DIAGNOSTICS",
                 reason=reason,
                 trigger=trigger,
@@ -488,7 +482,6 @@ class ControllerDeviceControlsMixin:
             info = {}
         self._log_structured(
             "STEP",
-            log_level="info",
             action="WIFI_DIAGNOSTICS",
             reason=reason,
             trigger=trigger,
@@ -509,7 +502,7 @@ class ControllerDeviceControlsMixin:
                 "SKIP",
                 action="CHANGE_INPUT",
                 requested_input=requested_input,
-                normalized_input=new_input or "<empty>",
+                target_input=new_input or "<empty>",
                 cause="unsupported_input_source",
             )
             return False
@@ -539,7 +532,7 @@ class ControllerDeviceControlsMixin:
                             "WARN",
                             action="CHANGE_INPUT",
                             requested_input=requested_input,
-                            normalized_input=new_input,
+                            target_input=new_input,
                             attempt=attempt,
                             cause="source_not_verified",
                             actual_input=actual_input or "<unknown>",
@@ -549,10 +542,9 @@ class ControllerDeviceControlsMixin:
 
                     self._log_structured(
                         "STEP",
-                        log_level="info",
                         action="CHANGE_INPUT",
                         requested_input=requested_input,
-                        new_input=new_input,
+                        target_input=new_input,
                         previous_input=previous_input or "<unknown>",
                         attempt=attempt,
                         status="success",
@@ -565,7 +557,7 @@ class ControllerDeviceControlsMixin:
                         "WARN",
                         action="CHANGE_INPUT",
                         requested_input=requested_input,
-                        new_input=new_input,
+                        target_input=new_input,
                         attempt=attempt,
                         error=repr(exc),
                     )
@@ -608,7 +600,6 @@ class ControllerDeviceControlsMixin:
                 speaker.volume = level
             self._log_structured(
                 "STEP",
-                log_level="info",
                 action="SET_VOLUME",
                 level=level,
                 status="success",

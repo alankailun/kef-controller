@@ -809,6 +809,22 @@
         </div>
       </section>
 
+      <h3 class="sec-title">${t("diagnostics")}</h3>
+      <section class="card">
+        <div class="set-row">
+          <div style="flex:1">
+            <div class="set-label">${t("log_verbosity")}</div>
+            <div class="set-desc">${t("log_verbosity_desc")}</div>
+          </div>
+          <select id="set-log-level" aria-label="${t("log_verbosity")}">
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+        </div>
+      </section>
+
       <h3 class="sec-title">${t("speaker")}</h3>
       <section class="card">
         <div class="set-row">
@@ -938,6 +954,9 @@
     });
     $("#set-input").addEventListener("change", e => {
       bridge.updateSettings(JSON.stringify({ kef_input: e.target.value })).then(flashSaved).catch(() => {});
+    });
+    $("#set-log-level").addEventListener("change", e => {
+      bridge.updateSettings(JSON.stringify({ log_level: e.target.value })).then(flashSaved).catch(() => {});
     });
 
     $("#pick-btn").addEventListener("click", openSpeakerDialog);
@@ -1166,6 +1185,9 @@
     const dev = (state.settings || {}).device || {};
     const sel = $("#set-input");
     if (sel && document.activeElement !== sel) sel.value = dev.kef_input || "";
+    const diagnostics = (state.settings || {}).diagnostics || {};
+    const logLevel = $("#set-log-level");
+    if (logLevel && document.activeElement !== logLevel) logLevel.value = diagnostics.log_level || "INFO";
 
     const s = state.speaker || {};
     $("#target-name").textContent = s.name || t("no_device");

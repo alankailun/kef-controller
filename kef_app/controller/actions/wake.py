@@ -97,7 +97,7 @@ class ControllerDeviceWakeMixin:
                 outcome = "skipped_unsupported_input_source"
                 log.write(
                     "SKIP",
-                    input=target_input,
+                    target_input=target_input,
                     cause="unsupported_input_source",
                 )
                 return False
@@ -113,7 +113,7 @@ class ControllerDeviceWakeMixin:
             log.write(
                 "STEP",
                 step="set_input_source",
-                input=target_input,
+                target_input=target_input,
                 target_ip=self.get_current_kef_ip(),
             )
 
@@ -138,12 +138,11 @@ class ControllerDeviceWakeMixin:
                     self._set_speaker_runtime_state(
                         input_source=current_input,
                         speaker_on=True,
-                        source="display_on_idempotency_check",
+                        trigger="display_on_idempotency_check",
                     )
                     outcome = "success_already_on"
                     log.write(
                         "STEP",
-                        log_level="info",
                         step="set_input_source",
                         status=outcome,
                         actual_input=current_input,
@@ -157,7 +156,6 @@ class ControllerDeviceWakeMixin:
                 self.log_wifi_diagnostics(reason=reason, trigger=f"wake_success_attempt_{attempt}")
                 log.write(
                     "STEP",
-                    log_level="info",
                     step="set_input_source",
                     attempt=attempt,
                     status="success",

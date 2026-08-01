@@ -122,7 +122,13 @@ class KefPowerController(
             try:
                 listener(event_name, payload)
             except Exception as exc:
-                self.log.info(f"Controller event listener failed | event={event_name} | {exc}")
+                self._log_structured(
+                    "WARN",
+                    action="CONTROLLER_EVENT",
+                    trigger=event_name,
+                    cause="listener_failed",
+                    error=repr(exc),
+                )
 
     def _emit_identity_changed(self) -> None:
         self._emit_event("identity_changed", identity=self.get_current_identity())
@@ -158,7 +164,7 @@ class KefPowerController(
             and action in {"STANDBY", "EARLY_STANDBY", "ENDSESSION_STANDBY"}
             and outcome not in _UNCONFIRMED_STANDBY_OUTCOMES
         ):
-            self._set_speaker_runtime_state(speaker_on=False, source=f"power_action:{action}")
+            self._set_speaker_runtime_state(speaker_on=False, trigger=f"power_action:{action}")
         self._emit_event(
             "power_action_finished",
             action=action,

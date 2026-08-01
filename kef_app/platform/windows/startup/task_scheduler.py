@@ -14,6 +14,7 @@ from .common import (
     split_run_value,
     strip_wrapping_quotes,
 )
+from ....structured_logging import log_structured
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,12 +74,16 @@ def delete_task(task_name: str, log=None) -> tuple[bool, str]:
         deleted = completed.returncode == 0 or "cannot find" in (completed.stderr or "").lower()
         if not deleted and log is not None:
             detail = format_process_error(completed, "Task deletion failed")
-            log.info(f"Failed to delete startup task | task={task_name} | detail={detail}")
+            log_structured(
+                log, "WARN", action="STARTUP_TASK", reason="startup_update", cause="task_delete_failed", task=task_name, error=detail
+            )
             return False, detail
         return True, ""
     except Exception as exc:
         if log is not None:
-            log.info(f"Failed to delete startup task | task={task_name} | detail={exc}")
+            log_structured(
+                log, "WARN", action="STARTUP_TASK", reason="startup_update", cause="task_delete_failed", task=task_name, error=repr(exc)
+            )
         return False, str(exc)
 
 
@@ -101,11 +106,26 @@ def create_task(task_name: str, spec: StartupLaunchSpec, log) -> tuple[bool, str
         if completed.returncode == 0:
             return True, ""
         detail = format_process_error(completed, "Task creation failed")
-        log.info(
-            f"Failed to create startup task | task={task_name} | command={spec.run_value} | "
-            f"detail={detail}"
+        log_structured(
+            log,
+            "WARN",
+            action="STARTUP_TASK",
+            reason="startup_update",
+            cause="task_create_failed",
+            task=task_name,
+            command=spec.run_value,
+            error=detail,
         )
         return False, detail
     except Exception as exc:
-        log.info(f"Failed to create startup task | task={task_name} | command={spec.run_value} | detail={exc}")
+        log_structured(
+            log,
+            "WARN",
+            action="STARTUP_TASK",
+            reason="startup_update",
+            cause="task_create_failed",
+            task=task_name,
+            command=spec.run_value,
+            error=repr(exc),
+        )
         return False, str(exc)

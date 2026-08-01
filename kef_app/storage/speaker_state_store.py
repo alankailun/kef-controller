@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 
 from ..config import AppConfig
+from ..structured_logging import log_structured
 from .json_file import write_json_atomic
 from ..devices.speaker_models import SpeakerIdentity, normalize_mac
 
@@ -81,11 +82,21 @@ class SpeakerStateStore:
 
     def load(self) -> PersistedSpeakerState:
         if not self.config.persist_runtime_state:
-            self.log.info("Runtime state persistence is disabled")
+            log_structured(
+                self.log, "SKIP", action="PERSIST_RUNTIME_STATE", reason="startup", cause="persistence_disabled"
+            )
             return PersistedSpeakerState()
 
         if not os.path.exists(self.path):
-            self.log.info(f"State file not found, starting from config defaults | state_file={self.path}")
+            log_structured(
+                self.log,
+                "STEP",
+                action="PERSIST_RUNTIME_STATE",
+                reason="startup",
+                step="load",
+                status="state_file_not_found",
+                state_file=self.path,
+            )
             return PersistedSpeakerState()
 
         try:
@@ -93,19 +104,33 @@ class SpeakerStateStore:
                 data = json.load(f)
             state = PersistedSpeakerState.from_dict(data if isinstance(data, dict) else {})
             self._last_saved_state = state
-            self.log.info(
-                "Loaded saved speaker state | "
-                f"state_file={self.path} ip={state.last_ip or '<empty>'} mac={state.last_mac or '<empty>'} "
-                f"name={state.last_speaker_name or '<empty>'} model={state.last_speaker_model or '<empty>'}"
+            log_structured(
+                self.log,
+                "STEP",
+                action="PERSIST_RUNTIME_STATE",
+                reason="startup",
+                step="load",
+                status="loaded",
+                state_file=self.path,
+                actual_ip=state.last_ip or "<empty>",
+                actual_mac=state.last_mac or "<empty>",
+                actual_speaker_name=state.last_speaker_name or "<empty>",
+                actual_speaker_model=state.last_speaker_model or "<empty>",
             )
             return state
         except Exception as exc:
-            self.log.info(
-                f"Failed to read state file, ignoring it and using config defaults | state_file={self.path} | {exc}"
+            log_structured(
+                self.log,
+                "WARN",
+                action="PERSIST_RUNTIME_STATE",
+                reason="startup",
+                cause="state_file_read_failed",
+                state_file=self.path,
+                error=repr(exc),
             )
             return PersistedSpeakerState()
 
-    def save(self, identity: SpeakerIdentity, source: str) -> bool:
+    def save(self, identity: SpeakerIdentity, trigger: str) -> bool:
         if not self.config.persist_runtime_state:
             return False
 
@@ -121,10 +146,16 @@ class SpeakerStateStore:
 
         if previous is not None and self._same_saved_identity(previous, state):
             self._last_saved_state = previous
-            self.log.debug(
-                "Skipped unchanged speaker state write | "
-                f"source={source} state_file={self.path} ip={state.last_ip or '<empty>'} "
-                f"mac={state.last_mac or '<empty>'}"
+            log_structured(
+                self.log,
+                "SKIP",
+                log_level="DEBUG",
+                action="PERSIST_RUNTIME_STATE",
+                trigger=trigger,
+                cause="unchanged_identity",
+                state_file=self.path,
+                actual_ip=state.last_ip or "<empty>",
+                actual_mac=state.last_mac or "<empty>",
             )
             return False
 
@@ -132,13 +163,28 @@ class SpeakerStateStore:
             write_json_atomic(self.path, state.to_dict(), prefix="speaker_state_")
             self._last_saved_state = state
 
-            self.log.info(
-                "Saved current speaker state | "
-                f"source={source} state_file={self.path} ip={state.last_ip or '<empty>'} "
-                f"mac={state.last_mac or '<empty>'} name={state.last_speaker_name or '<empty>'} "
-                f"model={state.last_speaker_model or '<empty>'}"
+            log_structured(
+                self.log,
+                "STEP",
+                action="PERSIST_RUNTIME_STATE",
+                trigger=trigger,
+                step="save",
+                status="saved",
+                state_file=self.path,
+                actual_ip=state.last_ip or "<empty>",
+                actual_mac=state.last_mac or "<empty>",
+                actual_speaker_name=state.last_speaker_name or "<empty>",
+                actual_speaker_model=state.last_speaker_model or "<empty>",
             )
             return True
         except Exception as exc:
-            self.log.info(f"Failed to save state file | source={source} state_file={self.path} | {exc}")
+            log_structured(
+                self.log,
+                "WARN",
+                action="PERSIST_RUNTIME_STATE",
+                trigger=trigger,
+                cause="state_file_save_failed",
+                state_file=self.path,
+                error=repr(exc),
+            )
             return False

@@ -5,6 +5,8 @@ import threading
 import traceback
 from typing import Callable, Optional, TypeVar
 
+from ..structured_logging import log_structured
+
 
 T = TypeVar("T")
 
@@ -24,14 +26,29 @@ def start_background_task(
 
     def log_callback_failure(callback_name: str) -> None:
         if log is not None:
-            log.error("%s %s callback failed:\n%s", name, callback_name, traceback.format_exc())
+            log_structured(
+                log,
+                "ERROR",
+                action="BACKGROUND_TASK",
+                trigger=name,
+                cause="callback_failed",
+                callback=callback_name,
+                error=traceback.format_exc(),
+            )
 
     def guarded() -> None:
         try:
             result = work()
         except Exception as exc:
             if log is not None:
-                log.error("%s failed:\n%s", name, traceback.format_exc())
+                log_structured(
+                    log,
+                    "ERROR",
+                    action="BACKGROUND_TASK",
+                    trigger=name,
+                    cause="task_failed",
+                    error=traceback.format_exc(),
+                )
             if on_error is not None:
                 try:
                     on_error(exc)

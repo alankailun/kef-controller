@@ -30,7 +30,6 @@ class ControllerIdentityProbeMixin:
             return
         self._log_structured(
             "STEP",
-            log_level="info",
             action="DISCOVER_IP",
             reason=reason,
             step="backend_identity_partial",
@@ -54,7 +53,6 @@ class ControllerIdentityProbeMixin:
             return
         self._log_structured(
             "STEP",
-            log_level="info",
             action="DISCOVER_IP",
             reason=reason,
             step="http_identity_succeeded" if identity else "http_identity_failed",
@@ -149,11 +147,11 @@ class ControllerIdentityProbeMixin:
             action="VALIDATE_TARGET",
             reason=reason,
             trigger=trigger,
-            ip=ip,
-            outcome="identity_found" if info else "identity_not_found",
-            mac=(info.mac_display or info.mac) if info else "<empty>",
-            speaker_model=info.speaker_model if info else "<empty>",
-            speaker_name=info.speaker_name if info else "<empty>",
+            actual_ip=ip,
+            status="identity_found" if info else "identity_not_found",
+            actual_mac=(info.mac_display or info.mac) if info else "<empty>",
+            actual_speaker_model=info.speaker_model if info else "<empty>",
+            actual_speaker_name=info.speaker_name if info else "<empty>",
         )
         return info
 
@@ -165,7 +163,6 @@ class ControllerIdentityProbeMixin:
         if self._can_use_cached_target_without_probe(trigger):
             self._log_structured(
                 "STEP",
-                log_level="info",
                 action="DISCOVER_IP",
                 reason=reason,
                 step="use_cached_target_identity",
@@ -196,7 +193,6 @@ class ControllerIdentityProbeMixin:
             )
             self._log_structured(
                 "STEP",
-                log_level="info",
                 action="DISCOVER_IP",
                 reason=reason,
                 step="use_cached_target_identity",
@@ -235,7 +231,7 @@ class ControllerIdentityProbeMixin:
             match_reason = "cached_target_mac_current_ip"
         changed = False
         if matched:
-            changed = self.update_identity_from_device_info(info, source=trigger)
+            changed = self.update_identity_from_device_info(info, trigger=trigger)
         should_log_success = changed or not matched or not self._is_ui_poll_trigger(trigger)
         if should_log_success:
             self._log_structured(
@@ -273,7 +269,6 @@ class ControllerIdentityProbeMixin:
         if not current_ip:
             self._log_structured(
                 "STEP",
-                log_level="info",
                 action="DISCOVER_IP",
                 reason=reason,
                 step="startup_http_identity",
@@ -294,7 +289,6 @@ class ControllerIdentityProbeMixin:
         ended = self.mono()
         self._log_structured(
             "STEP",
-            log_level="info",
             action="DISCOVER_IP",
             reason=reason,
             step="startup_http_identity",
@@ -319,7 +313,7 @@ class ControllerIdentityProbeMixin:
             ip_refreshed = self.maybe_refresh_kef_ip(reason=reason, trigger=f"{trigger}_refresh")
         reachable = identity_seen or ip_refreshed
         if not reachable:
-            self.record_identity_probe_failure(source=reason, trigger=trigger, cause="identity_refresh_failed")
+            self.record_identity_probe_failure(reason=reason, trigger=trigger, cause="identity_refresh_failed")
 
         if not (self._is_ui_poll_trigger(trigger) and identity_seen and not ip_refreshed):
             self._log_structured(

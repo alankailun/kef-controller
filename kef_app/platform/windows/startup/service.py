@@ -14,6 +14,7 @@ from .reconcile import StartupRegistrationState, read_startup_registration_state
 from .registry import RegistryStartupEntry, delete_registry_commands, write_registry_command
 from .status import get_effective_startup_registration_mode
 from .task_scheduler import ScheduledTaskEntry, create_task, delete_task
+from ....structured_logging import log_structured
 
 
 def _delete_registry_entries(entries: tuple[RegistryStartupEntry, ...], *extra_names: str) -> None:
@@ -175,8 +176,17 @@ def ensure_startup_registration(task_name: str, log, mode: str = "task") -> bool
     if ok:
         actual_mode = get_effective_startup_registration_mode(task_name, log=log)
         trigger = "disabled" if actual_mode == "none" else ("At log on" if actual_mode == "task" else "registry_run")
-        log.info(
-            f"Startup registration self-healed | task={task_name} | requested_mode={normalized_mode} | "
-            f"method={actual_mode} | trigger={trigger} | command={desired.run_value}"
+        log_structured(
+            log,
+            "STEP",
+            action="STARTUP_REGISTRATION",
+            reason="startup_reconcile",
+            trigger=trigger,
+            step="self_heal",
+            status="completed",
+            task=task_name,
+            requested_mode=normalized_mode,
+            actual_mode=actual_mode,
+            command=desired.run_value,
         )
     return ok

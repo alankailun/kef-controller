@@ -176,8 +176,8 @@ class UserConfigStoreTests(unittest.TestCase):
             )
 
             with patch("kef_app.storage.speaker_state_store.write_json_atomic") as write:
-                self.assertTrue(store.save(identity, source="unit_test_first"))
-                self.assertFalse(store.save(identity, source="unit_test_second"))
+                self.assertTrue(store.save(identity, trigger="unit_test_first"))
+                self.assertFalse(store.save(identity, trigger="unit_test_second"))
 
             self.assertEqual(write.call_count, 1)
 

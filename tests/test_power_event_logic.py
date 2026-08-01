@@ -292,7 +292,7 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertTrue(
             any(
                 call.args[:1] == ("STEP",)
-                and call.kwargs.get("log_level") == "info"
+                and "log_level" not in call.kwargs
                 and call.kwargs.get("step") == "schedule_suspend_dispatcher"
                 for call in controller._log_structured.mock_calls
             )
@@ -490,7 +490,7 @@ class PowerEventLogicTests(unittest.TestCase):
             any(
                 call.args[:1] == ("SKIP",)
                 and call.kwargs.get("cause") == "display_on_wake_disabled"
-                and call.kwargs.get("log_level") == "info"
+                and call.kwargs.get("log_level") is None
                 for call in controller._log_structured.mock_calls
             )
         )
@@ -1714,7 +1714,7 @@ class PowerEventLogicTests(unittest.TestCase):
         controller.config.kef_ip = "192.168.1.20"
         controller.config.kef_mac = "AA:BB:CC:DD:EE:02"
 
-        changed = controller.apply_configured_device_target(source="unit_test")
+        changed = controller.apply_configured_device_target(trigger="unit_test")
 
         self.assertTrue(changed)
         self.assertEqual(controller.get_current_kef_ip(), "192.168.1.20")
@@ -1726,7 +1726,7 @@ class PowerEventLogicTests(unittest.TestCase):
         controller.config.kef_ip = "not-an-ip"
         controller.config.kef_mac = "AA:BB:CC:DD:EE:02"
 
-        changed = controller.apply_configured_device_target(source="unit_test")
+        changed = controller.apply_configured_device_target(trigger="unit_test")
 
         self.assertTrue(changed)
         self.assertEqual(controller.get_current_kef_ip(), "192.168.1.10")
@@ -1737,7 +1737,7 @@ class PowerEventLogicTests(unittest.TestCase):
 
         controller.config.kef_mac = ""
 
-        changed = controller.apply_configured_device_target(source="unit_test")
+        changed = controller.apply_configured_device_target(trigger="unit_test")
 
         self.assertTrue(changed)
         self.assertEqual(controller.get_target_kef_mac(), "")
@@ -1747,7 +1747,7 @@ class PowerEventLogicTests(unittest.TestCase):
 
         controller.config.kef_ip = ""
 
-        changed = controller.apply_configured_device_target(source="unit_test")
+        changed = controller.apply_configured_device_target(trigger="unit_test")
 
         self.assertTrue(changed)
         self.assertEqual(controller.get_current_kef_ip(), "")
@@ -2025,7 +2025,7 @@ class PowerEventLogicTests(unittest.TestCase):
             speaker_model="LS50 Wireless II",
         )
 
-        changed = controller.select_kef_device(identity, source="unit_test")
+        changed = controller.select_kef_device(identity, trigger="unit_test")
 
         self.assertTrue(changed)
         self.assertEqual(controller.get_current_kef_ip(), "192.168.1.20")
@@ -2039,7 +2039,7 @@ class PowerEventLogicTests(unittest.TestCase):
             speaker_model="LS50 Wireless II",
         )
 
-        changed = controller.select_kef_device(identity, source="unit_test")
+        changed = controller.select_kef_device(identity, trigger="unit_test")
 
         self.assertTrue(changed)
         self.assertEqual(controller.get_current_kef_ip(), "192.168.1.20")
@@ -2124,7 +2124,7 @@ class PowerEventLogicTests(unittest.TestCase):
 
         self.assertFalse(controller.set_volume("loud"))  # type: ignore[arg-type]
 
-    def test_set_volume_logs_the_completed_action_at_info_level(self):
+    def test_set_volume_uses_the_default_visible_step_policy(self):
         controller = self.make_controller(kef_ip="192.168.1.10")
         controller._ensure_target_identity = Mock(return_value=True)
         controller.get_speaker = Mock(return_value=Mock())
@@ -2134,7 +2134,6 @@ class PowerEventLogicTests(unittest.TestCase):
 
         controller._log_structured.assert_called_once_with(
             "STEP",
-            log_level="info",
             action="SET_VOLUME",
             level=40,
             status="success",
@@ -2164,7 +2163,8 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertIn("STEP action=WAKE | gen=7 | reason=ui_test | step=request", message)
         self.assertEqual(message.count("mono="), 1)
         action_log.write("STEP", action="STANDBY")
-        self.assertIn("Bound log fields ignored conflicting values: action", capture.records[1].getMessage())
+        self.assertIn("WARN action=STRUCTURED_LOGGING", capture.records[1].getMessage())
+        self.assertIn("cause=bound_fields_conflict", capture.records[1].getMessage())
         self.assertIn("STEP action=WAKE", capture.records[2].getMessage())
         self.assertNotIn("action=STANDBY", capture.records[2].getMessage())
 
@@ -2306,7 +2306,7 @@ class PowerEventLogicTests(unittest.TestCase):
         ]
         self.assertEqual(len(transient_logs), 1)
         self.assertEqual(transient_logs[0].args[0], "STEP")
-        self.assertEqual(transient_logs[0].kwargs.get("log_level"), "info")
+        self.assertNotIn("log_level", transient_logs[0].kwargs)
 
     def test_speaker_event_poll_recovers_ip_after_consecutive_failures(self):
         controller = self.make_controller(

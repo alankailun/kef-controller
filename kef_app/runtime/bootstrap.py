@@ -7,6 +7,7 @@ from typing import Iterable, Optional
 from ..config import AppConfig
 from ..storage import SpeakerStateStore, UserConfigStore
 from ..controller import KefPowerController
+from ..structured_logging import log_structured
 from .logging_setup import build_logger
 from ..platform.windows import (
     ensure_single_instance,
@@ -38,7 +39,7 @@ def build_runtime_context(*, extra_log_handlers: Iterable[logging.Handler] = ())
     log = build_logger(config, extra_handlers=extra_log_handlers)
 
     for message in user_config_store.drain_startup_messages():
-        log.info(message)
+        log_structured(log, "EVENT", action="PROCESS", reason="startup", name="CONFIG_LOAD", detail=message)
 
     # Check this before touching the preferred executable or Task Scheduler.
     # A second copy launched from a build folder must not try to replace the

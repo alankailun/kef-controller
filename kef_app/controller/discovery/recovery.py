@@ -139,7 +139,7 @@ class ControllerDiscoveryRecoveryMixin:
                 )
                 return False
 
-            changed = self.update_kef_ip(discovered_ip, source=trigger)
+            changed = self.update_kef_ip(discovered_ip, trigger=trigger)
             end_mono = self.mono()
             self._log_action_sleep_crossing("DISCOVER_IP", None, reason, now, end_mono)
             self._log_structured(
@@ -206,7 +206,7 @@ class ControllerDiscoveryRecoveryMixin:
                 reason=reason,
                 trigger=trigger,
                 seed_ip=seed_ip or "<empty>",
-                known_mac=known_mac or "<empty>",
+                target_mac=known_mac or "<empty>",
                 mono=f"{now:.3f}",
             )
 
@@ -233,8 +233,8 @@ class ControllerDiscoveryRecoveryMixin:
                 )
                 return False
 
-            ip_changed = self.update_kef_ip(device_info.ip, source=trigger)
-            self.update_identity_from_device_info(device_info, source=trigger)
+            ip_changed = self.update_kef_ip(device_info.ip, trigger=trigger)
+            self.update_identity_from_device_info(device_info, trigger=trigger)
             end_mono = self.mono()
             self._log_action_sleep_crossing("BLIND_DISCOVER_IP", None, reason, now, end_mono)
             self._log_structured(
@@ -243,10 +243,10 @@ class ControllerDiscoveryRecoveryMixin:
                 reason=reason,
                 trigger=trigger,
                 outcome="ip_updated" if ip_changed else "ip_confirmed",
-                ip=device_info.ip,
-                mac=device_info.mac_display or device_info.mac or "",
-                speaker_model=device_info.speaker_model or "",
-                speaker_name=device_info.speaker_name or "",
+                actual_ip=device_info.ip,
+                actual_mac=device_info.mac_display or device_info.mac or "",
+                actual_speaker_model=device_info.speaker_model or "",
+                actual_speaker_name=device_info.speaker_name or "",
                 duration_ms=int((end_mono - now) * 1000),
                 mono=f"{end_mono:.3f}",
             )

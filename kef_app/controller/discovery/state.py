@@ -36,13 +36,13 @@ class ControllerIdentityStateMixin:
                 matched_by=self._identity.last_matched_by,
             )
 
-    def select_kef_device(self, identity: SpeakerIdentity, source: str) -> bool:
+    def select_kef_device(self, identity: SpeakerIdentity, trigger: str) -> bool:
         ip = str(identity.ip or "").strip()
         if not is_routable_ipv4(ip):
             self._log_structured(
                 "WARN",
                 action="SELECT_DEVICE",
-                source=source,
+                trigger=trigger,
                 cause="invalid_ip",
                 ip=ip or "<empty>",
             )
@@ -83,32 +83,32 @@ class ControllerIdentityStateMixin:
             self._log_structured(
                 "STEP",
                 action="SELECT_DEVICE",
-                source=source,
-                outcome="unchanged",
-                ip=ip,
-                mac=mac_norm or "<empty>",
+                trigger=trigger,
+                status="unchanged",
+                actual_ip=ip,
+                actual_mac=mac_norm or "<empty>",
             )
             return False
 
         self._refresh_fast_standby_send_cache()
         self.reset_speaker()
-        self._persist_runtime_state(source=f"select:{source}")
+        self._persist_runtime_state(trigger=f"select:{trigger}")
         self._log_structured(
             "STEP",
             action="SELECT_DEVICE",
-            source=source,
-            outcome="selected",
-            old_ip=old_ip or "<empty>",
-            new_ip=ip,
-            old_mac=old_mac or "<empty>",
-            new_mac=mac_norm or "<empty>",
-            speaker_name=speaker_name or "<empty>",
-            speaker_model=speaker_model or "<empty>",
+            trigger=trigger,
+            status="selected",
+            previous_ip=old_ip or "<empty>",
+            actual_ip=ip,
+            previous_mac=old_mac or "<empty>",
+            actual_mac=mac_norm or "<empty>",
+            actual_speaker_name=speaker_name or "<empty>",
+            actual_speaker_model=speaker_model or "<empty>",
         )
         self._emit_identity_changed()
         return True
 
-    def _mark_identity_probe_success(self, source: str) -> bool:
+    def _mark_identity_probe_success(self, trigger: str) -> bool:
         with self._ip_lock:
             current_ip = self._identity.current_ip
             previous_failures = self._identity.probe_failures
@@ -119,16 +119,15 @@ class ControllerIdentityStateMixin:
         if previous_failures or availability_changed:
             self._log_structured(
                 "STEP",
-                log_level="info",
                 action="IDENTITY_PROBE",
                 step="mark_available",
-                source=source,
+                trigger=trigger,
                 current_ip=current_ip or "<empty>",
                 previous_failures=previous_failures,
             )
         return availability_changed
 
-    def record_identity_probe_failure(self, source: str, trigger: str, cause: str) -> bool:
+    def record_identity_probe_failure(self, reason: str, trigger: str, cause: str) -> bool:
         threshold = max(1, int(self.config.identity_probe_failure_threshold))
         with self._ip_lock:
             current_ip = self._identity.current_ip
@@ -150,7 +149,7 @@ class ControllerIdentityStateMixin:
                 "WARN",
                 action="IDENTITY_PROBE",
                 step="mark_failure",
-                source=source,
+                reason=reason,
                 trigger=trigger,
                 cause=cause,
                 current_ip=current_ip,
@@ -176,7 +175,7 @@ class ControllerIdentityStateMixin:
         with self._ip_lock:
             return self._identity.target_mac
 
-    def update_identity_from_device_info(self, info: Optional[SpeakerIdentity], source: str) -> bool:
+    def update_identity_from_device_info(self, info: Optional[SpeakerIdentity], trigger: str) -> bool:
         if not info:
             return False
 
@@ -214,30 +213,29 @@ class ControllerIdentityStateMixin:
                 changed = True
 
         for step, old_val, new_val, kw_old, kw_new, display_val in [
-            ("update_target_mac", old_mac, mac_norm, "old_mac", "new_mac", mac_display or mac_norm),
-            ("update_speaker_name", old_name, speaker_name, "old_name", "new_name", speaker_name),
-            ("update_speaker_model", old_model, speaker_model, "old_model", "new_model", speaker_model),
-            ("update_firmware_version", old_firmware, firmware_version, "old_firmware", "new_firmware", firmware_version),
+            ("update_target_mac", old_mac, mac_norm, "previous_mac", "actual_mac", mac_display or mac_norm),
+            ("update_speaker_name", old_name, speaker_name, "previous_speaker_name", "actual_speaker_name", speaker_name),
+            ("update_speaker_model", old_model, speaker_model, "previous_speaker_model", "actual_speaker_model", speaker_model),
+            ("update_firmware_version", old_firmware, firmware_version, "previous_firmware_version", "actual_firmware_version", firmware_version),
         ]:
             if new_val and old_val != new_val:
                 self._log_structured(
                     "STEP",
-                    log_level="info",
                     action="DISCOVER_IP",
                     step=step,
-                    source=source,
+                    trigger=trigger,
                     **{kw_old: old_val or "<empty>", kw_new: display_val},
                 )
-        availability_changed = self._mark_identity_probe_success(source=f"identity:{source}")
+        availability_changed = self._mark_identity_probe_success(trigger=f"identity:{trigger}")
         if changed:
             self._refresh_fast_standby_send_cache()
         if changed:
-            self._persist_runtime_state(source=f"identity:{source}")
+            self._persist_runtime_state(trigger=f"identity:{trigger}")
         if changed or availability_changed:
             self._emit_identity_changed()
         return changed
 
-    def update_kef_ip(self, new_ip: str, source: str) -> bool:
+    def update_kef_ip(self, new_ip: str, trigger: str) -> bool:
         if not is_routable_ipv4(new_ip):
             return False
         with self._ip_lock:
@@ -245,14 +243,14 @@ class ControllerIdentityStateMixin:
             if old_ip != new_ip:
                 self._identity.current_ip = new_ip
 
-        availability_changed = self._mark_identity_probe_success(source=f"ip:{source}")
+        availability_changed = self._mark_identity_probe_success(trigger=f"ip:{trigger}")
         if old_ip == new_ip:
             self._log_structured(
                 "STEP",
                 action="DISCOVER_IP",
                 step="confirm_current_ip",
-                source=source,
-                ip=new_ip,
+                trigger=trigger,
+                actual_ip=new_ip,
             )
             if availability_changed:
                 self._emit_identity_changed()
@@ -260,20 +258,19 @@ class ControllerIdentityStateMixin:
 
         self._refresh_fast_standby_send_cache()
         self.reset_speaker()
-        self._persist_runtime_state(source=f"ip:{source}")
+        self._persist_runtime_state(trigger=f"ip:{trigger}")
         self._log_structured(
             "STEP",
-            log_level="info",
             action="DISCOVER_IP",
             step="update_current_ip",
-            source=source,
-            old_ip=old_ip,
-            new_ip=new_ip,
+            trigger=trigger,
+            previous_ip=old_ip,
+            actual_ip=new_ip,
         )
         self._emit_identity_changed()
         return True
 
-    def apply_configured_device_target(self, source: str) -> bool:
+    def apply_configured_device_target(self, trigger: str) -> bool:
         configured_ip = str(self.config.kef_ip or "").strip()
         configured_mac = normalize_mac(self.config.kef_mac)
 
@@ -311,7 +308,7 @@ class ControllerIdentityStateMixin:
                 "WARN",
                 action="CONFIG_SYNC",
                 step="configured_device_target",
-                source=source,
+                trigger=trigger,
                 cause="invalid_configured_ip",
                 ip=ignored_ip,
             )
@@ -323,17 +320,16 @@ class ControllerIdentityStateMixin:
         if ip_changed:
             self.reset_speaker()
 
-        self._persist_runtime_state(source=f"config:{source}")
+        self._persist_runtime_state(trigger=f"config:{trigger}")
         self._log_structured(
             "STEP",
-            log_level="info",
             action="CONFIG_SYNC",
             step="configured_device_target",
-            source=source,
-            old_ip=old_ip or "<empty>",
-            new_ip=self.get_current_kef_ip() or "<empty>",
-            old_mac=old_mac or "<empty>",
-            new_mac=self.get_effective_target_mac() or "<empty>",
+            trigger=trigger,
+            previous_ip=old_ip or "<empty>",
+            actual_ip=self.get_current_kef_ip() or "<empty>",
+            previous_mac=old_mac or "<empty>",
+            target_mac=self.get_effective_target_mac() or "<empty>",
             ip_changed=ip_changed,
             mac_changed=mac_changed,
         )
