@@ -26,7 +26,6 @@ STARTUP_METHOD_OPTIONS: tuple[tuple[str, str], ...] = (
     ("Registry Run", "registry"),
 )
 STARTUP_METHOD_LABEL_BY_VALUE = {value: label for label, value in STARTUP_METHOD_OPTIONS}
-STARTUP_METHOD_VALUES = [value for _, value in STARTUP_METHOD_OPTIONS]
 
 
 def startup_mode_for_ui(value: str) -> str:
@@ -78,6 +77,11 @@ SPEAKER_POWER_OPTIONS: tuple[SpeakerPowerOption, ...] = (
         "standby_on_sleep",
         "Put Speaker in Standby When Windows Sleeps",
         "When Windows goes to sleep, put the speaker into standby.",
+    ),
+    SpeakerPowerOption(
+        "standby_on_lid_close",
+        "Put Speaker in Standby When the Laptop Lid Closes",
+        "When the laptop lid closes, put the speaker into standby.",
     ),
     SpeakerPowerOption(
         "endsession_standby_on_shutdown",
@@ -136,7 +140,8 @@ def log_power_behavior_state_message(config: AppConfig) -> str:
 
 
 def get_speaker_power_disabled_reason(key: str) -> str:
-    return f"{SPEAKER_POWER_OPTIONS_BY_KEY[key].title} is currently off."
+    option = SPEAKER_POWER_OPTIONS_BY_KEY.get(key)
+    return f"{option.title if option else key} is currently off."
 
 
 def save_settings_and_sync_startup(

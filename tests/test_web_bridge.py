@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from kef_app.config import AppConfig
+from kef_app.config.user_settings import USER_SETTINGS_FIELD_PATHS
 from kef_app.storage import UserConfigStore
 from kef_app.ui.web_bridge import WebControllerBridge, _EVENTS, _wake_is_confirmed
+from kef_app.ui.settings.settings_service import SPEAKER_POWER_OPTIONS
 
 
 class WebBridgeTests(unittest.TestCase):
@@ -144,6 +147,29 @@ class WebBridgeTests(unittest.TestCase):
 
         self.assertEqual(label, "Lid Close")
         self.assertEqual(setting, "standby_on_lid_close")
+
+    def test_power_event_metadata_stays_consistent_across_config_and_both_uis(self) -> None:
+        event_keys = {setting_key for _label, setting_key, _runner in _EVENTS.values()}
+        settings_keys = {option.key for option in SPEAKER_POWER_OPTIONS}
+        html = (Path(__file__).parents[1] / "kef_app" / "ui" / "web" / "index.html").read_text(encoding="utf-8")
+        event_rows = html.split("const EVENT_ROWS = [", 1)[1].split("];", 1)[0]
+        web_keys = set(re.findall(r'\b(?:wake|standby):\s*"([^"]+)"', event_rows))
+
+        self.assertSetEqual(event_keys, settings_keys)
+        self.assertSetEqual(event_keys, web_keys)
+        self.assertTrue(event_keys.issubset(USER_SETTINGS_FIELD_PATHS))
+
+    def test_disabled_lid_close_simulation_reports_no_action_without_an_exception(self) -> None:
+        bridge = WebControllerBridge.__new__(WebControllerBridge)
+        bridge._config = AppConfig().with_updates(standby_on_lid_close=False)
+        bridge._notify = Mock()
+        bridge._emit_event_result = Mock()
+
+        bridge.runEvent("lid-close")
+
+        detail = "Put Speaker in Standby When the Laptop Lid Closes is currently off."
+        bridge._notify.assert_called_once_with("warning", "Lid Close: no action", detail)
+        bridge._emit_event_result.assert_called_once_with("lid-close", "warning", "No action", detail)
 
     def test_ui_visibility_stops_background_speaker_polling(self) -> None:
         bridge = WebControllerBridge.__new__(WebControllerBridge)

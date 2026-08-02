@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from kef_app.config import AppConfig
-from kef_app.devices.scan.network import build_candidate_networks
+from kef_app.devices.scan.network import build_candidate_networks, get_local_ipv4_candidates
 from kef_app.devices.scan.scan import discover_ip_by_mac, discover_kef_device_blind, discover_kef_devices
 from kef_app.devices.speaker_models import SpeakerIdentity
 
@@ -152,6 +152,16 @@ class DiscoveryScanTests(unittest.TestCase):
             networks = build_candidate_networks("192.168.50.222", config, self.make_logger())
 
         self.assertEqual([str(network) for network in networks], ["192.168.50.0/24"])
+
+    def test_local_ipv4_candidates_returns_only_the_first_routable_route_source(self):
+        with patch(
+            "kef_app.devices.scan.network._source_ip_for_route",
+            side_effect=["10.0.0.5", "10.0.0.6"],
+        ) as source_ip:
+            candidates = get_local_ipv4_candidates("192.168.50.222")
+
+        self.assertEqual(candidates, ["10.0.0.5"])
+        source_ip.assert_called_once_with("8.8.8.8")
 
     def test_manual_scan_probes_candidate_networks_in_priority_order(self):
         config = AppConfig()

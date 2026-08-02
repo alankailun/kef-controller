@@ -69,6 +69,9 @@ _drop_binary_substrings = (
     "qt6websockets", "qt6webview", "qt6httpserver",
     "qt6remoteobjects", "qt6scxml", "qt6statemachine", "qt6texttospeech",
     "qt6virtualkeyboard", "qt6quick3d", "qt6uitools",
+    # The UI is Edge WebView2; Qt only provides the event loop, tray, and
+    # raster QPainter icons. It creates no QML/Quick scene or GL surface.
+    "qt6qml", "qt6quick", "opengl32sw",
 )
 
 _drop_exact_paths = {

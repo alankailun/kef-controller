@@ -19,6 +19,7 @@ EXPECTED_POWER_BEHAVIOR_KEYS = (
     "wake_on_unlock_only",
     "standby_on_lock",
     "standby_on_sleep",
+    "standby_on_lid_close",
     "endsession_standby_on_shutdown",
 )
 
@@ -46,6 +47,7 @@ class PowerBehaviorSettingsTests(unittest.TestCase):
             "standby_on_lock": False,
             "wake_on_unlock_only": True,
             "standby_on_sleep": False,
+            "standby_on_lid_close": True,
             "standby_on_display_off": True,
             "wake_on_display_on": False,
         }
@@ -65,6 +67,9 @@ class PowerBehaviorSettingsTests(unittest.TestCase):
         for option in SPEAKER_POWER_OPTIONS:
             self.assertEqual(get_speaker_power_disabled_reason(option.key), f"{option.title} is currently off.")
 
+    def test_disabled_reason_falls_back_to_the_unknown_key(self):
+        self.assertEqual(get_speaker_power_disabled_reason("unknown_rule"), "unknown_rule is currently off.")
+
     def test_power_behavior_log_message_includes_every_toggle_state(self):
         config = AppConfig().with_updates(
             wake_on_startup=False,
@@ -72,6 +77,7 @@ class PowerBehaviorSettingsTests(unittest.TestCase):
             standby_on_lock=False,
             wake_on_unlock_only=True,
             standby_on_sleep=False,
+            standby_on_lid_close=True,
             standby_on_display_off=True,
             wake_on_display_on=False,
         )
@@ -83,6 +89,7 @@ class PowerBehaviorSettingsTests(unittest.TestCase):
         self.assertIn("lock_standby=False", message)
         self.assertIn("wake_after_unlock=True", message)
         self.assertIn("sleep_standby=False", message)
+        self.assertIn("lid_close_standby=True", message)
         self.assertIn("display_off_standby=True", message)
         self.assertIn("display_on_wake=False", message)
 

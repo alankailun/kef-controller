@@ -14,6 +14,8 @@ def write_json_atomic(path: str, payload: dict[str, Any], *, prefix: str) -> Non
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(tmp_path, path)
     except Exception:
         try:

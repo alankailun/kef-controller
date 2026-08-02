@@ -8,7 +8,7 @@
     input_source: ["输入源", "Input Source"], device_info: ["设备信息", "Device Info"],
     ip_address: ["IP 地址", "IP Address"], mac_address: ["MAC 地址", "MAC Address"], model: ["型号", "Model"], firmware: ["固件", "Firmware"], health_last_check: ["最近心跳", "Last heartbeat"], health_last_action: ["最近动作", "Last action"], health_last_issue: ["最近异常", "Last issue"], health_none: ["暂无", "None yet"], health_now: ["刚刚", "Just now"], health_seconds_ago: ["$ 秒前", "$s ago"], failed: ["失败", "Failed"],
     connected_on: ["已连接 · 开机", "Connected · On"], connected_standby: ["已连接 · 待机", "Connected · Standby"], disconnected: ["未连接", "Disconnected"],
-    no_device: ["未找到设备", "No device found"], power_on: ["开机", "On"], power_standby: ["待机", "Standby"], switching: ["切换中", "Switching"],
+    no_device: ["未找到设备", "No device found"], power_on: ["开机", "On"], power_standby: ["待机", "Standby"],
     waking: ["正在唤醒", "Waking"], waiting_confirmation: ["等待音箱确认…", "Waiting for speaker confirmation…"], entering_standby: ["正在待机", "Entering standby"],
     standby_help: ["扬声器处于待机状态。唤醒后即可调节音量和输入源。", "The speaker is in standby. Wake it to control volume and input."],
     configure_speaker_help: ["未找到扬声器——去设置选择扬声器并扫描一下。", "No speaker found — choose and scan for a speaker in Settings."], configure_speaker: ["去设置扫描", "Set up speaker"],

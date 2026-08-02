@@ -39,10 +39,6 @@ def read_registry_command(task_name: str) -> str:
         return ""
 
 
-def delete_registry_command(task_name: str) -> None:
-    delete_registry_commands((task_name,))
-
-
 def delete_registry_commands(value_names: tuple[str, ...]) -> None:
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_KEY, 0, winreg.KEY_SET_VALUE) as key:
