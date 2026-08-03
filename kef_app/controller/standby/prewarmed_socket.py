@@ -519,7 +519,6 @@ class PrewarmedStandbySocketMonitorMixin:
         sock: socket.socket,
         request: bytes,
         *,
-        target_ip: str,
         started_mono: float,
         deadline_s: float,
         frozen_limit_s: float,
@@ -613,7 +612,6 @@ class PrewarmedStandbySocketMonitorMixin:
         target_ip: str,
         request: bytes,
         *,
-        started_mono: float,
         deadline_s: float,
         frozen_limit_s: float,
         deadline_mono: float | None = None,
@@ -634,7 +632,6 @@ class PrewarmedStandbySocketMonitorMixin:
             outcome = self._send_standby_over_socket(
                 sock,
                 request,
-                target_ip=target_ip,
                 started_mono=attempt_started_mono,
                 deadline_s=deadline_s,
                 frozen_limit_s=frozen_limit_s,
@@ -695,7 +692,6 @@ class PrewarmedStandbySocketMonitorMixin:
             outcome = self._send_standby_over_prewarmed_pool(
                 current_ip,
                 request,
-                started_mono=started,
                 deadline_s=deadline_s,
                 frozen_limit_s=frozen_limit_s,
                 deadline_mono=deadline_mono,
@@ -738,7 +734,6 @@ class PrewarmedStandbySocketMonitorMixin:
             outcome = self._send_standby_over_socket(
                 sock,
                 request,
-                target_ip=current_ip,
                 started_mono=started,
                 deadline_s=deadline_s,
                 frozen_limit_s=frozen_limit_s,
@@ -825,7 +820,6 @@ class PrewarmedStandbySocketMonitorMixin:
         outcome = self._send_standby_over_prewarmed_pool(
             snapshot.target_ip,
             snapshot.standby_request_bytes,
-            started_mono=started,
             deadline_s=deadline_s,
             frozen_limit_s=frozen_limit_s,
             deadline_mono=deadline_mono,

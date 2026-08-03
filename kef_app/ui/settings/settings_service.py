@@ -9,25 +9,15 @@ from ...structured_logging import log_structured
 from ...storage import UserConfigStore
 from ...devices.speaker_models import INPUT_SOURCE_OPTIONS
 from ...platform.windows import (
-    describe_startup_registration_status,
-    get_effective_startup_registration_mode,
     get_last_startup_error,
-    is_startup_registered,
     normalize_startup_mode,
+    read_startup_registration_snapshot,
     set_startup_registered,
     startup_error_suggests_repair,
 )
 
 TASK_NAME = "KEF Controller"
 INPUTS = [value for _, value in INPUT_SOURCE_OPTIONS]
-STARTUP_METHOD_OPTIONS: tuple[tuple[str, str], ...] = (
-    ("Off", "off"),
-    ("Task Scheduler", "task"),
-    ("Registry Run", "registry"),
-)
-STARTUP_METHOD_LABEL_BY_VALUE = {value: label for label, value in STARTUP_METHOD_OPTIONS}
-
-
 def startup_mode_for_ui(value: str) -> str:
     raw = str(value or "").strip().lower()
     if raw in {"off", "none", "disabled", "disable"}:
@@ -102,27 +92,6 @@ class SettingsSaveResult:
     startup_detail: str
     actual_startup_registered: bool
     actual_startup_mode: str
-    startup_initial_checked: bool
-
-
-@dataclass(frozen=True)
-class StartupStatusView:
-    current_label: str
-    current_detail: str
-    cleanup_needed: bool
-    current_is_healthy: bool
-    preferred_label: str
-    cleanup_text: str
-
-
-def apply_runtime_config(
-    runtime_config: AppConfig,
-    updated: AppConfig,
-    editable_fields: tuple[str, ...],
-) -> AppConfig:
-    for field_name in editable_fields:
-        setattr(runtime_config, field_name, getattr(updated, field_name))
-    return runtime_config
 
 
 def log_power_behavior_state_message(config: AppConfig) -> str:
@@ -149,7 +118,6 @@ def save_settings_and_sync_startup(
     *,
     config_store: UserConfigStore,
     desired_startup: bool,
-    startup_initial_checked: bool,
     startup_mode_changed: bool,
     log: logging.Logger,
     task_name: str = TASK_NAME,
@@ -159,16 +127,9 @@ def save_settings_and_sync_startup(
 ) -> SettingsSaveResult:
     config_ok = config_store.save(updated)
     startup_ok = True
-    _status_label, _status_detail, cleanup_needed, current_is_healthy = describe_startup_registration_status(
-        task_name,
-        log=log,
-    )
-    actual_startup_registered_before = is_startup_registered(task_name)
-    actual_startup_mode_before = (
-        get_effective_startup_registration_mode(task_name, log=log)
-        if actual_startup_registered_before
-        else "none"
-    )
+    before = read_startup_registration_snapshot(task_name, log=log)
+    actual_startup_registered_before = before.registered
+    actual_startup_mode_before = before.effective_mode
     selected_mode = startup_mode_for_ui(updated.startup_registration_mode)
     actual_mode_matches_selection = startup_mode_for_ui(actual_startup_mode_before) == selected_mode
     startup_changed = (
@@ -177,8 +138,8 @@ def save_settings_and_sync_startup(
             desired_startup
             and (
                 startup_mode_changed
-                or cleanup_needed
-                or not current_is_healthy
+                or before.cleanup_needed
+                or not before.healthy
                 or not actual_mode_matches_selection
             )
         )
@@ -240,13 +201,9 @@ def save_settings_and_sync_startup(
     elif startup_changed and not desired_startup and not startup_ok and retry_disable_with_uac:
         startup_detail = get_last_startup_error() or startup_detail
 
-    actual_startup_registered = is_startup_registered(task_name)
-    next_startup_initial_checked = actual_startup_registered
-    actual_startup_mode = (
-        get_effective_startup_registration_mode(task_name, log=log)
-        if actual_startup_registered
-        else "none"
-    )
+    after = read_startup_registration_snapshot(task_name, log=log)
+    actual_startup_registered = after.registered
+    actual_startup_mode = after.effective_mode
 
     if (
         actual_startup_registered
@@ -278,27 +235,4 @@ def save_settings_and_sync_startup(
         startup_detail=startup_detail,
         actual_startup_registered=actual_startup_registered,
         actual_startup_mode=actual_startup_mode,
-        startup_initial_checked=next_startup_initial_checked,
-    )
-
-
-def get_startup_status_view(
-    config: AppConfig,
-    *,
-    log: logging.Logger,
-    task_name: str = TASK_NAME,
-) -> StartupStatusView:
-    current_label, current_detail, cleanup_needed, current_is_healthy = describe_startup_registration_status(
-        task_name,
-        log=log,
-    )
-    preferred_mode = startup_mode_for_ui(config.startup_registration_mode)
-    preferred_label = STARTUP_METHOD_LABEL_BY_VALUE.get(preferred_mode, "Task Scheduler")
-    return StartupStatusView(
-        current_label=current_label,
-        current_detail=current_detail,
-        cleanup_needed=cleanup_needed,
-        current_is_healthy=current_is_healthy,
-        preferred_label=preferred_label,
-        cleanup_text="Needed" if cleanup_needed else "Clean",
     )

@@ -4,7 +4,7 @@ import json
 import math
 import os
 from dataclasses import fields as dataclass_fields, is_dataclass
-from typing import Any, Callable
+from typing import Any, Callable, ClassVar
 
 from ..config import AppConfig
 from ..config.user_settings import (
@@ -132,7 +132,7 @@ def _coerce_input_source(value: Any) -> str:
 
 class UserConfigStore:
     USER_EDITABLE_FIELDS = _USER_SETTINGS_FIELD_NAMES
-    FIELD_COERCERS: dict[str, Callable[[Any], Any]] = {
+    FIELD_COERCERS: ClassVar[dict[str, Callable[[Any], Any]]] = {
         "ui_language": _coerce_ui_language,
         "backend_name": _coerce_string,
         "kef_ip": _coerce_string,
@@ -163,8 +163,6 @@ class UserConfigStore:
         "home_external_poll_interval": _coerce_positive_float,
         "home_event_poll_enabled": lambda value: UserConfigStore._coerce_bool(value),
         "home_event_poll_timeout": _coerce_positive_float,
-        "home_event_reconcile_interval": _coerce_positive_float,
-        "home_volume_debounce_ms": _coerce_positive_int,
         "speaker_event_recovery_failure_threshold": _coerce_positive_int,
         "tray_identity_poll_interval": _coerce_positive_float,
         "identity_probe_failure_threshold": _coerce_positive_int,

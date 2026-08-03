@@ -731,16 +731,23 @@ class ControllerSessionEventsMixin:
             self._log_display_on_wake_skip(reason, "display_on_wake_disabled", event_mono=event_mono)
             return False
 
-        if self._is_session_locked():
+        fence_generation = self._current_generation()
+        deferred_status = self._defer_display_on_wake_if_locked(
+            previous_intent,
+            event_mono=event_mono,
+            reason=reason,
+            expected_generation=fence_generation,
+        )
+        if deferred_status == "deferred":
             self._log_display_on_wake_skip(
                 reason,
-                "session_locked",
+                "deferred_until_unlock",
                 event_mono=event_mono,
                 desired_state=previous_intent.send_status,
                 desired_reason=previous_intent.reason,
             )
-            return False
-        if self._is_session_ending():
+            return True
+        if deferred_status == "session_ending":
             self._log_display_on_wake_skip(
                 reason,
                 "session_ending",
@@ -749,8 +756,30 @@ class ControllerSessionEventsMixin:
                 desired_reason=previous_intent.reason,
             )
             return False
-        generation = self._new_generation("wake", reason, mono=f"{event_mono:.3f}")
-        self._mark_wake_scheduled()
+        if deferred_status == "stale_generation":
+            self._log_display_on_wake_skip(
+                reason,
+                "generation_changed_before_wake",
+                event_mono=event_mono,
+                desired_state=previous_intent.send_status,
+                desired_reason=previous_intent.reason,
+            )
+            return False
+        generation, claim_status = self._claim_wake_generation(
+            reason,
+            expected_generation=fence_generation,
+            mono=f"{event_mono:.3f}",
+            dedupe=False,
+        )
+        if generation is None:
+            self._log_display_on_wake_skip(
+                reason,
+                "generation_changed_before_wake" if claim_status == "stale_generation" else "wake_deduped",
+                event_mono=event_mono,
+                desired_state=previous_intent.send_status,
+                desired_reason=previous_intent.reason,
+            )
+            return False
         self._log_structured(
             "STEP",
             action="WAKE",
@@ -795,23 +824,63 @@ class ControllerSessionEventsMixin:
                 previous_status=previous_intent.send_status,
                 since_event_ms=int(max(0.0, self.mono() - previous_intent.event_mono) * 1000),
             )
+        deferred, deferred_status = self._take_deferred_display_on_wake()
         if self._is_session_ending():
             self._log_structured("SKIP", action="WAKE", reason=reason, cause="session_ending")
             return
 
-        if not self.config.wake_on_unlock_only:
+        if deferred is not None and deferred_status != "current":
+            self._log_structured(
+                "SKIP",
+                action="WAKE",
+                reason=reason,
+                cause="deferred_display_on_stale",
+                source_gen=deferred.source_generation,
+                fence_gen=deferred.fence_generation,
+                current_gen=self._current_generation(),
+                deferred_cause=deferred_status,
+            )
+
+        normal_unlock_wake = bool(self.config.wake_on_unlock_only)
+        deferred_display_on_wake = deferred if deferred_status == "current" else None
+        if not normal_unlock_wake and deferred_display_on_wake is None:
             self._log_structured("SKIP", action="WAKE", reason=reason, cause="unlock_wake_disabled")
             return
-        if self._should_dedupe_wake_schedule_and_mark(reason):
+        wake_reason = reason if normal_unlock_wake else "DISPLAY_ON_DEFERRED_TO_UNLOCK"
+        wake_delay = self.config.unlock_wake_delay if normal_unlock_wake else self.config.display_on_wake_delay
+        expected_generation = deferred_display_on_wake.fence_generation if deferred_display_on_wake else None
+        generation, claim_status = self._claim_wake_generation(
+            wake_reason,
+            expected_generation=expected_generation,
+        )
+        if generation is None:
+            if claim_status == "stale_generation":
+                self._log_structured(
+                    "SKIP",
+                    action="WAKE",
+                    reason=wake_reason,
+                    cause="deferred_display_on_stale_before_claim",
+                    source_gen=deferred_display_on_wake.source_generation if deferred_display_on_wake else None,
+                    fence_gen=expected_generation,
+                    current_gen=self._current_generation(),
+                )
             return
-
-        generation = self._new_generation("wake", reason)
+        fields: dict[str, object] = {}
+        if deferred_display_on_wake is not None:
+            fields = {
+                "step": "deferred_display_on_consumed",
+                "source_gen": deferred_display_on_wake.source_generation,
+                "fence_gen": deferred_display_on_wake.fence_generation,
+                "previous_send_status": deferred_display_on_wake.previous_send_status,
+            }
+        if fields:
+            self._log_structured("STEP", action="WAKE", reason=wake_reason, gen=generation, **fields)
         self._schedule_delayed_wake(
             generation,
-            reason,
-            self.config.unlock_wake_delay,
-            "unlock_delay",
-            "UnlockWake",
+            wake_reason,
+            wake_delay,
+            "unlock_delay" if normal_unlock_wake else "deferred_display_on_delay",
+            "UnlockWake" if normal_unlock_wake else "DeferredDisplayOnWake",
             skip_if_already_on=True,
         )
 

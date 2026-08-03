@@ -31,7 +31,7 @@ excluded_qt_modules = [
     # Multimedia (qfluentwidgets.multimedia is not used by this app)
     "PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets", "PySide6.QtSpatialAudio",
     # Networking APIs not used by the controller.
-    "PySide6.QtNetworkAuth", "PySide6.QtHttpServer",
+    "PySide6.QtNetwork", "PySide6.QtNetworkAuth", "PySide6.QtHttpServer",
     # PDF
     "PySide6.QtPdf", "PySide6.QtPdfWidgets",
     # Connectivity / sensors / hardware
@@ -67,6 +67,7 @@ _drop_binary_substrings = (
     "qt6bluetooth", "qt6nfc", "qt6location", "qt6sensors",
     "qt6serialport", "qt6serialbus", "qt6sql", "qt6test", "qt6designer", "qt6help",
     "qt6websockets", "qt6webview", "qt6httpserver",
+    "qt6network", "qt6svg",
     "qt6remoteobjects", "qt6scxml", "qt6statemachine", "qt6texttospeech",
     "qt6virtualkeyboard", "qt6quick3d", "qt6uitools",
     # The UI is Edge WebView2; Qt only provides the event loop, tray, and
@@ -95,6 +96,10 @@ _drop_exact_paths = {
     # small and preserves modern Windows styling for native controls such as
     # combo boxes, scrollbars, and push buttons in the frozen app.
     "pyside6/plugins/generic/qtuiotouchplugin.dll",
+    "pyside6/plugins/networkinformation/qnetworklistmanager.dll",
+    "pyside6/plugins/tls/qcertonlybackend.dll",
+    "pyside6/plugins/tls/qopensslbackend.dll",
+    "pyside6/plugins/tls/qschannelbackend.dll",
     "pyside6/plugins/platforminputcontexts/qtvirtualkeyboardplugin.dll",
 }
 

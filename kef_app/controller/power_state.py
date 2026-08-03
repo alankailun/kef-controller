@@ -33,6 +33,15 @@ class DisplayOffStandbyIntentSnapshot:
     send_status: str
 
 
+@dataclass(frozen=True, slots=True)
+class DeferredDisplayOnWake:
+    source_generation: int
+    fence_generation: int
+    event_mono: float
+    reason: str
+    previous_send_status: str
+
+
 _CANCELLABLE_STANDBY_STATUS_TRANSITIONS = {
     "pending": frozenset({"sending", "failed"}),
     "sending": frozenset({"retry_waiting", "sent", "confirmed", "failed"}),
@@ -69,6 +78,11 @@ class ControllerStateMixin:
     def _current_desired_state(self) -> tuple[str, str]:
         with self._state_lock:
             return self._power.desired_state, self._power.desired_reason
+
+    def is_system_sleep_pending(self) -> bool:
+        """Return only the Windows sleep fence, not prewarm health."""
+        with self._state_lock:
+            return bool(self._windows_events.system_sleep_pending)
 
     @staticmethod
     def _display_off_intent_snapshot(intent: DisplayOffStandbyIntent) -> DisplayOffStandbyIntentSnapshot:
@@ -136,6 +150,85 @@ class ControllerStateMixin:
             if advance_generation:
                 self._power.generation += 1
             return snapshot
+
+    def _defer_display_on_wake_if_locked(
+        self,
+        previous_intent: DisplayOffStandbyIntentSnapshot,
+        *,
+        event_mono: float,
+        reason: str,
+        expected_generation: int,
+    ) -> str:
+        """Atomically defer a DisplayOn wake only while its fence is current."""
+        with self._state_lock:
+            if self._power.generation != expected_generation:
+                return "stale_generation"
+            if self._power.session_ending:
+                return "session_ending"
+            if not self._power.session_locked:
+                return "session_unlocked"
+            self._power.deferred_display_on_wake = DeferredDisplayOnWake(
+                source_generation=previous_intent.generation,
+                fence_generation=expected_generation,
+                event_mono=event_mono,
+                reason=reason,
+                previous_send_status=previous_intent.send_status,
+            )
+            return "deferred"
+
+    def _take_deferred_display_on_wake(self) -> tuple[DeferredDisplayOnWake | None, str]:
+        """Consume a deferred request and report whether its generation survived."""
+        with self._state_lock:
+            deferred = self._power.deferred_display_on_wake
+            self._power.deferred_display_on_wake = None
+            if deferred is None:
+                return None, "none"
+            if deferred.fence_generation != self._power.generation:
+                return deferred, "stale_generation"
+            if self._power.session_ending:
+                return deferred, "session_ending"
+            return deferred, "current"
+
+    def _claim_wake_generation(
+        self,
+        reason: str,
+        *,
+        expected_generation: int | None = None,
+        mono: str | None = None,
+        dedupe: bool = True,
+    ) -> tuple[int | None, str]:
+        """Deduplicate and create one wake generation under the state lock."""
+        with self._state_lock:
+            if expected_generation is not None and self._power.generation != expected_generation:
+                return None, "stale_generation"
+            now = self.mono()
+            if dedupe and (
+                self._power.last_wake_schedule_mono > 0
+                and (now - self._power.last_wake_schedule_mono) < self.config.resume_dedup_window
+            ):
+                self._log_structured(
+                    "SKIP",
+                    action="WAKE",
+                    reason=reason,
+                    cause="wake_event_deduped",
+                    window_s=f"{self.config.resume_dedup_window:.2f}",
+                    mono=f"{now:.3f}",
+                )
+                return None, "deduped"
+            self._power.last_wake_schedule_mono = now
+            self._power.generation += 1
+            generation = self._power.generation
+            self._power.desired_state = "wake"
+            self._power.desired_reason = reason
+            self._log_structured(
+                "STATE",
+                action="POWER_GENERATION",
+                desired="wake",
+                gen=generation,
+                reason=reason,
+                mono=mono,
+            )
+            return generation, "claimed"
 
     def _display_off_intent_is_active(self, generation: int) -> bool:
         with self._state_lock:
@@ -275,26 +368,3 @@ class ControllerStateMixin:
                 return True
             self._power.last_resume_event_mono = now
             return False
-
-    def _should_dedupe_wake_schedule_and_mark(self, reason: str) -> bool:
-        with self._state_lock:
-            now = self.mono()
-            if (
-                self._power.last_wake_schedule_mono > 0
-                and (now - self._power.last_wake_schedule_mono) < self.config.resume_dedup_window
-            ):
-                self._log_structured(
-                    "SKIP",
-                    action="WAKE",
-                    reason=reason,
-                    cause="wake_event_deduped",
-                    window_s=f"{self.config.resume_dedup_window:.2f}",
-                    mono=f"{now:.3f}",
-                )
-                return True
-            self._power.last_wake_schedule_mono = now
-            return False
-
-    def _mark_wake_scheduled(self) -> None:
-        with self._state_lock:
-            self._power.last_wake_schedule_mono = self.mono()

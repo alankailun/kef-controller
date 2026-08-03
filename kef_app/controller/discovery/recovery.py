@@ -216,8 +216,9 @@ class ControllerDiscoveryRecoveryMixin:
                 c,
                 self.log,
                 # Recovery sweeps are pointless once the session is tearing
-                # down; let them unwind instead of finishing the whole subnet.
-                should_continue=lambda: not self._is_session_ending(),
+                # down or Windows is entering sleep; let them unwind instead
+                # of finishing the whole subnet.
+                should_continue=lambda: not self._is_session_ending() and not self.is_system_sleep_pending(),
             )
             if not device_info:
                 end_mono = self.mono()

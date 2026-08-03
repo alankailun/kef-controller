@@ -25,12 +25,10 @@ from .startup.elevation import (
 from .startup.launch import ensure_preferred_executable, runtime_launch_spec
 from .startup.service import ensure_startup_registration, set_startup_registered
 from .startup.status import (
-    describe_startup_registration,
     describe_startup_registration_status,
     get_effective_startup_registration_mode,
-    get_startup_registration_mode,
     is_startup_registered,
-    is_task_startup_current,
+    read_startup_registration_snapshot,
 )
 
 __all__ = [
@@ -40,20 +38,18 @@ __all__ = [
     "TASK_NAME_FLAG",
     "VALID_STARTUP_MODES",
     "StartupLaunchSpec",
-    "describe_startup_registration",
     "describe_startup_registration_status",
     "ensure_preferred_executable",
     "ensure_startup_registration",
     "get_effective_startup_registration_mode",
     "get_last_startup_error",
-    "get_startup_registration_mode",
     "is_startup_registered",
-    "is_task_startup_current",
     "maybe_handle_startup_task_repair",
     "normalize_startup_mode",
     "remove_startup_task_with_uac",
     "repair_task_startup_with_uac",
     "runtime_launch_spec",
+    "read_startup_registration_snapshot",
     "set_startup_registered",
     "startup_error_suggests_repair",
 ]

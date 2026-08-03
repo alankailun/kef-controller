@@ -16,9 +16,8 @@ from ..devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_sourc
 from ..storage import UserConfigStore
 from ..runtime.logging_setup import apply_logger_level
 from ..platform.windows import (
-    get_effective_startup_registration_mode,
-    is_startup_registered,
     remove_startup_task_with_uac,
+    read_startup_registration_snapshot,
     repair_task_startup_with_uac,
 )
 from .background_tasks import start_background_task
@@ -102,12 +101,9 @@ class WebControllerBridge(QObject):
         self._speaker_on: bool | None = None
         self._input = normalize_input_source(config.kef_input)
         self._volume: int | None = None
-        self._startup_registered = is_startup_registered("KEF Controller")
-        self._startup_mode = (
-            get_effective_startup_registration_mode("KEF Controller", log=controller.log)
-            if self._startup_registered
-            else "none"
-        )
+        startup_snapshot = read_startup_registration_snapshot("KEF Controller", log=controller.log)
+        self._startup_registered = startup_snapshot.registered
+        self._startup_mode = startup_snapshot.effective_mode
         self._startup_busy = False
         self._startup_requested_mode: str | None = None
         self._startup_requested_enabled: bool | None = None
@@ -272,7 +268,7 @@ class WebControllerBridge(QObject):
             self._notify(
                 "warning" if warning or not saved else "success",
                 "Target saved" if saved else "Target updated for this session",
-                self._target_saved_message(status, saved_ip, saved_mac),
+                self._target_saved_message(status, saved_ip),
             )
             self.publish_state()
 
@@ -301,12 +297,10 @@ class WebControllerBridge(QObject):
         self.publish_state()
 
         def work():
-            was_enabled = is_startup_registered("KEF Controller")
             return save_settings_and_sync_startup(
                 updated,
                 config_store=self._config_store,
                 desired_startup=desired_startup,
-                startup_initial_checked=was_enabled,
                 startup_mode_changed=startup_mode_changed,
                 log=self._controller.log,
                 retry_enable_task_with_uac=lambda: repair_task_startup_with_uac(
@@ -541,6 +535,8 @@ class WebControllerBridge(QObject):
     def _poll_speaker_state(self, force: bool = False) -> None:
         if not force and not self._config.home_event_poll_enabled:
             return
+        if self._controller.is_system_sleep_pending():
+            return
         if not self._controller.get_current_kef_ip():
             return
 
@@ -712,7 +708,7 @@ class WebControllerBridge(QObject):
         }.get(status, "The target details could not be validated.")
 
     @staticmethod
-    def _target_saved_message(status: str, ip: str, mac: str) -> str:
+    def _target_saved_message(status: str, ip: str) -> str:
         if status == "verified":
             return f"Verified {ip} and saved the target."
         if status == "recovered":

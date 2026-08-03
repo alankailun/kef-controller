@@ -10,6 +10,7 @@ from kef_app.platform.windows.startup.reconcile import (
     StartupRegistrationState,
     read_startup_registration_state,
 )
+from kef_app.platform.windows.startup.status import StartupRegistrationSnapshot
 from kef_app.platform.windows.startup.registry import RegistryStartupEntry
 from kef_app.platform.windows.startup.task_scheduler import ScheduledTaskEntry
 from kef_app.platform.windows.startup import service as startup_service
@@ -40,6 +41,16 @@ def make_state(**updates) -> StartupRegistrationState:
 
 
 class StartupReconcileTests(unittest.TestCase):
+    @staticmethod
+    def startup_snapshot(
+        registered: bool,
+        mode: str,
+        *,
+        cleanup_needed: bool = False,
+        healthy: bool = True,
+    ) -> StartupRegistrationSnapshot:
+        return StartupRegistrationSnapshot(registered, mode, "Startup", "test", cleanup_needed, healthy)
+
     def test_interactive_startup_update_skips_global_task_enumeration(self):
         with (
             patch(
@@ -234,18 +245,15 @@ class StartupReconcileTests(unittest.TestCase):
 
         with (
             patch("kef_app.ui.settings.settings_service.set_startup_registered", return_value=True) as set_startup,
-            patch("kef_app.ui.settings.settings_service.is_startup_registered", return_value=True),
-            patch("kef_app.ui.settings.settings_service.get_effective_startup_registration_mode", return_value="task"),
             patch(
-                "kef_app.ui.settings.settings_service.describe_startup_registration_status",
-                return_value=("Task Scheduler / At log on", "Task Scheduler startup is active.", False, True),
+                "kef_app.ui.settings.settings_service.read_startup_registration_snapshot",
+                return_value=self.startup_snapshot(True, "task"),
             ),
         ):
             result = save_settings_and_sync_startup(
                 config,
                 config_store=config_store,
                 desired_startup=True,
-                startup_initial_checked=True,
                 startup_mode_changed=True,
                 log=Mock(),
             )
@@ -261,21 +269,15 @@ class StartupReconcileTests(unittest.TestCase):
 
         with (
             patch("kef_app.ui.settings.settings_service.set_startup_registered", return_value=True) as set_startup,
-            patch("kef_app.ui.settings.settings_service.is_startup_registered", return_value=True),
             patch(
-                "kef_app.ui.settings.settings_service.get_effective_startup_registration_mode",
-                side_effect=["registry", "task"],
-            ),
-            patch(
-                "kef_app.ui.settings.settings_service.describe_startup_registration_status",
-                return_value=("Registry Run", "Normal login startup is active.", False, True),
+                "kef_app.ui.settings.settings_service.read_startup_registration_snapshot",
+                side_effect=[self.startup_snapshot(True, "registry"), self.startup_snapshot(True, "task")],
             ),
         ):
             result = save_settings_and_sync_startup(
                 config,
                 config_store=config_store,
                 desired_startup=True,
-                startup_initial_checked=True,
                 startup_mode_changed=False,
                 log=Mock(),
             )
@@ -292,18 +294,15 @@ class StartupReconcileTests(unittest.TestCase):
 
         with (
             patch("kef_app.ui.settings.settings_service.set_startup_registered", return_value=True) as set_startup,
-            patch("kef_app.ui.settings.settings_service.is_startup_registered", side_effect=[True, False]),
-            patch("kef_app.ui.settings.settings_service.get_effective_startup_registration_mode", return_value="registry"),
             patch(
-                "kef_app.ui.settings.settings_service.describe_startup_registration_status",
-                return_value=("Registry Run", "Normal login startup is active.", False, True),
+                "kef_app.ui.settings.settings_service.read_startup_registration_snapshot",
+                side_effect=[self.startup_snapshot(True, "registry"), self.startup_snapshot(False, "none", healthy=False)],
             ),
         ):
             result = save_settings_and_sync_startup(
                 config,
                 config_store=config_store,
                 desired_startup=False,
-                startup_initial_checked=True,
                 startup_mode_changed=True,
                 log=Mock(),
             )
@@ -323,18 +322,15 @@ class StartupReconcileTests(unittest.TestCase):
         with (
             patch("kef_app.ui.settings.settings_service.set_startup_registered", return_value=False),
             patch("kef_app.ui.settings.settings_service.get_last_startup_error", return_value="ERROR: Access is denied."),
-            patch("kef_app.ui.settings.settings_service.is_startup_registered", side_effect=[True, True]),
-            patch("kef_app.ui.settings.settings_service.get_effective_startup_registration_mode", return_value="task"),
             patch(
-                "kef_app.ui.settings.settings_service.describe_startup_registration_status",
-                return_value=("Task Scheduler / At log on", "Task Scheduler startup is active.", False, True),
+                "kef_app.ui.settings.settings_service.read_startup_registration_snapshot",
+                return_value=self.startup_snapshot(True, "task"),
             ),
         ):
             result = save_settings_and_sync_startup(
                 config,
                 config_store=config_store,
                 desired_startup=False,
-                startup_initial_checked=True,
                 startup_mode_changed=True,
                 log=Mock(),
                 retry_disable_with_uac=retry_disable,
@@ -355,18 +351,15 @@ class StartupReconcileTests(unittest.TestCase):
         with (
             patch("kef_app.ui.settings.settings_service.set_startup_registered", return_value=False) as set_startup,
             patch("kef_app.ui.settings.settings_service.get_last_startup_error", return_value="ERROR: Access is denied."),
-            patch("kef_app.ui.settings.settings_service.is_startup_registered", side_effect=[False, True]),
-            patch("kef_app.ui.settings.settings_service.get_effective_startup_registration_mode", return_value="task"),
             patch(
-                "kef_app.ui.settings.settings_service.describe_startup_registration_status",
-                return_value=("Disabled", "No Windows startup entry is currently registered.", False, False),
+                "kef_app.ui.settings.settings_service.read_startup_registration_snapshot",
+                side_effect=[self.startup_snapshot(False, "none", healthy=False), self.startup_snapshot(True, "task")],
             ),
         ):
             result = save_settings_and_sync_startup(
                 config,
                 config_store=config_store,
                 desired_startup=True,
-                startup_initial_checked=False,
                 startup_mode_changed=True,
                 log=Mock(),
                 retry_enable_task_with_uac=retry_enable,
@@ -389,18 +382,15 @@ class StartupReconcileTests(unittest.TestCase):
                 side_effect=[False, True],
             ) as set_startup,
             patch("kef_app.ui.settings.settings_service.get_last_startup_error", side_effect=["ERROR: Access is denied.", ""]),
-            patch("kef_app.ui.settings.settings_service.is_startup_registered", side_effect=[False, True]),
-            patch("kef_app.ui.settings.settings_service.get_effective_startup_registration_mode", return_value="registry"),
             patch(
-                "kef_app.ui.settings.settings_service.describe_startup_registration_status",
-                return_value=("Disabled", "No Windows startup entry is currently registered.", False, False),
+                "kef_app.ui.settings.settings_service.read_startup_registration_snapshot",
+                side_effect=[self.startup_snapshot(False, "none", healthy=False), self.startup_snapshot(True, "registry")],
             ),
         ):
             result = save_settings_and_sync_startup(
                 config,
                 config_store=config_store,
                 desired_startup=True,
-                startup_initial_checked=False,
                 startup_mode_changed=True,
                 log=Mock(),
                 retry_enable_registry_with_uac=retry_cleanup,

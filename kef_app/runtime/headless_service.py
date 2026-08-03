@@ -126,6 +126,159 @@ class HeadlessRuntime:
             except Exception as exc:
                 self._log("WARN", trigger="request_stop", cause="post_wm_close_failed", error=repr(exc))
 
+    def _prepare_startup_connection(self) -> None:
+        if not self.controller.get_current_kef_ip():
+            self.controller.maybe_refresh_kef_ip(reason="startup_missing_ip", trigger="startup_missing_ip", force=True)
+        try:
+            self.controller.get_speaker(fresh=True)
+            self.controller.capture_identity_from_current_ip(reason="startup_prebuild", trigger="startup_prebuild_success")
+            self.controller.log_current_http_identity_snapshot(reason="startup_prebuild", trigger="startup_http_identity")
+            self._log("STEP", reason="startup", trigger="initial_prebuild", step="prebuild_connection", status="ready", current_ip=self.controller.get_current_kef_ip() or "<empty>")
+        except Exception as exc:
+            self._log("WARN", reason="startup", trigger="initial_prebuild", cause="connection_prebuild_failed", current_ip=self.controller.get_current_kef_ip() or "<empty>", error=repr(exc))
+            self.controller.reset_speaker()
+            if self.controller.maybe_refresh_kef_ip(reason="startup_prebuild", trigger="startup_prebuild", force=True):
+                try:
+                    self.controller.get_speaker(fresh=True)
+                    self.controller.capture_identity_from_current_ip(reason="startup_prebuild", trigger="startup_prebuild_recover_success")
+                    self.controller.log_current_http_identity_snapshot(reason="startup_prebuild", trigger="startup_http_identity_recover_success")
+                    self._log("STEP", reason="startup", trigger="initial_prebuild_recovery", step="prebuild_connection", status="recovered", current_ip=self.controller.get_current_kef_ip() or "<empty>")
+                except Exception as recovery_error:
+                    self._log("WARN", reason="startup", trigger="initial_prebuild_recovery", cause="connection_prebuild_failed_after_recovery", current_ip=self.controller.get_current_kef_ip() or "<empty>", error=repr(recovery_error))
+                    self.controller.reset_speaker()
+
+    def _start_controller_services(self) -> None:
+        threading.Thread(target=self.controller.on_startup, daemon=True, name="StartupWake").start()
+        self.controller.start_speaker_event_monitor("headless_runtime")
+        self.controller.start_prewarmed_standby_socket_monitor("headless_runtime")
+        self.controller.start_display_off_standby_dispatcher()
+
+    def _handle_query_end_session(self, hwnd: int, wparam: int, lparam: int) -> bool:
+        shutdown_block_active = False
+        try:
+            create_shutdown_block_reason(hwnd, "Putting the KEF speaker into standby")
+            shutdown_block_active = True
+            self._log("EVENT", reason="windows_end_session", trigger="wm_queryendsession", name="SHUTDOWN_BLOCK_CREATED", hwnd=hwnd)
+        except Exception as exc:
+            self._log("WARN", reason="windows_end_session", trigger="wm_queryendsession", cause="shutdown_block_create_failed", hwnd=hwnd, error=repr(exc))
+        try:
+            should_post_self_close = self.controller.on_query_end_session(wparam, lparam)
+        finally:
+            if shutdown_block_active:
+                try:
+                    destroy_shutdown_block_reason(hwnd)
+                    self._log("EVENT", reason="windows_end_session", trigger="wm_queryendsession", name="SHUTDOWN_BLOCK_DESTROYED", hwnd=hwnd)
+                except Exception as exc:
+                    self._log("WARN", reason="windows_end_session", trigger="wm_queryendsession", cause="shutdown_block_destroy_failed", hwnd=hwnd, error=repr(exc))
+        if should_post_self_close:
+            try:
+                win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+                self._log("EVENT", reason="windows_end_session", trigger="wm_queryendsession", name="WM_CLOSE_POSTED", hwnd=hwnd)
+            except Exception as exc:
+                self._log("WARN", reason="windows_end_session", trigger="wm_queryendsession", cause="post_wm_close_failed", hwnd=hwnd, error=repr(exc))
+        return True
+
+    def _handle_power_broadcast(self, wparam: int, lparam: int) -> bool:
+        if wparam == PBT_POWERSETTINGCHANGE:
+            event_mono = self.controller.mono()
+            change = decode_power_setting_change(lparam)
+            if change is None:
+                self.controller.log_power_event("PBT_POWERSETTINGCHANGE_UNPARSED", wparam, lparam, event_mono=event_mono)
+                return True
+            if change.name == "GUID_CONSOLE_DISPLAY_STATE" and change.value == MONITOR_DISPLAY_OFF:
+                self.controller._record_power_setting_event_state(change, event_mono)
+                self.controller.on_display_off(event_mono)
+                self.controller._log_power_setting_event_line(change, wparam, lparam, event_mono)
+            else:
+                self.controller.log_power_setting_event(change, wparam, lparam, event_mono=event_mono)
+            if change.name == "GUID_LIDSWITCH_STATE_CHANGE" and change.value == LID_CLOSED:
+                self.controller.dispatch_off_pump_standby("lid_closed", "POWER_LID_CLOSED", event_mono, callback_started_mono=event_mono, step="dispatch_bounded_early_standby")
+            elif change.name == "GUID_CONSOLE_DISPLAY_STATE" and change.value == MONITOR_DISPLAY_ON:
+                self.controller.on_display_on(event_mono)
+            return True
+        if wparam == PBT_APMSUSPEND:
+            event_mono = self.controller.mono()
+            try:
+                self.controller.log_power_event("PBT_APMSUSPEND", wparam, lparam, event_mono=event_mono)
+                self.controller.dispatch_off_pump_standby("suspend", "PBT_APMSUSPEND", event_mono, callback_started_mono=event_mono, step="dispatch_suspend_standby")
+            finally:
+                self.controller.stop_speaker_event_monitor()
+                self.controller.stop_prewarmed_standby_socket_monitor()
+            return True
+        if wparam in {PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND}:
+            reason = "PBT_APMRESUMEAUTOMATIC" if wparam == PBT_APMRESUMEAUTOMATIC else "PBT_APMRESUMESUSPEND"
+            self.controller.log_power_event(reason, wparam, lparam)
+            self.controller.start_display_off_standby_dispatcher()
+            self.controller.start_prewarmed_standby_socket_monitor(reason)
+            self.controller.start_speaker_event_monitor(reason)
+            self.controller.on_resume(reason)
+            return True
+        self.controller.log_power_event("WM_POWERBROADCAST_OTHER", wparam, lparam)
+        return True
+
+    def _handle_session_change(self, wparam: int, lparam: int) -> int:
+        if wparam == WTS_SESSION_LOCK:
+            event_mono = self.controller.mono()
+            self.controller._record_session_event_state("WTS_SESSION_LOCK", event_mono)
+            state_recorded_mono = self.controller.mono()
+            self.controller._log_structured("EVENT", action="WINDOW_SESSION_EVENT", kind="SESSION", name="WTS_SESSION_LOCK_MSG_ENTRY", wparam=f"0x{wparam:04X}", session=lparam, async_worker=True, mono=f"{event_mono:.3f}")
+            self.controller._log_session_event_line("WTS_SESSION_LOCK", wparam, lparam, event_mono)
+            self.controller.dispatch_off_pump_standby("lock", "WTS_SESSION_LOCK", event_mono, state_recorded_mono=state_recorded_mono, callback_started_mono=event_mono, step="dispatch_bounded_early_standby")
+            return 0
+        if wparam == WTS_SESSION_UNLOCK:
+            self.controller.log_session_event("WTS_SESSION_UNLOCK", wparam, lparam)
+            self.controller.on_unlock("WTS_SESSION_UNLOCK")
+            return 0
+        if wparam == WTS_SESSION_DESKTOP_READY:
+            self.controller.log_session_event("WTS_SESSION_DESKTOP_READY", wparam, lparam)
+            self._log("SKIP", reason="WTS_SESSION_DESKTOP_READY", trigger="session_event", cause="diagnostic_only_no_wake")
+            return 0
+        self.controller.log_session_event("WM_WTSSESSION_CHANGE_OTHER", wparam, lparam)
+        return 0
+
+    def _register_message_window(self, wnd_proc) -> tuple[object, int, bool, list[tuple[str, int]], IpInterfaceChangeMonitor | None]:
+        """Create the hidden window and register every Windows notification."""
+        wc = win32gui.WNDCLASS()
+        wc.lpfnWndProc = wnd_proc
+        wc.lpszClassName = f"KEFController_{os.getpid()}"
+        wc.hInstance = win32api.GetModuleHandle(None)
+        win32gui.RegisterClass(wc)
+        hwnd = win32gui.CreateWindow(wc.lpszClassName, self.config.app_name, 0, 0, 0, 0, 0, 0, 0, wc.hInstance, None)
+        if not hwnd:
+            raise RuntimeError("CreateWindow returned 0; power/session events cannot be received")
+        with self._hwnd_lock:
+            self._hwnd = hwnd
+
+        session_registered = bool(WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION))
+        if session_registered:
+            self._log("EVENT", trigger="startup_registration", name="SESSION_NOTIFICATIONS_REGISTERED", hwnd=hwnd)
+        else:
+            self._log("WARN", trigger="startup_registration", cause="session_notifications_register_failed", hwnd=hwnd)
+
+        handles: list[tuple[str, int]] = []
+        for setting_name, setting_guid in POWER_SETTING_GUIDS:
+            try:
+                handle = RegisterPowerSettingNotification(hwnd, ctypes.byref(setting_guid), DEVICE_NOTIFY_WINDOW_HANDLE)
+            except Exception as exc:
+                self._log("WARN", trigger="startup_registration", cause="power_setting_register_failed", setting=setting_name, hwnd=hwnd, error=repr(exc))
+                continue
+            if handle:
+                handles.append((setting_name, handle))
+                self._log("EVENT", trigger="startup_registration", name="POWER_SETTING_REGISTERED", setting=setting_name, hwnd=hwnd, handle=handle)
+            else:
+                self._log("WARN", trigger="startup_registration", cause="power_setting_register_failed", setting=setting_name, hwnd=hwnd, error_code=ctypes.get_last_error())
+
+        monitor: IpInterfaceChangeMonitor | None = None
+        try:
+            monitor = IpInterfaceChangeMonitor(self.controller.log_network_interface_event).start()
+            if monitor.active:
+                self._log("EVENT", trigger="startup_registration", name="NETWORK_NOTIFICATIONS_REGISTERED")
+            else:
+                self._log("WARN", trigger="startup_registration", cause="network_notifications_register_failed", error=monitor.error)
+        except Exception as exc:
+            self._log("WARN", trigger="startup_registration", cause="network_notifications_register_failed", error=repr(exc))
+        return wc, hwnd, session_registered, handles, monitor
+
     def run(self):
         self.controller.log_banner()
         log_startup_context(self.log, self.process_start_wall)
@@ -133,68 +286,8 @@ class HeadlessRuntime:
         exit_reason = "main_return"
         last_exception_trace = None
 
-        if not self.controller.get_current_kef_ip():
-            self.controller.maybe_refresh_kef_ip(reason="startup_missing_ip", trigger="startup_missing_ip", force=True)
-
-        try:
-            self.controller.get_speaker(fresh=True)
-            self.controller.capture_identity_from_current_ip(reason="startup_prebuild", trigger="startup_prebuild_success")
-            self.controller.log_current_http_identity_snapshot(
-                reason="startup_prebuild",
-                trigger="startup_http_identity",
-            )
-            self._log(
-                "STEP",
-                reason="startup",
-                trigger="initial_prebuild",
-                step="prebuild_connection",
-                status="ready",
-                current_ip=self.controller.get_current_kef_ip() or "<empty>",
-            )
-        except Exception as exc:
-            self._log(
-                "WARN",
-                reason="startup",
-                trigger="initial_prebuild",
-                cause="connection_prebuild_failed",
-                current_ip=self.controller.get_current_kef_ip() or "<empty>",
-                error=repr(exc),
-            )
-            self.controller.reset_speaker()
-            if self.controller.maybe_refresh_kef_ip(reason="startup_prebuild", trigger="startup_prebuild", force=True):
-                try:
-                    self.controller.get_speaker(fresh=True)
-                    self.controller.capture_identity_from_current_ip(
-                        reason="startup_prebuild",
-                        trigger="startup_prebuild_recover_success",
-                    )
-                    self.controller.log_current_http_identity_snapshot(
-                        reason="startup_prebuild",
-                        trigger="startup_http_identity_recover_success",
-                    )
-                    self._log(
-                        "STEP",
-                        reason="startup",
-                        trigger="initial_prebuild_recovery",
-                        step="prebuild_connection",
-                        status="recovered",
-                        current_ip=self.controller.get_current_kef_ip() or "<empty>",
-                    )
-                except Exception as exc2:
-                    self._log(
-                        "WARN",
-                        reason="startup",
-                        trigger="initial_prebuild_recovery",
-                        cause="connection_prebuild_failed_after_recovery",
-                        current_ip=self.controller.get_current_kef_ip() or "<empty>",
-                        error=repr(exc2),
-                    )
-                    self.controller.reset_speaker()
-
-        threading.Thread(target=self.controller.on_startup, daemon=True, name="StartupWake").start()
-        self.controller.start_speaker_event_monitor("headless_runtime")
-        self.controller.start_prewarmed_standby_socket_monitor("headless_runtime")
-        self.controller.start_display_off_standby_dispatcher()
+        self._prepare_startup_connection()
+        self._start_controller_services()
 
         resource_lock = threading.Lock()
         cleaned_up = False
@@ -326,69 +419,7 @@ class HeadlessRuntime:
         def wnd_proc(hwnd_, msg, wparam, lparam):
             try:
                 if msg == win32con.WM_QUERYENDSESSION:
-                    shutdown_block_active = False
-                    try:
-                        create_shutdown_block_reason(hwnd_, "Putting the KEF speaker into standby")
-                        shutdown_block_active = True
-                        self._log(
-                            "EVENT",
-                            reason="windows_end_session",
-                            trigger="wm_queryendsession",
-                            name="SHUTDOWN_BLOCK_CREATED",
-                            hwnd=hwnd_,
-                        )
-                    except Exception as exc:
-                        self._log(
-                            "WARN",
-                            reason="windows_end_session",
-                            trigger="wm_queryendsession",
-                            cause="shutdown_block_create_failed",
-                            hwnd=hwnd_,
-                            error=repr(exc),
-                        )
-
-                    try:
-                        should_post_self_close = self.controller.on_query_end_session(wparam, lparam)
-                    finally:
-                        if shutdown_block_active:
-                            try:
-                                destroy_shutdown_block_reason(hwnd_)
-                                self._log(
-                                    "EVENT",
-                                    reason="windows_end_session",
-                                    trigger="wm_queryendsession",
-                                    name="SHUTDOWN_BLOCK_DESTROYED",
-                                    hwnd=hwnd_,
-                                )
-                            except Exception as exc:
-                                self._log(
-                                    "WARN",
-                                    reason="windows_end_session",
-                                    trigger="wm_queryendsession",
-                                    cause="shutdown_block_destroy_failed",
-                                    hwnd=hwnd_,
-                                    error=repr(exc),
-                                )
-                    if should_post_self_close:
-                        try:
-                            win32gui.PostMessage(hwnd_, win32con.WM_CLOSE, 0, 0)
-                            self._log(
-                                "EVENT",
-                                reason="windows_end_session",
-                                trigger="wm_queryendsession",
-                                name="WM_CLOSE_POSTED",
-                                hwnd=hwnd_,
-                            )
-                        except Exception as exc:
-                            self._log(
-                                "WARN",
-                                reason="windows_end_session",
-                                trigger="wm_queryendsession",
-                                cause="post_wm_close_failed",
-                                hwnd=hwnd_,
-                                error=repr(exc),
-                            )
-                    return True
+                    return self._handle_query_end_session(hwnd_, wparam, lparam)
 
                 if msg == win32con.WM_ENDSESSION:
                     ending = bool(wparam)
@@ -406,112 +437,10 @@ class HeadlessRuntime:
                     return 0
 
                 if msg == WM_POWERBROADCAST:
-                    if wparam == PBT_POWERSETTINGCHANGE:
-                        event_mono = self.controller.mono()
-                        change = decode_power_setting_change(lparam)
-                        if change is None:
-                            self.controller.log_power_event(
-                                "PBT_POWERSETTINGCHANGE_UNPARSED",
-                                wparam,
-                                lparam,
-                                event_mono=event_mono,
-                            )
-                            return True
-
-                        if change.name == "GUID_CONSOLE_DISPLAY_STATE" and change.value == MONITOR_DISPLAY_OFF:
-                            # Record enough state for cancellation, enqueue the
-                            # resident sender, then write diagnostics.  A slow
-                            # logging path must never stand before the first
-                            # display-off send attempt.
-                            self.controller._record_power_setting_event_state(change, event_mono)
-                            self.controller.on_display_off(event_mono)
-                            self.controller._log_power_setting_event_line(change, wparam, lparam, event_mono)
-                        else:
-                            self.controller.log_power_setting_event(change, wparam, lparam, event_mono=event_mono)
-                        if change.name == "GUID_LIDSWITCH_STATE_CHANGE" and change.value == LID_CLOSED:
-                            self.controller.dispatch_off_pump_standby(
-                                "lid_closed",
-                                "POWER_LID_CLOSED",
-                                event_mono,
-                                callback_started_mono=event_mono,
-                                step="dispatch_bounded_early_standby",
-                            )
-                        elif change.name == "GUID_CONSOLE_DISPLAY_STATE" and change.value == MONITOR_DISPLAY_ON:
-                            self.controller.on_display_on(event_mono)
-                        return True
-
-                    if wparam == PBT_APMSUSPEND:
-                        event_mono = self.controller.mono()
-                        try:
-                            self.controller.log_power_event("PBT_APMSUSPEND", wparam, lparam, event_mono=event_mono)
-                            self.controller.dispatch_off_pump_standby(
-                                "suspend",
-                                "PBT_APMSUSPEND",
-                                event_mono,
-                                callback_started_mono=event_mono,
-                                step="dispatch_suspend_standby",
-                            )
-                        finally:
-                            self.controller.stop_speaker_event_monitor()
-                            self.controller.stop_prewarmed_standby_socket_monitor()
-                        return True
-                    if wparam == PBT_APMRESUMEAUTOMATIC:
-                        self.controller.log_power_event("PBT_APMRESUMEAUTOMATIC", wparam, lparam)
-                        self.controller.start_display_off_standby_dispatcher()
-                        self.controller.start_prewarmed_standby_socket_monitor("PBT_APMRESUMEAUTOMATIC")
-                        self.controller.start_speaker_event_monitor("PBT_APMRESUMEAUTOMATIC")
-                        self.controller.on_resume("PBT_APMRESUMEAUTOMATIC")
-                        return True
-                    if wparam == PBT_APMRESUMESUSPEND:
-                        self.controller.log_power_event("PBT_APMRESUMESUSPEND", wparam, lparam)
-                        self.controller.start_display_off_standby_dispatcher()
-                        self.controller.start_prewarmed_standby_socket_monitor("PBT_APMRESUMESUSPEND")
-                        self.controller.start_speaker_event_monitor("PBT_APMRESUMESUSPEND")
-                        self.controller.on_resume("PBT_APMRESUMESUSPEND")
-                        return True
-                    self.controller.log_power_event("WM_POWERBROADCAST_OTHER", wparam, lparam)
-                    return True
+                    return self._handle_power_broadcast(wparam, lparam)
 
                 if msg == WM_WTSSESSION_CHANGE:
-                    if wparam == WTS_SESSION_LOCK:
-                        msg_entry_mono = self.controller.mono()
-                        self.controller._record_session_event_state("WTS_SESSION_LOCK", msg_entry_mono)
-                        state_recorded_mono = self.controller.mono()
-                        self.controller._log_structured(
-                            "EVENT",
-                            action="WINDOW_SESSION_EVENT",
-                            kind="SESSION",
-                            name="WTS_SESSION_LOCK_MSG_ENTRY",
-                            wparam=f"0x{wparam:04X}",
-                            session=lparam,
-                            async_worker=True,
-                            mono=f"{msg_entry_mono:.3f}",
-                        )
-                        self.controller._log_session_event_line("WTS_SESSION_LOCK", wparam, lparam, msg_entry_mono)
-                        self.controller.dispatch_off_pump_standby(
-                            "lock",
-                            "WTS_SESSION_LOCK",
-                            msg_entry_mono,
-                            state_recorded_mono=state_recorded_mono,
-                            callback_started_mono=msg_entry_mono,
-                            step="dispatch_bounded_early_standby",
-                        )
-                        return 0
-                    if wparam == WTS_SESSION_UNLOCK:
-                        self.controller.log_session_event("WTS_SESSION_UNLOCK", wparam, lparam)
-                        self.controller.on_unlock("WTS_SESSION_UNLOCK")
-                        return 0
-                    if wparam == WTS_SESSION_DESKTOP_READY:
-                        self.controller.log_session_event("WTS_SESSION_DESKTOP_READY", wparam, lparam)
-                        self._log(
-                            "SKIP",
-                            reason="WTS_SESSION_DESKTOP_READY",
-                            trigger="session_event",
-                            cause="diagnostic_only_no_wake",
-                        )
-                        return 0
-                    self.controller.log_session_event("WM_WTSSESSION_CHANGE_OTHER", wparam, lparam)
-                    return 0
+                    return self._handle_session_change(wparam, lparam)
 
                 if msg == win32con.WM_CLOSE:
                     self._log("EVENT", trigger="wm_close", name="WM_CLOSE_RECEIVED", hwnd=hwnd_)
@@ -541,99 +470,8 @@ class HeadlessRuntime:
                 return win32gui.DefWindowProc(hwnd_, msg, wparam, lparam)
 
         try:
-            wc = win32gui.WNDCLASS()
-            wc.lpfnWndProc = wnd_proc
-            wc.lpszClassName = f"KEFController_{os.getpid()}"
-            wc.hInstance = win32api.GetModuleHandle(None)
-            win32gui.RegisterClass(wc)
+            wc, hwnd, session_notify_registered, power_notify_handles, network_interface_monitor = self._register_message_window(wnd_proc)
             class_registered = True
-
-            hwnd = win32gui.CreateWindow(
-                wc.lpszClassName,
-                self.config.app_name,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                wc.hInstance,
-                None,
-            )
-            if not hwnd:
-                raise RuntimeError("CreateWindow returned 0; power/session events cannot be received")
-
-            with self._hwnd_lock:
-                self._hwnd = hwnd
-
-            if WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION):
-                session_notify_registered = True
-                self._log("EVENT", trigger="startup_registration", name="SESSION_NOTIFICATIONS_REGISTERED", hwnd=hwnd)
-            else:
-                self._log(
-                    "WARN", trigger="startup_registration", cause="session_notifications_register_failed", hwnd=hwnd
-                )
-
-            for setting_name, setting_guid in POWER_SETTING_GUIDS:
-                try:
-                    handle = RegisterPowerSettingNotification(
-                        hwnd,
-                        ctypes.byref(setting_guid),
-                        DEVICE_NOTIFY_WINDOW_HANDLE,
-                    )
-                except Exception as exc:
-                    self._log(
-                        "WARN",
-                        trigger="startup_registration",
-                        cause="power_setting_register_failed",
-                        setting=setting_name,
-                        hwnd=hwnd,
-                        error=repr(exc),
-                    )
-                    continue
-
-                if handle:
-                    power_notify_handles.append((setting_name, handle))
-                    self._log(
-                        "EVENT",
-                        trigger="startup_registration",
-                        name="POWER_SETTING_REGISTERED",
-                        setting=setting_name,
-                        hwnd=hwnd,
-                        handle=handle,
-                    )
-                else:
-                    err = ctypes.get_last_error()
-                    self._log(
-                        "WARN",
-                        trigger="startup_registration",
-                        cause="power_setting_register_failed",
-                        setting=setting_name,
-                        hwnd=hwnd,
-                        error_code=err,
-                    )
-
-            try:
-                network_interface_monitor = IpInterfaceChangeMonitor(self.controller.log_network_interface_event).start()
-                if network_interface_monitor.active:
-                    self._log(
-                        "EVENT", trigger="startup_registration", name="NETWORK_NOTIFICATIONS_REGISTERED"
-                    )
-                else:
-                    self._log(
-                        "WARN",
-                        trigger="startup_registration",
-                        cause="network_notifications_register_failed",
-                        error=network_interface_monitor.error,
-                    )
-            except Exception as exc:
-                self._log(
-                    "WARN",
-                    trigger="startup_registration",
-                    cause="network_notifications_register_failed",
-                    error=repr(exc),
-                )
 
             self._log("STATE", trigger="message_pump", desired="running", hwnd=hwnd)
             win32gui.PumpMessages()

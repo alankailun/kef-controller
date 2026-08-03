@@ -5,7 +5,6 @@ from .speaker_models import (
     normalize_input_source,
     normalize_mac,
     normalize_model_label,
-    normalize_name,
 )
 
 __all__ = [
@@ -15,5 +14,4 @@ __all__ = [
     "normalize_input_source",
     "normalize_mac",
     "normalize_model_label",
-    "normalize_name",
 ]

@@ -186,7 +186,6 @@ class ControllerLoggingMixin:
             tray_poll_s=c.tray_identity_poll_interval,
             home_event_poll=c.home_event_poll_enabled,
             event_timeout_s=c.home_event_poll_timeout,
-            event_reconcile_s=c.home_event_reconcile_interval,
             event_recovery_failures=c.speaker_event_recovery_failure_threshold,
             offline_threshold=c.identity_probe_failure_threshold,
             prewarmed_enabled=c.prewarmed_standby_enabled,

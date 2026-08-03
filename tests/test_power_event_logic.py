@@ -512,7 +512,7 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._set_session_locked(True)
         controller._schedule_delayed_wake = Mock()
 
-        self.assertFalse(controller.on_display_on(controller.mono()))
+        self.assertTrue(controller.on_display_on(controller.mono()))
 
         self.assertTrue(intent.cancel_event.is_set())
         self.assertFalse(controller._display_off_intent_is_active(intent.generation))
@@ -675,7 +675,7 @@ class PowerEventLogicTests(unittest.TestCase):
             )
         )
 
-    def test_display_on_skips_while_session_locked(self):
+    def test_display_on_defers_while_session_locked(self):
         controller = self.make_controller(wake_on_display_on=True)
         self.begin_display_off_intent(controller)
         controller._set_session_locked(True)
@@ -684,15 +684,56 @@ class PowerEventLogicTests(unittest.TestCase):
 
         result = controller.on_display_on(controller.mono())
 
-        self.assertFalse(result)
+        self.assertTrue(result)
         controller._schedule_delayed_wake.assert_not_called()
         self.assertTrue(
             any(
                 call.args[:1] == ("SKIP",)
-                and call.kwargs.get("cause") == "session_locked"
+                and call.kwargs.get("cause") == "deferred_until_unlock"
                 for call in controller._log_structured.mock_calls
             )
         )
+
+    def test_deferred_display_on_wakes_after_unlock_when_unlock_wake_is_disabled(self):
+        controller = self.make_controller(wake_on_display_on=True, wake_on_unlock_only=False, display_on_wake_delay=0.4)
+        self.begin_display_off_intent(controller)
+        controller._set_session_locked(True)
+        controller._schedule_delayed_wake = Mock()
+
+        self.assertTrue(controller.on_display_on(controller.mono()))
+        controller.on_unlock("WTS_SESSION_UNLOCK")
+
+        controller._schedule_delayed_wake.assert_called_once_with(
+            3,
+            "DISPLAY_ON_DEFERRED_TO_UNLOCK",
+            0.4,
+            "deferred_display_on_delay",
+            "DeferredDisplayOnWake",
+            skip_if_already_on=True,
+        )
+
+    def test_new_display_off_invalidates_deferred_display_on_wake(self):
+        controller = self.make_controller(wake_on_display_on=True, wake_on_unlock_only=False)
+        self.begin_display_off_intent(controller)
+        controller._set_session_locked(True)
+        controller._schedule_delayed_wake = Mock()
+
+        self.assertTrue(controller.on_display_on(controller.mono()))
+        self.begin_display_off_intent(controller)
+        controller.on_unlock("WTS_SESSION_UNLOCK")
+
+        controller._schedule_delayed_wake.assert_not_called()
+
+    def test_deferred_display_on_and_unlock_rule_schedule_only_once(self):
+        controller = self.make_controller(wake_on_display_on=True, wake_on_unlock_only=True)
+        self.begin_display_off_intent(controller)
+        controller._set_session_locked(True)
+        controller._schedule_delayed_wake = Mock()
+
+        self.assertTrue(controller.on_display_on(controller.mono()))
+        controller.on_unlock("WTS_SESSION_UNLOCK")
+
+        controller._schedule_delayed_wake.assert_called_once()
 
     def test_display_on_wake_dedupes_following_unlock(self):
         controller = self.make_controller(wake_on_display_on=True, wake_on_unlock_only=True)

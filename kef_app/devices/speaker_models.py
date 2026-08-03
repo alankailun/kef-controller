@@ -8,10 +8,6 @@ def normalize_mac(mac: str) -> str:
     return re.sub(r"[^0-9A-Fa-f]", "", mac or "").upper()
 
 
-def normalize_name(name: str) -> str:
-    return re.sub(r"\s+", " ", (name or "").strip()).casefold()
-
-
 INPUT_SOURCE_OPTIONS: tuple[tuple[str, str], ...] = (
     ("Optical", "optical"),
     ("Coaxial", "coaxial"),

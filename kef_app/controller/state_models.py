@@ -35,6 +35,11 @@ class PowerActionState:
     desired_state: str = ""
     desired_reason: str = ""
     display_off_standby_intent: Any = None
+    # A DisplayOn notification received while Windows is still locked is not a
+    # reason to wake immediately.  The controller keeps a generation-fenced
+    # request here and lets WTS_SESSION_UNLOCK consume it when it is still
+    # current.
+    deferred_display_on_wake: Any = None
     active_actions: int = 0
     last_resume_event_mono: float = 0.0
     last_wake_schedule_mono: float = 0.0

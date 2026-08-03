@@ -289,6 +289,18 @@ class ControllerDeviceControlsMixin:
                 self.start_speaker_event_monitor(restart_reason)
 
     def poll_external_ui_state(self, reason: str, trigger: str) -> tuple[Optional[str], Optional[int], Optional[bool]]:
+        # The bridge checks this before it starts a worker.  Recheck here so a
+        # suspend that arrives between scheduling and execution cannot trigger
+        # connector recovery or subnet discovery while Windows is freezing.
+        if self.is_system_sleep_pending():
+            self._log_structured(
+                "SKIP",
+                action="POLL_EXTERNAL_STATE",
+                reason=reason,
+                trigger=trigger,
+                cause="system_sleep_pending",
+            )
+            return None, None, None
         if not self.get_current_kef_ip():
             if not self.resolve_target(reason=reason, trigger=trigger, force_recovery=False):
                 return None, None, None
@@ -565,18 +577,6 @@ class ControllerDeviceControlsMixin:
             return False
         finally:
             self._action_lock.release()
-
-    def get_volume(self) -> Optional[int]:
-        if not self._ensure_target_identity("GET_VOLUME", "ui_live", "get_volume_before_read", force_recovery=False):
-            return None
-        try:
-            with temporary_socket_timeout(self.config.socket_timeout):
-                speaker = self.get_speaker(fresh=False)
-                return speaker.volume
-        except Exception as exc:
-            self.reset_speaker()
-            self._log_structured("WARN", action="GET_VOLUME", error=repr(exc))
-            return None
 
     def set_volume(self, level: int) -> bool:
         if not self._ensure_target_identity("SET_VOLUME", "ui_live", "set_volume_before_action", force_recovery=False):
