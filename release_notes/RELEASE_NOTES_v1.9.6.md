@@ -21,3 +21,5 @@
   session-message, and notification-registration helpers.
 - Excluded unused Qt SVG and Qt Network payloads from the packaged app.
 - Logging is now fixed at INFO; the obsolete log-verbosity setting was removed.
+- Prevented an occluded but healthy WebView window from being rebuilt after its
+  renderer heartbeat was incorrectly paused.

@@ -79,9 +79,9 @@ class KefMainWindow(QObject):
     def _effectively_visible(self) -> bool:
         """Return whether the UI is actually usable, not merely unhidden.
 
-        Win32 reports a minimized window as visible, while Chromium marks its
-        document hidden.  Treating those states differently used to make the
-        heartbeat watchdog restart a healthy minimized WebView2 window.
+        Win32 reports a minimized window as visible, so it needs an explicit
+        iconic-state check before deciding whether speaker polling is useful.
+        The renderer heartbeat itself is independent of this value.
         """
         return bool(
             self._host_hwnd
@@ -95,18 +95,17 @@ class KefMainWindow(QObject):
         if visible == self._was_effectively_visible:
             return
         if visible and refresh_heartbeat:
-            # Give the browser's visibilitychange request time to arrive after
-            # a restore instead of letting the next 500 ms watchdog tick race
-            # a heartbeat that was intentionally paused while minimized.
+            # Refresh the host activity before the next watchdog tick after a
+            # native restore. The renderer's long-poll normally keeps this
+            # current, but this avoids a restore-time race during startup.
             self._server._touch_client_activity()
         self._was_effectively_visible = visible
         self.visibility_changed.emit(visible)
 
     def show(self) -> None:
-        # A hidden document intentionally stops its long-poll request.  Mark
-        # the UI active before restoring the native window so the watchdog
-        # cannot race the browser's visibilitychange handler and restart a
-        # perfectly healthy WebView2 host.
+        # Refresh activity before restoring a native window so a watchdog tick
+        # cannot race host startup. The renderer long-poll also remains active
+        # while the page is occluded.
         self._server._touch_client_activity()
         if self._restart_limit_reported:
             # A deliberate tray restore is a sensible manual recovery point.

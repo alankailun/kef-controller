@@ -30,6 +30,14 @@ class WebBridgeTests(unittest.TestCase):
         self.assertIn("let latestState = null;", html)
         self.assertIn('else if (page === "settings") syncSettings();', html)
 
+    def test_web_ui_keeps_the_renderer_heartbeat_running_while_occluded(self) -> None:
+        html = (Path(__file__).parents[1] / "kef_app" / "ui" / "web" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("it is the renderer heartbeat", html)
+        self.assertIn("function ensureUpdatePolling()", html)
+        self.assertNotIn("document.hidden", html)
+        self.assertNotIn("visibilitychange", html)
+
     def test_web_ui_loads_static_styles_and_localization_data_before_app_logic(self) -> None:
         web_root = Path(__file__).parents[1] / "kef_app" / "ui" / "web"
         html = (web_root / "index.html").read_text(encoding="utf-8")

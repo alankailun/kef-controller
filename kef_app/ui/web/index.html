@@ -1344,19 +1344,21 @@
 
   // Keep this above WebApiServer._updates_since's 15 s long-poll hold so a
   // healthy idle connection always responds before the browser aborts it.
+  // Do not pause this local long-poll when Chromium hides an occluded or
+  // minimized WebView: it is the renderer heartbeat.  Python separately
+  // pauses the expensive speaker poll when the native window is minimized.
   const UPDATE_REQUEST_TIMEOUT_MS = 20000;
-  let updateCursor = 0, polling = false, updateAbort = null, updateRetryTimer = null, updateFailures = 0;
+  let updateCursor = 0, polling = false, updateRetryTimer = null, updateFailures = 0;
   function setControllerConnectionLost(lost) {
     const note = $("#connection-note");
     if (note) note.classList.toggle("hidden", !lost);
   }
   async function pollUpdates() {
-    if (polling || document.hidden) return;
+    if (polling) return;
     polling = true;
     const controller = new AbortController();
     let timedOut = false;
     const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, UPDATE_REQUEST_TIMEOUT_MS);
-    updateAbort = controller;
     try {
       const batch = await bridge.updates(updateCursor, controller.signal);
       updateFailures = 0;
@@ -1387,18 +1389,11 @@
       }
     } finally {
       clearTimeout(timeout);
-      if (updateAbort === controller) updateAbort = null;
       polling = false;
-      if (!document.hidden && !updateRetryTimer) pollUpdates();
+      if (!updateRetryTimer) pollUpdates();
     }
   }
-  function updatePollingVisibility() {
-    if (document.hidden) {
-      if (updateAbort) updateAbort.abort();
-      clearTimeout(updateRetryTimer);
-      updateRetryTimer = null;
-      return;
-    }
+  function ensureUpdatePolling() {
     pollUpdates();
   }
 
@@ -1414,8 +1409,7 @@
     document.addEventListener("keydown", e => {
       if (e.key === "Escape" && dlg) closeSpeakerDialog();
     });
-    document.addEventListener("visibilitychange", updatePollingVisibility);
-    updatePollingVisibility();
+    ensureUpdatePolling();
   }).catch(() => {
     $("#main").removeAttribute("aria-busy");
     $("#main").innerHTML = `<div class="boot-error"><h1>${t("controller_unavailable")}</h1><p>${t("controller_unavailable_desc")}</p></div>`;
