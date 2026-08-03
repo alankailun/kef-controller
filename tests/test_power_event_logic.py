@@ -86,15 +86,16 @@ class PowerEventLogicTests(unittest.TestCase):
 
     def test_user_power_action_keeps_generation_management_inside_controller(self):
         controller = self.make_controller()
-        controller._new_generation = Mock(return_value=9)
+        controller._claim_wake_generation = Mock(return_value=(9, "claimed"))
         controller.wake_kef = Mock(return_value=True)
         controller.standby_kef = Mock(return_value=True)
 
         self.assertTrue(controller.run_user_power_action("wake", "ui_test"))
-        controller._new_generation.assert_called_once_with("wake", "ui_test")
+        controller._claim_wake_generation.assert_called_once_with("ui_test", dedupe=False)
         controller.wake_kef.assert_called_once_with(9, "ui_test")
 
-        controller._new_generation.reset_mock()
+        controller._claim_wake_generation.reset_mock()
+        controller._new_generation = Mock(return_value=9)
         self.assertTrue(controller.run_user_power_action("standby", "ui_test"))
         controller._new_generation.assert_called_once_with("sleep", "ui_test")
         controller.standby_kef.assert_called_once_with(9, "ui_test")
@@ -240,6 +241,7 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._interruptible_sleep.assert_called_once_with(0.5, 1, "startup_delay")
         controller.wake_kef.assert_not_called()
         self.assertEqual(controller._current_generation(), 1)
+        self.assertGreater(controller._power.last_wake_schedule_mono, 0)
 
     def test_on_startup_skips_when_startup_wake_disabled(self):
         controller = self.make_controller(wake_on_startup=False)
@@ -262,6 +264,7 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._interruptible_sleep.assert_called_once_with(0.25, 1, "startup_delay")
         controller.wake_kef.assert_called_once_with(1, "startup")
         self.assertEqual(controller._current_generation(), 1)
+        self.assertGreater(controller._power.last_wake_schedule_mono, 0)
 
     def test_on_suspend_dispatches_off_pump_standby(self):
         controller = self.make_controller(standby_on_sleep=True)
@@ -869,6 +872,7 @@ class PowerEventLogicTests(unittest.TestCase):
             "WakeWorker",
         )
         self.assertEqual(controller._current_generation(), 1)
+        self.assertGreater(controller._power.last_wake_schedule_mono, 0)
 
     def test_on_unlock_schedules_wake_when_unlock_wake_enabled(self):
         controller = self.make_controller(wake_on_unlock_only=True, unlock_wake_delay=0.35)

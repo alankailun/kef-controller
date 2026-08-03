@@ -137,7 +137,7 @@ class KefPowerController(
         """Run a user-requested wake/standby action with controller-owned generation state."""
         normalized_action = str(action or "").strip().lower()
         if normalized_action == "wake":
-            generation = self._new_generation("wake", reason)
+            generation, _ = self._claim_wake_generation(reason, dedupe=False)
             return bool(self.wake_kef(generation, reason))
         if normalized_action in {"standby", "sleep"}:
             generation = self._new_generation("sleep", reason)

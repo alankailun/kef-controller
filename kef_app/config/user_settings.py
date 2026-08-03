@@ -95,9 +95,6 @@ class EndSessionBehavior:
 
 @dataclass(slots=True)
 class DiagnosticsSettings:
-    # The process logger is configured from this value at startup and updates
-    # live when the web settings page changes it.
-    log_level: str = "INFO"
     log_backup_days: int = 7
     persist_runtime_state: bool = True
 

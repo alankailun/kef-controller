@@ -9,17 +9,11 @@ from typing import Iterable
 from logging.handlers import QueueHandler, QueueListener, TimedRotatingFileHandler
 
 from ..config import AppConfig
-from ..structured_logging import coerce_log_level
 
 
 _LOGGER_NAME = "kef_controller"
 _LISTENER_ATTR = "_kef_queue_listener"
 _LISTENER_STOPPED_ATTR = "_kef_queue_listener_stopped"
-
-
-def apply_logger_level(logger: logging.Logger, level: object) -> None:
-    """Apply the persisted verbosity setting to the process logger."""
-    logger.setLevel(coerce_log_level(level))
 
 
 def _stop_listener(listener: QueueListener) -> None:
@@ -62,7 +56,9 @@ def build_logger(config: AppConfig, *, extra_handlers: Iterable[logging.Handler]
 
     logger = logging.getLogger(_LOGGER_NAME)
     shutdown_logger(logger)
-    apply_logger_level(logger, config.log_level)
+    # Diagnostics are intentionally always retained at INFO level.  The UI
+    # exposes no verbosity control, so persisted legacy values are ignored.
+    logger.setLevel(logging.INFO)
     logger.handlers.clear()
     logger.propagate = False
 

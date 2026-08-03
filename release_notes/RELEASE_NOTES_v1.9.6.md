@@ -20,3 +20,4 @@
 - Split the headless runtime into focused startup, power-message,
   session-message, and notification-registration helpers.
 - Excluded unused Qt SVG and Qt Network payloads from the packaged app.
+- Logging is now fixed at INFO; the obsolete log-verbosity setting was removed.

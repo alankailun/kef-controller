@@ -102,13 +102,6 @@ def _coerce_log_backup_days(value: Any) -> int:
     return result
 
 
-def _coerce_log_level(value: Any) -> str:
-    level = str(value or "INFO").strip().upper()
-    if level not in {"DEBUG", "INFO", "WARNING", "ERROR"}:
-        raise ValueError(f"unsupported log level: {level!r}")
-    return level
-
-
 def _coerce_tcp_port(value: Any) -> int:
     result = _coerce_positive_int(value)
     if result > 65535:
@@ -181,7 +174,6 @@ class UserConfigStore:
         "prewarmed_socket_timeout_s": _coerce_positive_float,
         "prewarmed_send_deadline_s": _coerce_positive_float,
         "prewarmed_frozen_send_multiplier": _coerce_positive_float,
-        "log_level": _coerce_log_level,
         "log_backup_days": _coerce_log_backup_days,
         "persist_runtime_state": lambda value: UserConfigStore._coerce_bool(value),
         "fast_exit_on_endsession": lambda value: UserConfigStore._coerce_bool(value),

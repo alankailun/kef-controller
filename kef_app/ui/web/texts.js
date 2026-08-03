@@ -19,7 +19,6 @@
     level_info: ["全部", "All"], level_step: ["步骤", "Step"], level_state: ["状态", "State"], level_event: ["事件", "Event"], level_warn: ["警告", "Warn"], level_error: ["错误", "Error"],
     severity_tip: ["$ 及以上，共 $ 行", "$ and above · $ lines"],
     saved: ["已保存", "Saved"], general: ["通用", "General"], language: ["语言", "Language"], language_desc: ["界面显示语言", "Interface display language"],
-    diagnostics: ["诊断", "Diagnostics"], log_verbosity: ["日志详细程度", "Log verbosity"], log_verbosity_desc: ["控制写入日志文件的最低 Python 日志级别；STEP 与 SKIP 诊断在 INFO 及以上都会记录。", "Controls the minimum Python level written to the log file. STEP and SKIP diagnostics are recorded at INFO and above."],
     speaker: ["扬声器", "Speaker"], default_input: ["默认输入源", "Default Input Source"], default_input_desc: ["App 唤醒扬声器时自动切到这个输入", "Selected whenever the app wakes the speaker"],
     target_speaker: ["目标扬声器", "Target Speaker"], target_desc: ["MAC 是身份标识，IP 只是当前地址", "The MAC is the identity; the IP is just the current address"], select_speaker: ["选择扬声器", "Select Speaker"],
     power_behavior: ["电源行为", "Power Behavior"], power_behavior_desc: ["哪些电脑事件会唤醒扬声器、哪些会让它待机。", "Which PC events wake the speaker or put it in standby."],

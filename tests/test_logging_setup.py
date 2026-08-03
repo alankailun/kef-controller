@@ -21,13 +21,13 @@ class CollectingHandler(logging.Handler):
 
 
 class RuntimeLoggingSetupTests(unittest.TestCase):
-    def test_build_logger_honors_the_persisted_log_level(self):
+    def test_build_logger_always_uses_info_level(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            config = AppConfig().with_updates(log_dir=temp_dir, log_level="WARNING")
+            config = AppConfig().with_updates(log_dir=temp_dir)
             with contextlib.redirect_stderr(io.StringIO()):
                 logger = build_logger(config)
                 try:
-                    self.assertEqual(logger.level, logging.WARNING)
+                    self.assertEqual(logger.level, logging.INFO)
                 finally:
                     shutdown_logger(logger)
 

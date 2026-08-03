@@ -388,7 +388,7 @@ class ControllerSessionEventsMixin:
             )
             return
 
-        generation = self._new_generation("wake", "startup")
+        generation, _ = self._claim_wake_generation("startup", dedupe=False)
         self._log_structured(
             "STEP",
             action="WAKE",
@@ -808,7 +808,7 @@ class ControllerSessionEventsMixin:
             self._log_structured("STEP", action="WAKE", reason=reason, step="resume", status="wait_for_any_unlock")
             return
 
-        generation = self._new_generation("wake", reason)
+        generation, _ = self._claim_wake_generation(reason, dedupe=False)
         self._schedule_delayed_wake(generation, reason, self.config.resume_wake_delay, "resume_delay", "WakeWorker")
 
     def on_unlock(self, reason: str):

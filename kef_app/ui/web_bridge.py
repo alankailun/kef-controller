@@ -14,7 +14,6 @@ from PySide6.QtCore import QUrl
 from ..config import AppConfig
 from ..devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source, normalize_mac
 from ..storage import UserConfigStore
-from ..runtime.logging_setup import apply_logger_level
 from ..platform.windows import (
     remove_startup_task_with_uac,
     read_startup_registration_snapshot,
@@ -232,7 +231,6 @@ class WebControllerBridge(QObject):
         for field_name in self._config_store.USER_EDITABLE_FIELDS:
             setattr(self._config, field_name, getattr(updated, field_name))
         saved = self._config_store.save(self._config)
-        apply_logger_level(self._controller.log, self._config.log_level)
         self._apply_poll_interval()
         self._notify(
             "success" if saved else "warning",
