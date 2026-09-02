@@ -7,7 +7,6 @@ from .lid_closed import LID_CLOSED_TRIGGER
 from .lock import LOCK_TRIGGER
 from .suspend import SUSPEND_TRIGGER
 
-
 TRIGGERS: dict[str, ControllerTrigger] = {
     trigger.name: trigger
     for trigger in (

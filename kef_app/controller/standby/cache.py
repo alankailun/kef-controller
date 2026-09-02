@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 
-from ...devices.transport import build_standby_request_bytes
+from ...devices.transport.standby_request import build_standby_request_bytes
 
 
 @dataclass(frozen=True, slots=True)

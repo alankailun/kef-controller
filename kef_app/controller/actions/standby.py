@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
+from ..power_state import power_action_outcome_is_success
 from .device_common import _STANDBY_VERIFY_TIMEOUT, StandbyVerificationError
 from .fast_standby import ControllerFastStandbyMixin
-from ..power_state import power_action_outcome_is_success
-
 
 _ENDSESSION_FAST_STANDBY_BUDGET_S = 2.00
 _ENDSESSION_FAST_STANDBY_BUDGET_MS = int(_ENDSESSION_FAST_STANDBY_BUDGET_S * 1000)

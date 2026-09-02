@@ -1,19 +1,17 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable, Optional
 
 from ..config import AppConfig
-from ..storage import SpeakerStateStore, UserConfigStore
 from ..controller import KefPowerController
+from ..platform.windows.api import ensure_single_instance
+from ..platform.windows.startup.elevation import maybe_handle_startup_task_repair
+from ..platform.windows.startup.service import ensure_startup_registration
+from ..storage import SpeakerStateStore, UserConfigStore
 from ..structured_logging import log_structured
 from .logging_setup import build_logger
-from ..platform.windows import (
-    ensure_single_instance,
-    ensure_startup_registration,
-    maybe_handle_startup_task_repair,
-)
 
 
 @dataclass(slots=True)
@@ -22,7 +20,7 @@ class RuntimeContext:
     user_config_store: UserConfigStore
     log: logging.Logger
     controller: KefPowerController
-    single_instance_mutex: Optional[int]
+    single_instance_mutex: int | None
 
 
 def exit_if_startup_task_repair_requested() -> None:

@@ -6,7 +6,6 @@ from pathlib import Path
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-
 APP_USER_MODEL_ID = "ZhongwenLaw.KEFController"
 APP_ICON_RELATIVE_PATH = Path("installer") / "assets" / "setup-icon.ico"
 

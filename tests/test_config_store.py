@@ -94,7 +94,7 @@ class UserConfigStoreTests(unittest.TestCase):
             loaded = UserConfigStore(base_config).load_or_create()
 
             self.assertEqual(loaded.mac_discovery_probe_timeout, 0.30)
-            with open(path, "r", encoding="utf-8") as handle:
+            with open(path, encoding="utf-8") as handle:
                 saved = json.load(handle)
             self.assertEqual(saved["discovery"]["mac_discovery_probe_timeout"], 0.30)
 
@@ -112,7 +112,7 @@ class UserConfigStoreTests(unittest.TestCase):
 
             self.assertTrue(loaded.prewarmed_persist_socket)
             self.assertEqual(loaded.prewarmed_keepalive_interval_s, 5.0)
-            with open(path, "r", encoding="utf-8") as handle:
+            with open(path, encoding="utf-8") as handle:
                 saved = json.load(handle)
             self.assertTrue(saved["standby_tuning"]["prewarmed_persist_socket"])
             self.assertEqual(saved["standby_tuning"]["prewarmed_keepalive_interval_s"], 5.0)

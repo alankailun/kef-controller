@@ -76,6 +76,11 @@ _drop_binary_substrings = (
 )
 
 _drop_exact_paths = {
+    # Qt6Core uses Windows' system ICU.  A generic ICU installation found on
+    # PATH can otherwise be mistaken for this dependency by PyInstaller; its
+    # same-named icuuc.dll has a different ABI and makes QtCore fail to load.
+    "icuuc.dll",
+    "icudt78.dll",
     # Keep only the Windows platform backend. The direct2d/offscreen/minimal
     # backends are optional alternatives and not used by this desktop app.
     "pyside6/plugins/platforms/qdirect2d.dll",

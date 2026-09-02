@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 import re
+from dataclasses import dataclass, replace
 
 
 def normalize_mac(mac: str) -> str:
@@ -78,5 +78,5 @@ class SpeakerIdentity:
     backend: str = "w2"
     matched_by: str = ""
 
-    def with_match(self, matched_by: str) -> "SpeakerIdentity":
+    def with_match(self, matched_by: str) -> SpeakerIdentity:
         return replace(self, matched_by=matched_by)

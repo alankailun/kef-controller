@@ -6,9 +6,9 @@ import time
 from dataclasses import dataclass
 
 from ..config import AppConfig
+from ..devices.speaker_models import SpeakerIdentity, normalize_mac
 from ..structured_logging import log_structured
 from .json_file import write_json_atomic
-from ..devices.speaker_models import SpeakerIdentity, normalize_mac
 
 
 @dataclass(slots=True)
@@ -23,7 +23,7 @@ class PersistedSpeakerState:
     last_seen_at: str = ""
 
     @classmethod
-    def from_dict(cls, data: dict) -> "PersistedSpeakerState":
+    def from_dict(cls, data: dict) -> PersistedSpeakerState:
         return cls(
             last_ip=str(data.get("last_ip", "") or ""),
             last_mac=normalize_mac(str(data.get("last_mac", "") or "")),
@@ -48,7 +48,7 @@ class PersistedSpeakerState:
         }
 
     @classmethod
-    def from_identity(cls, identity: SpeakerIdentity) -> "PersistedSpeakerState":
+    def from_identity(cls, identity: SpeakerIdentity) -> PersistedSpeakerState:
         return cls(
             last_ip=identity.ip or "",
             last_mac=normalize_mac(identity.mac or identity.mac_display or ""),
@@ -100,7 +100,7 @@ class SpeakerStateStore:
             return PersistedSpeakerState()
 
         try:
-            with open(self.path, "r", encoding="utf-8") as f:
+            with open(self.path, encoding="utf-8") as f:
                 data = json.load(f)
             state = PersistedSpeakerState.from_dict(data if isinstance(data, dict) else {})
             self._last_saved_state = state
@@ -138,7 +138,7 @@ class SpeakerStateStore:
         previous = self._last_saved_state
         if previous is None and os.path.exists(self.path):
             try:
-                with open(self.path, "r", encoding="utf-8") as f:
+                with open(self.path, encoding="utf-8") as f:
                     data = json.load(f)
                 previous = PersistedSpeakerState.from_dict(data if isinstance(data, dict) else {})
             except Exception:

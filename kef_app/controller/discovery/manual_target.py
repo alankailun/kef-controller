@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional
-
-from ...devices.scan import discover_ip_by_mac, discover_kef_device_blind, is_routable_ipv4, probe_ip_port
+from ...devices.scan.network import is_routable_ipv4, probe_ip_port
+from ...devices.scan.scan import discover_ip_by_mac, discover_kef_device_blind
 from ...devices.speaker_models import SpeakerIdentity, normalize_mac
 from .identity_helpers import TargetValidationResult
 
@@ -71,7 +70,7 @@ class ControllerManualTargetMixin:
         seed_ip: str,
         reason: str,
         trigger: str,
-    ) -> Optional[SpeakerIdentity]:
+    ) -> SpeakerIdentity | None:
         discovered_ip = discover_ip_by_mac(target_mac, seed_ip, self.config, self.log)
         if discovered_ip:
             info = self.inspect_kef_identity_at_ip(discovered_ip, reason=reason, trigger=f"{trigger}_mac_ip")

@@ -2,21 +2,24 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from ..config import AppConfig
-from ..storage import PersistedSpeakerState, SpeakerStateStore
 from ..devices.speaker_backend import W2Backend
+from ..devices.speaker_models import normalize_mac
+from ..storage import PersistedSpeakerState, SpeakerStateStore
 from .actions import ControllerDeviceActionsMixin
 from .discovery import ControllerDiscoveryMixin
 from .logging_mixin import ControllerLoggingMixin
 from .network_timeout import temporary_socket_timeout
 from .power_state import ControllerStateMixin, power_action_outcome_is_success
 from .session_events import ControllerSessionEventsMixin
+from .standby import FastStandbySendCache, PrewarmedStandbySocketMonitorMixin
 from .state_models import (
-    IdentityState,
-    DisplayOffDispatcherState,
     ControllerEventListenersState,
+    DisplayOffDispatcherState,
+    IdentityState,
     PowerActionState,
     PrewarmedStandbyState,
     RuntimeSpeakerState,
@@ -24,10 +27,6 @@ from .state_models import (
     SpeakerEventMonitorState,
     WindowsEventState,
 )
-from .standby import FastStandbySendCache, PrewarmedStandbySocketMonitorMixin
-
-from ..devices.speaker_models import normalize_mac
-
 
 _UNCONFIRMED_STANDBY_OUTCOMES = {
     "sent_unconfirmed_prewarmed",
@@ -45,7 +44,7 @@ class KefPowerController(
     PrewarmedStandbySocketMonitorMixin,
     ControllerSessionEventsMixin,
 ):
-    def __init__(self, config: AppConfig, log: logging.Logger, state_store: Optional[SpeakerStateStore] = None):
+    def __init__(self, config: AppConfig, log: logging.Logger, state_store: SpeakerStateStore | None = None):
         self.config = config
         self.log = log
         self._state_store = state_store

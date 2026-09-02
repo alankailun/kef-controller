@@ -33,25 +33,20 @@
     volume_updated: ["音量 $", "Volume $"], muted: ["已静音", "Muted"], input_changed: ["已切换到 $", "Switched to $"], settings_saved: ["设置已保存", "Settings saved"], controller_error: ["控制器错误", "Controller error"], request_failed: ["请求失败。", "Request failed."], controller_unavailable: ["控制器不可用", "Controller unavailable"], controller_unavailable_desc: ["本地控制接口未能启动，请重启应用。", "The local control interface could not start. Please restart the app."], controller_reconnecting: ["与控制器失去连接，正在重连…", "Connection to the controller was lost. Reconnecting…"],
   };
   const TOAST_ZH = {
-    "Controller error": "控制器错误", "Volume updated": "音量已更新", "Volume update failed": "音量更新失败",
+    "Volume updated": "音量已更新", "Volume update failed": "音量更新失败",
     "Input changed": "输入源已切换", "Input change failed": "输入源切换失败", "Invalid input": "无效的输入源",
     "Settings were not saved": "设置未保存", "Settings saved": "设置已保存",
     "Settings updated for this session": "设置已在本次会话生效",
     "Target not saved": "目标未保存", "Target saved": "目标已保存",
     "Target updated for this session": "目标已在本次会话生效",
     "Startup settings saved": "开机自启设置已保存", "Startup settings need attention": "开机自启设置需要处理",
-    "Scanning for speakers": "正在扫描扬声器", "Speaker scan complete": "扫描完成", "Speaker scan failed": "扫描失败",
     "Speaker action": "扬声器操作", "Speaker action failed": "扬声器操作失败",
     "Wake": "唤醒", "Standby": "待机", "Early Standby": "提前待机", "Endsession Standby": "关机待机",
     "Unknown test": "未知的模拟事件",
     "Running": "执行中", "Completed": "已完成", "No action": "无动作", "Failed": "失败",
   };
   const DETAIL_ZH = [
-    [/^Searching the local network…$/, "正在搜索本地网络…"],
-    [/^Found (\d+) supported speaker\(s\)\.$/, "找到 $1 台受支持的扬声器。"],
-    [/^No supported speakers were found\.$/, "未找到受支持的扬声器。"],
     [/^Changes are now active\.$/, "更改已生效。"],
-    [/^Volume is now (\d+)\.$/, "音量已设为 $1。"],
     [/^Switched to (\S+)\.$/, "已切换到 $1。"],
     [/^Verified ([\d.]+) and saved the target\.$/, "已验证 $1 并保存目标。"],
     [/^Recovered ([\d.]+) from the MAC address and saved it\.$/, "已通过 MAC 找回 $1 并保存。"],

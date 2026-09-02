@@ -124,7 +124,7 @@ class KefMainWindowHostTests(unittest.TestCase):
         ):
             window.show()
 
-        window._server._touch_client_activity.assert_called_once_with()
+        window._server.touch_client_activity.assert_called_once_with()
 
     def test_effective_visibility_treats_a_minimized_window_as_hidden(self) -> None:
         window = self._window()
@@ -153,7 +153,7 @@ class KefMainWindowHostTests(unittest.TestCase):
         ):
             window._monitor_host()
 
-        window._server._touch_client_activity.assert_called_once_with()
+        window._server.touch_client_activity.assert_called_once_with()
         window._host_restart_reason.assert_called_once_with(True)
         self.assertTrue(window._was_effectively_visible)
 

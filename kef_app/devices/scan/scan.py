@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import ipaddress
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, Optional, TypeVar
+from typing import TypeVar
 
 from ...config import AppConfig
 from ...structured_logging import log_structured
@@ -51,8 +52,8 @@ def _map_hosts_concurrently(
     hosts: list[str],
     worker: Callable[[str], _T],
     *,
-    should_continue: Optional[Callable[[], bool]] = None,
-    on_progress: Optional[Callable[[int], None]] = None,
+    should_continue: Callable[[], bool] | None = None,
+    on_progress: Callable[[int], None] | None = None,
 ) -> dict[str, _T]:
     futures = {executor.submit(worker, host_ip): host_ip for host_ip in hosts}
     results: dict[str, _T] = {}
@@ -80,8 +81,8 @@ def _reachable_hosts(
     hosts: list[str],
     config: AppConfig,
     *,
-    should_continue: Optional[Callable[[], bool]] = None,
-    on_progress: Optional[Callable[[int], None]] = None,
+    should_continue: Callable[[], bool] | None = None,
+    on_progress: Callable[[int], None] | None = None,
 ) -> list[str]:
     results = _map_hosts_concurrently(
         executor,
@@ -98,7 +99,7 @@ def _identify_hosts(
     hosts: list[str],
     config: AppConfig,
     *,
-    should_continue: Optional[Callable[[], bool]] = None,
+    should_continue: Callable[[], bool] | None = None,
 ) -> list[SpeakerIdentity]:
     results = _map_hosts_concurrently(
         executor,
@@ -113,7 +114,7 @@ def _shared_discovery_workers(host_count: int, config: AppConfig) -> int:
     return max(1, min(host_count, max(config.mac_discovery_max_workers, config.blind_discovery_max_workers)))
 
 
-def _candidate_hosts(networks: list[ipaddress.IPv4Network], seed_ip: Optional[str]) -> list[str]:
+def _candidate_hosts(networks: list[ipaddress.IPv4Network], seed_ip: str | None) -> list[str]:
     seen: set[str] = set()
     hosts: list[str] = []
     for network in networks:
@@ -131,11 +132,11 @@ def _candidate_hosts(networks: list[ipaddress.IPv4Network], seed_ip: Optional[st
 
 def _scan_candidate_hosts(
     networks: list[ipaddress.IPv4Network],
-    seed_ip: Optional[str],
+    seed_ip: str | None,
     config: AppConfig,
     *,
-    should_continue: Optional[Callable[[], bool]] = None,
-    on_progress: Optional[Callable[[int], None]] = None,
+    should_continue: Callable[[], bool] | None = None,
+    on_progress: Callable[[int], None] | None = None,
 ) -> tuple[list[str], list[str], list[SpeakerIdentity]]:
     hosts = _candidate_hosts(networks, seed_ip)
     if not hosts:
@@ -187,7 +188,7 @@ def _log_network_scan_finished(
 
 
 def _probe_seed_identity(
-    seed_ip: Optional[str],
+    seed_ip: str | None,
     config: AppConfig,
     log,
     *,
@@ -195,7 +196,7 @@ def _probe_seed_identity(
     action: str,
     reason: str,
     delay_before: float = 0.0,
-) -> Optional[SpeakerIdentity]:
+) -> SpeakerIdentity | None:
     if not seed_ip:
         return None
     if delay_before > 0:
@@ -237,7 +238,7 @@ def _probe_seed_identity(
 
 
 def _notify_candidate(
-    on_candidate: Optional[Callable[[SpeakerIdentity], None]],
+    on_candidate: Callable[[SpeakerIdentity], None] | None,
     identity: SpeakerIdentity,
     log,
     *,
@@ -262,13 +263,13 @@ def _notify_candidate(
 
 
 def discover_kef_devices(
-    seed_ip: Optional[str],
+    seed_ip: str | None,
     config: AppConfig,
     log,
     *,
-    on_candidate: Optional[Callable[[SpeakerIdentity], None]] = None,
-    should_continue: Optional[Callable[[], bool]] = None,
-    on_progress: Optional[Callable[[int], None]] = None,
+    on_candidate: Callable[[SpeakerIdentity], None] | None = None,
+    should_continue: Callable[[], bool] | None = None,
+    on_progress: Callable[[int], None] | None = None,
 ) -> list[SpeakerIdentity]:
     action = "MANUAL_SCAN"
     reason = "manual_request"
@@ -389,12 +390,12 @@ def discover_kef_devices(
 
 def discover_kef_device_blind(
     known_mac: str,
-    seed_ip: Optional[str],
+    seed_ip: str | None,
     config: AppConfig,
     log,
     *,
-    should_continue: Optional[Callable[[], bool]] = None,
-) -> Optional[SpeakerIdentity]:
+    should_continue: Callable[[], bool] | None = None,
+) -> SpeakerIdentity | None:
     action = "TARGET_SCAN"
     reason = "target_recovery"
     normalized_known_mac = normalize_mac(known_mac)
@@ -581,7 +582,7 @@ def discover_kef_device_blind(
     return None
 
 
-def discover_ip_by_mac(target_mac: str, seed_ip: Optional[str], _config: AppConfig, log) -> Optional[str]:
+def discover_ip_by_mac(target_mac: str, seed_ip: str | None, _config: AppConfig, log) -> str | None:
     action = "ARP_CACHE_LOOKUP"
     reason = "target_recovery"
     normalized_target = normalize_mac(target_mac)

@@ -55,7 +55,7 @@ class _LoopbackHttpSpeaker:
         while not self._stop.is_set():
             try:
                 conn, _addr = self._server.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 return
@@ -259,7 +259,7 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         controller = self.make_controller(80, prewarmed_persist_socket=True)
         controller._log_structured = Mock()
         sock = Mock()
-        holder = PrewarmedSocketHolder(sock, "127.0.0.1", controller.mono())
+        holder = PrewarmedSocketHolder(sock, "127.0.0.1")
         with controller._prewarmed.lock:
             controller._prewarmed.holders = [holder]
             controller._prewarmed.running = True
@@ -281,7 +281,7 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
     def test_monitor_start_clears_stale_holders_before_rebuilding_pool(self):
         controller = self.make_controller(80, prewarmed_persist_socket=True)
         stale_sock = Mock()
-        stale_holder = PrewarmedSocketHolder(stale_sock, "127.0.0.1", controller.mono())
+        stale_holder = PrewarmedSocketHolder(stale_sock, "127.0.0.1")
         with controller._prewarmed.lock:
             controller._prewarmed.holders = [stale_holder]
         thread = Mock()
@@ -345,7 +345,7 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
     def test_keepalive_failure_does_not_discard_other_hot_connection(self):
         controller = self.make_controller(80, prewarmed_persist_socket=True)
         healthy_socket = Mock()
-        healthy_holder = PrewarmedSocketHolder(healthy_socket, "127.0.0.1", controller.mono())
+        healthy_holder = PrewarmedSocketHolder(healthy_socket, "127.0.0.1")
         with controller._prewarmed.lock:
             controller._prewarmed.holders = [healthy_holder]
 
@@ -403,7 +403,6 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
                 time.sleep(0.01)
 
         self.assertTrue(result.success, result)
-        self.assertTrue(result.fast_path_used)
         self.assertEqual(result.status, "sent")
         self.assertEqual(result.target_ip, "127.0.0.1")
         self.assertEqual(result.mode, "persistent_socket")
@@ -423,8 +422,8 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         second_socket.getsockopt.return_value = 0
         with controller._prewarmed.lock:
             controller._prewarmed.holders = [
-                PrewarmedSocketHolder(first_socket, "127.0.0.1", controller.mono()),
-                PrewarmedSocketHolder(second_socket, "127.0.0.1", controller.mono()),
+                PrewarmedSocketHolder(first_socket, "127.0.0.1"),
+                PrewarmedSocketHolder(second_socket, "127.0.0.1"),
             ]
 
         with patch("kef_app.controller.standby.prewarmed_socket.select.select", return_value=([], [], [])):
@@ -443,8 +442,8 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         second_socket.getsockopt.return_value = 0
         with controller._prewarmed.lock:
             controller._prewarmed.holders = [
-                PrewarmedSocketHolder(first_socket, "127.0.0.1", controller.mono()),
-                PrewarmedSocketHolder(second_socket, "127.0.0.1", controller.mono()),
+                PrewarmedSocketHolder(first_socket, "127.0.0.1"),
+                PrewarmedSocketHolder(second_socket, "127.0.0.1"),
             ]
 
         with patch(
@@ -471,7 +470,6 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
             result = controller.try_send_cached_prewarmed_standby()
 
         self.assertFalse(result.success)
-        self.assertFalse(result.fast_path_used)
         self.assertEqual(result.fast_path_skip_reason, "no_socket_for_cached_ip")
         self.assertEqual(result.target_ip, "127.0.0.2")
 

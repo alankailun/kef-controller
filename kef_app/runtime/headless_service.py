@@ -15,29 +15,27 @@ import win32gui
 
 from ..config import AppConfig
 from ..controller import KefPowerController
-from ..structured_logging import log_structured
-from .logging_setup import shutdown_logger
-from ..platform.windows import (
+from ..platform.windows.api import (
     DEVICE_NOTIFY_WINDOW_HANDLE,
-    IpInterfaceChangeMonitor,
     LID_CLOSED,
     MONITOR_DISPLAY_OFF,
     MONITOR_DISPLAY_ON,
     NOTIFY_FOR_THIS_SESSION,
-    PBT_APMSUSPEND,
     PBT_APMRESUMEAUTOMATIC,
     PBT_APMRESUMESUSPEND,
+    PBT_APMSUSPEND,
     PBT_POWERSETTINGCHANGE,
     POWER_SETTING_GUIDS,
-    RegisterPowerSettingNotification,
-    UnregisterPowerSettingNotification,
     WM_POWERBROADCAST,
     WM_WTSSESSION_CHANGE,
-    WTSRegisterSessionNotification,
-    WTSUnRegisterSessionNotification,
     WTS_SESSION_DESKTOP_READY,
     WTS_SESSION_LOCK,
     WTS_SESSION_UNLOCK,
+    IpInterfaceChangeMonitor,
+    RegisterPowerSettingNotification,
+    UnregisterPowerSettingNotification,
+    WTSRegisterSessionNotification,
+    WTSUnRegisterSessionNotification,
     create_shutdown_block_reason,
     decode_power_setting_change,
     destroy_shutdown_block_reason,
@@ -45,6 +43,8 @@ from ..platform.windows import (
     get_raw_command_line,
     guess_launch_source,
 )
+from ..structured_logging import log_structured
+from .logging_setup import shutdown_logger
 
 
 def uptime_seconds(process_start_mono: float) -> float:

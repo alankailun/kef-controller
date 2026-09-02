@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 
-
 _HOST_UNREACHABLE_CODES = {10065, 10051, 113, 101}
 _HOST_UNREACHABLE_MARKERS = (
     "winerror 10065",

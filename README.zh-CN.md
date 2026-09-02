@@ -233,10 +233,10 @@ cd /d "path\to\kef_controller"
 主要输出文件：
 
 ```text
-dist\KEF Controller.exe
+dist\KEF Controller\KEF Controller.exe
 ```
 
-`.spec` 文件使用 `main_gui.py`，生成无控制台的单文件窗口程序，包含 UI 需要的
+`.spec` 文件使用 `main_gui.py`，生成无控制台的 onedir 窗口程序，包含 UI 需要的
 QFluentWidgets 和 SVG 资源，保留 Modern Windows Qt style plugin，保留软件
 OpenGL fallback，并裁掉未使用的 Qt/PySide6 模块和插件以减小体积。
 
@@ -251,7 +251,7 @@ C:\Program Files (x86)\Inno Setup 6\ISCC.exe
 先确认 PyInstaller 输出已经存在：
 
 ```text
-dist\KEF Controller.exe
+dist\KEF Controller\KEF Controller.exe
 ```
 
 编译安装包：
@@ -304,7 +304,7 @@ installer\KEF_Controller.iss
 1. 需要时更新 `installer/KEF_Controller.iss` 里的版本号。
 2. 更新 `release_notes/` 下对应版本的 release note。
 3. 运行单元测试和 `compileall`。
-4. 用 `KEF Controller.spec` 生成 `dist\KEF Controller.exe`。
+4. 用 `KEF Controller.spec` 生成 `dist\KEF Controller\KEF Controller.exe`。
 5. 手动测试生成的 `.exe`。
 6. 编译 `installer\KEF_Controller.iss`。
 7. 在 Windows 机器上测试安装包、快捷方式、自启动、关机/锁屏/睡眠/屏幕关闭行为和日志。

@@ -3,10 +3,10 @@ from __future__ import annotations
 import logging
 import threading
 import traceback
-from typing import Callable, Optional, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 from ..structured_logging import log_structured
-
 
 T = TypeVar("T")
 
@@ -15,12 +15,12 @@ def start_background_task(
     name: str,
     work: Callable[[], T],
     *,
-    on_success: Optional[Callable[[T], None]] = None,
-    on_error: Optional[Callable[[Exception], None]] = None,
-    on_finished: Optional[Callable[[], None]] = None,
-    lock: Optional[threading.Lock] = None,
-    log: Optional[logging.Logger] = None,
-) -> Optional[threading.Thread]:
+    on_success: Callable[[T], None] | None = None,
+    on_error: Callable[[Exception], None] | None = None,
+    on_finished: Callable[[], None] | None = None,
+    lock: threading.Lock | None = None,
+    log: logging.Logger | None = None,
+) -> threading.Thread | None:
     if lock is not None and not lock.acquire(blocking=False):
         return None
 

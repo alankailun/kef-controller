@@ -98,7 +98,7 @@ class KefMainWindow(QObject):
             # Refresh the host activity before the next watchdog tick after a
             # native restore. The renderer's long-poll normally keeps this
             # current, but this avoids a restore-time race during startup.
-            self._server._touch_client_activity()
+            self._server.touch_client_activity()
         self._was_effectively_visible = visible
         self.visibility_changed.emit(visible)
 
@@ -106,7 +106,7 @@ class KefMainWindow(QObject):
         # Refresh activity before restoring a native window so a watchdog tick
         # cannot race host startup. The renderer long-poll also remains active
         # while the page is occluded.
-        self._server._touch_client_activity()
+        self._server.touch_client_activity()
         if self._restart_limit_reported:
             # A deliberate tray restore is a sensible manual recovery point.
             # Allow it to make a new limited recovery attempt instead of
@@ -141,7 +141,7 @@ class KefMainWindow(QObject):
     def dispose(self) -> None:
         self._monitor.stop()
         # WM_CLOSE now means "hide" for the user-facing window, so shutdown
-        # must explicitly tear down the one-file host's complete process tree.
+        # must explicitly tear down the WebView host's complete process tree.
         self._terminate_host_tree()
         self._host_process = None
         self._host_hwnd = 0

@@ -1,23 +1,23 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Optional
 
 from ...config import AppConfig
-from ...structured_logging import log_structured
-from ...storage import UserConfigStore
-from ...devices.speaker_models import INPUT_SOURCE_OPTIONS
-from ...platform.windows import (
+from ...platform.windows.startup.common import (
     get_last_startup_error,
     normalize_startup_mode,
-    read_startup_registration_snapshot,
-    set_startup_registered,
     startup_error_suggests_repair,
 )
+from ...platform.windows.startup.service import set_startup_registered
+from ...platform.windows.startup.status import read_startup_registration_snapshot
+from ...storage import UserConfigStore
+from ...structured_logging import log_structured
 
 TASK_NAME = "KEF Controller"
-INPUTS = [value for _, value in INPUT_SOURCE_OPTIONS]
+
+
 def startup_mode_for_ui(value: str) -> str:
     raw = str(value or "").strip().lower()
     if raw in {"off", "none", "disabled", "disable"}:
@@ -88,24 +88,9 @@ class SettingsSaveResult:
     updated: AppConfig
     config_ok: bool
     startup_ok: bool
-    startup_changed: bool
     startup_detail: str
     actual_startup_registered: bool
     actual_startup_mode: str
-
-
-def log_power_behavior_state_message(config: AppConfig) -> str:
-    return (
-        "POWER_BEHAVIOR_APPLIED | "
-        f"wake_on_startup={config.wake_on_startup} | "
-        f"shutdown_standby={config.endsession_standby_on_shutdown} | "
-        f"lock_standby={config.standby_on_lock} | "
-        f"lid_close_standby={config.standby_on_lid_close} | "
-        f"wake_after_unlock={config.wake_on_unlock_only} | "
-        f"sleep_standby={config.standby_on_sleep} | "
-        f"display_off_standby={config.standby_on_display_off} | "
-        f"display_on_wake={config.wake_on_display_on}"
-    )
 
 
 def get_speaker_power_disabled_reason(key: str) -> str:
@@ -121,9 +106,9 @@ def save_settings_and_sync_startup(
     startup_mode_changed: bool,
     log: logging.Logger,
     task_name: str = TASK_NAME,
-    retry_disable_with_uac: Optional[Callable[[], bool]] = None,
-    retry_enable_task_with_uac: Optional[Callable[[], bool]] = None,
-    retry_enable_registry_with_uac: Optional[Callable[[], bool]] = None,
+    retry_disable_with_uac: Callable[[], bool] | None = None,
+    retry_enable_task_with_uac: Callable[[], bool] | None = None,
+    retry_enable_registry_with_uac: Callable[[], bool] | None = None,
 ) -> SettingsSaveResult:
     config_ok = config_store.save(updated)
     startup_ok = True
@@ -231,7 +216,6 @@ def save_settings_and_sync_startup(
         updated=updated,
         config_ok=config_ok,
         startup_ok=startup_ok,
-        startup_changed=startup_changed,
         startup_detail=startup_detail,
         actual_startup_registered=actual_startup_registered,
         actual_startup_mode=actual_startup_mode,

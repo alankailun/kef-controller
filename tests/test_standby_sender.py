@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import Mock
 
 from kef_app.controller.standby import PrewarmedStandbySendResult, send_fast_standby
-from kef_app.devices.transport import FireAndForgetShutdownResult
+from kef_app.devices.transport.standby_request import FireAndForgetShutdownResult
 
 
 def prewarmed_result(

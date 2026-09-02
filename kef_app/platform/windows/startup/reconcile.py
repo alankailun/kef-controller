@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Optional
 
 from .common import (
     StartupLaunchSpec,
@@ -22,7 +21,7 @@ class StartupRegistrationState:
     registry_entries: tuple[RegistryStartupEntry, ...]
     registry_is_current: bool
     task_present: bool
-    task_spec: Optional[StartupLaunchSpec]
+    task_spec: StartupLaunchSpec | None
     task_is_current: bool
     task_entries: tuple[ScheduledTaskEntry, ...]
     stale_registry_entries: tuple[RegistryStartupEntry, ...]

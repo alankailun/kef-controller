@@ -4,7 +4,6 @@ import ipaddress
 import re
 import socket
 import subprocess
-from typing import Optional
 
 from ...config import AppConfig
 from ...structured_logging import log_structured
@@ -31,14 +30,14 @@ def _source_ip_for_route(target: str) -> str | None:
         return None
 
 
-def get_local_ipv4_candidates(seed_ip: Optional[str] = None) -> list[str]:
+def get_local_ipv4_candidates(seed_ip: str | None = None) -> list[str]:
     for target in ("8.8.8.8", "1.1.1.1", seed_ip):
         if target and (ip := _source_ip_for_route(target)):
             return [ip]
     return []
 
 
-def build_candidate_networks(seed_ip: Optional[str], config: AppConfig, log) -> list[ipaddress.IPv4Network]:
+def build_candidate_networks(seed_ip: str | None, config: AppConfig, log) -> list[ipaddress.IPv4Network]:
     networks: list[ipaddress.IPv4Network] = []
     seen: set[str] = set()
 

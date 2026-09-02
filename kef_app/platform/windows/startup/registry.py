@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import winreg
+from dataclasses import dataclass
 
 from .common import STARTUP_KEY
 

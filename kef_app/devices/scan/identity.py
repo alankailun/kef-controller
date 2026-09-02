@@ -4,7 +4,6 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Optional
 
 from ...config import AppConfig
 from ..speaker_models import SpeakerIdentity, normalize_mac, normalize_model_label
@@ -37,7 +36,7 @@ def looks_like_supported_kef_model(model: str, config: AppConfig) -> bool:
     return normalized in allowed
 
 
-def identify_kef_device(ip: str, config: AppConfig, *, timeout: float | None = None) -> Optional[SpeakerIdentity]:
+def identify_kef_device(ip: str, config: AppConfig, *, timeout: float | None = None) -> SpeakerIdentity | None:
     http_timeout = config.blind_discovery_http_timeout if timeout is None else timeout
     release_data = http_get_kef_data(ip, "settings:/releasetext", timeout=http_timeout)
     if not release_data:

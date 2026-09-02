@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Final
-
 
 STRUCTURED_LOG_TAGS: Final[frozenset[str]] = frozenset(
     {"ABORT", "BEGIN", "END", "ERROR", "EVENT", "INFO", "RETRY", "SKIP", "STATE", "STEP", "WARN"}
@@ -85,13 +84,14 @@ def log_structured(
     *,
     log_level: object = None,
     mono: object = None,
+    monotonic: Callable[[], float] | None = None,
     **fields: object,
 ) -> None:
     """Emit one universally formatted application log line.
 
     ``mono`` is filled at the emission point unless a caller supplies the
-    event timestamp explicitly.  Controller actions use their own clock and
-    delegate only formatting and severity policy to this module.
+    event timestamp explicitly. Controllers can inject their own monotonic
+    clock while sharing the same formatting and severity policy.
     """
     level = (
         coerce_log_level(log_level, default=structured_log_level(tag, fields))
@@ -103,5 +103,6 @@ def log_structured(
     if mono is not None:
         fields["mono"] = mono
     elif "mono" not in fields:
-        fields["mono"] = f"{time.monotonic():.3f}"
+        clock = monotonic or time.monotonic
+        fields["mono"] = f"{clock():.3f}"
     log.log(level, format_structured_message(tag, fields))

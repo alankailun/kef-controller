@@ -5,11 +5,10 @@ import logging
 import os
 import queue
 import sys
-from typing import Iterable
+from collections.abc import Iterable
 from logging.handlers import QueueHandler, QueueListener, TimedRotatingFileHandler
 
 from ..config import AppConfig
-
 
 _LOGGER_NAME = "kef_controller"
 _LISTENER_ATTR = "_kef_queue_listener"

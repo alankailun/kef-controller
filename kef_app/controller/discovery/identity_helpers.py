@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 from ...devices.speaker_models import SpeakerIdentity, normalize_model_label
 
@@ -15,9 +14,9 @@ class TargetValidationResult:
 
 
 def merge_identity_details(
-    primary: Optional[SpeakerIdentity],
-    supplement: Optional[SpeakerIdentity],
-) -> Optional[SpeakerIdentity]:
+    primary: SpeakerIdentity | None,
+    supplement: SpeakerIdentity | None,
+) -> SpeakerIdentity | None:
     if not primary:
         return supplement
     if not supplement:
@@ -35,7 +34,7 @@ def merge_identity_details(
     )
 
 
-def missing_identity_fields(identity: Optional[SpeakerIdentity]) -> str:
+def missing_identity_fields(identity: SpeakerIdentity | None) -> str:
     if not identity:
         return "identity"
     missing = []

@@ -4,8 +4,8 @@ KEF Controller - GUI entry point (system tray + main window)
 Run (no console window):
     pythonw main_gui.py
 
-Package as .exe:
-    pyinstaller --noconsole --onefile --name "KEF Controller" main_gui.py
+Package as an onedir application:
+    pyinstaller "KEF Controller.spec"
 """
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ def _run_webview_host(url: str) -> None:
         width=1120,
         height=760,
         min_size=(840, 620),
-        # Do not expose the WinForms/WebView2 placeholder while the one-file
+        # Do not expose the WinForms/WebView2 placeholder while the onedir
         # host is starting.  The page is still loaded in the hidden window and
         # becomes visible as soon as WebView2 reports it is ready.
         hidden=True,

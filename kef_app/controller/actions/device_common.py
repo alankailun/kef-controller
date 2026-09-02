@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from pykefcontrol.kef_connector import KefConnector
 
-from ..network_timeout import temporary_socket_timeout
 from ...devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source
-
+from ..network_timeout import temporary_socket_timeout
 
 _CHANGE_INPUT_POLL_INTERVAL = 0.2
 _CHANGE_INPUT_VERIFY_TIMEOUT = 2.5
@@ -25,7 +24,7 @@ class StandbyVerificationError(RuntimeError):
 
 class ControllerDeviceCommonMixin:
     @staticmethod
-    def _normalize_speaker_power_state(raw_status: object) -> Optional[bool]:
+    def _normalize_speaker_power_state(raw_status: object) -> bool | None:
         compact = re.sub(r"[^A-Za-z0-9]+", "", str(raw_status or "")).casefold()
         if not compact:
             return None
@@ -123,7 +122,7 @@ class ControllerDeviceCommonMixin:
         return False
 
     @staticmethod
-    def _coerce_volume_level(level: object) -> Optional[int]:
+    def _coerce_volume_level(level: object) -> int | None:
         try:
             value = int(level)
         except (TypeError, ValueError, OverflowError):
@@ -169,14 +168,14 @@ class ControllerDeviceCommonMixin:
         )
 
     @staticmethod
-    def _format_power_state(value: Optional[bool]) -> str:
+    def _format_power_state(value: bool | None) -> str:
         if value is True:
             return "on"
         if value is False:
             return "standby"
         return "<unknown>"
 
-    def _read_standby_snapshot(self, *, fresh: bool) -> tuple[Optional[bool], Optional[str], Optional[str]]:
+    def _read_standby_snapshot(self, *, fresh: bool) -> tuple[bool | None, str | None, str | None]:
         read_timeout = min(self.config.socket_timeout, _STANDBY_VERIFY_READ_TIMEOUT)
         try:
             with temporary_socket_timeout(read_timeout):
@@ -340,7 +339,7 @@ class ControllerDeviceCommonMixin:
         )
         return "failed_all_attempts"
 
-    def get_input_source(self, fresh: bool = False) -> Optional[str]:
+    def get_input_source(self, fresh: bool = False) -> str | None:
         if not self.get_current_kef_ip():
             return None
         try:
@@ -352,7 +351,7 @@ class ControllerDeviceCommonMixin:
             self._log_structured("WARN", action="GET_INPUT_SOURCE", error=repr(exc))
             return None
 
-    def _wait_for_input_source(self, expected_input: str, timeout: float = _CHANGE_INPUT_VERIFY_TIMEOUT) -> Optional[str]:
+    def _wait_for_input_source(self, expected_input: str, timeout: float = _CHANGE_INPUT_VERIFY_TIMEOUT) -> str | None:
         expected = normalize_input_source(expected_input)
         deadline = self.mono() + timeout
         observed = None

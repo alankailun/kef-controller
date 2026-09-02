@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import csv
 import io
-from dataclasses import dataclass
 import xml.etree.ElementTree as ET
-from typing import Optional
+from dataclasses import dataclass
 
+from ....structured_logging import log_structured
 from .common import (
     TASK_XML_NS,
     StartupLaunchSpec,
@@ -14,13 +14,12 @@ from .common import (
     split_run_value,
     strip_wrapping_quotes,
 )
-from ....structured_logging import log_structured
 
 
 @dataclass(frozen=True, slots=True)
 class ScheduledTaskEntry:
     name: str
-    spec: Optional[StartupLaunchSpec]
+    spec: StartupLaunchSpec | None
 
 
 def task_exists(task_name: str) -> bool:
@@ -31,7 +30,7 @@ def task_exists(task_name: str) -> bool:
         return False
 
 
-def read_task_launch_spec(task_name: str) -> Optional[StartupLaunchSpec]:
+def read_task_launch_spec(task_name: str) -> StartupLaunchSpec | None:
     try:
         completed = hidden_run(["schtasks", "/query", "/tn", task_name, "/xml"], timeout=5)
         if completed.returncode != 0:

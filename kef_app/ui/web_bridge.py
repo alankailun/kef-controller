@@ -4,21 +4,18 @@ import json
 import os
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import asdict
-from typing import Any, Callable
+from typing import Any
 
-from PySide6.QtCore import QObject, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtCore import QUrl
 
 from ..config import AppConfig
 from ..devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source, normalize_mac
+from ..platform.windows.startup.elevation import remove_startup_task_with_uac, repair_task_startup_with_uac
+from ..platform.windows.startup.status import read_startup_registration_snapshot
 from ..storage import UserConfigStore
-from ..platform.windows import (
-    remove_startup_task_with_uac,
-    read_startup_registration_snapshot,
-    repair_task_startup_with_uac,
-)
 from .background_tasks import start_background_task
 from .controller_events import ControllerEventBridge
 from .logs import UILogHandler
@@ -29,7 +26,6 @@ from .logs.log_history import (
     resolve_log_history_file,
 )
 from .settings.settings_service import get_speaker_power_disabled_reason, save_settings_and_sync_startup
-
 
 _EVENTS: dict[str, tuple[str, str, Callable[[Any], object]]] = {
     "startup": (
@@ -122,25 +118,19 @@ class WebControllerBridge(QObject):
         self._apply_poll_interval()
 
         controller_bridge.identity_changed.connect(lambda _identity: self.publish_state())
-        controller_bridge.speaker_state_changed.connect(self._on_speaker_state_changed)
+        controller_bridge.speaker_state_changed.connect(self._on_polled_state)
         controller_bridge.power_action_started.connect(self._on_power_action_started)
         controller_bridge.power_action_finished.connect(self._on_power_action_finished)
-        log_handler.emitter.new_line.connect(self._on_log_line)
-
-    @Slot(result=str)
-    def initialState(self) -> str:
-        return self._encode(self._initial_state_payload())
+        log_handler.emitter.new_line.connect(self.log_line.emit)
 
     def _initial_state_payload(self) -> dict[str, Any]:
         self._poll_speaker_state()
         return self._state()
 
-    @Slot()
     def refresh(self) -> None:
         self._poll_speaker_state(force=True)
         self.publish_state()
 
-    @Slot(bool)
     def set_ui_visible(self, visible: bool) -> None:
         """Only poll the speaker while the controller window is visible."""
         visible = bool(visible)
@@ -153,7 +143,6 @@ class WebControllerBridge(QObject):
             return
         self._poll_timer.stop()
 
-    @Slot()
     def togglePower(self) -> None:
         identity = self._controller.get_current_identity()
         is_on = self._speaker_on if self._speaker_on is not None else bool(identity.available)
@@ -167,7 +156,6 @@ class WebControllerBridge(QObject):
             action=action,
         )
 
-    @Slot(int)
     def setVolume(self, level: int) -> None:
         level = max(0, min(100, int(level)))
 
@@ -184,7 +172,6 @@ class WebControllerBridge(QObject):
         start_background_task("WebSetVolume", work, on_success=done,
                               on_error=lambda _exc: done(False), log=self._controller.log)
 
-    @Slot(str)
     def changeInput(self, source: str) -> None:
         source = normalize_input_source(source)
         valid = {value for _label, value in INPUT_SOURCE_OPTIONS}
@@ -212,7 +199,6 @@ class WebControllerBridge(QObject):
         start_background_task("WebChangeInput", work, on_success=done,
                               on_error=lambda _exc: done(False), log=self._controller.log)
 
-    @Slot(str)
     def updateSettings(self, payload: str) -> None:
         try:
             changes = json.loads(payload)
@@ -228,8 +214,7 @@ class WebControllerBridge(QObject):
             self._notify("error", "Settings were not saved", str(exc))
             return
 
-        for field_name in self._config_store.USER_EDITABLE_FIELDS:
-            setattr(self._config, field_name, getattr(updated, field_name))
+        self._copy_user_editable_fields(updated)
         saved = self._config_store.save(self._config)
         self._apply_poll_interval()
         self._notify(
@@ -239,7 +224,6 @@ class WebControllerBridge(QObject):
         )
         self.publish_state()
 
-    @Slot(str, str)
     def applyTarget(self, ip: str, mac: str) -> None:
         """Validate and apply a device target exactly as the former Qt dialog did."""
         requested_ip = str(ip or "").strip()
@@ -274,7 +258,6 @@ class WebControllerBridge(QObject):
                               on_error=lambda exc: self._notify("error", "Target not saved", str(exc)),
                               log=self._controller.log)
 
-    @Slot(str, bool)
     def updateStartup(self, mode: str, enabled: bool) -> None:
         """Persist the startup preference and reconcile Windows registration."""
         try:
@@ -313,8 +296,7 @@ class WebControllerBridge(QObject):
             )
 
         def done(result) -> None:
-            for field_name in self._config_store.USER_EDITABLE_FIELDS:
-                setattr(self._config, field_name, getattr(result.updated, field_name))
+            self._copy_user_editable_fields(result.updated)
             self._startup_registered = result.actual_startup_registered
             self._startup_mode = result.actual_startup_mode
             if result.config_ok and result.startup_ok:
@@ -344,7 +326,6 @@ class WebControllerBridge(QObject):
             log=self._controller.log,
         )
 
-    @Slot()
     def scanSpeakers(self) -> None:
         def candidate(identity: object) -> None:
             self.toast.emit(self._encode({"kind": "scan", "state": "candidate", "devices": [self._identity_dict(identity)]}))
@@ -374,7 +355,6 @@ class WebControllerBridge(QObject):
             log=self._controller.log,
         )
 
-    @Slot(str)
     def runEvent(self, event_key: str) -> None:
         event = _EVENTS.get(event_key)
         if event is None:
@@ -411,11 +391,6 @@ class WebControllerBridge(QObject):
                               on_error=lambda exc: self._emit_event_result(event_key, "error", "Failed", str(exc)),
                               log=self._controller.log)
 
-    @Slot(result=str)
-    @Slot(str, result=str)
-    def logs(self, selected_name: str = "") -> str:
-        return self._encode(self._logs_payload(selected_name))
-
     def _logs_payload(self, selected_name: str = "") -> list[str]:
         # Poll diagnostics are emitted at DEBUG, so normal INFO logs stay clean
         # at the source rather than relying on a brittle presentation filter.
@@ -429,14 +404,9 @@ class WebControllerBridge(QObject):
             max_lines=800,
         )
 
-    @Slot(result=str)
-    def logFiles(self) -> str:
-        return self._encode(self._log_files_payload())
-
     def _log_files_payload(self) -> list[str]:
         return list_log_history_files(self._config.log_file)
 
-    @Slot()
     def openLogFolder(self) -> None:
         os.makedirs(self._config.log_dir, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(self._config.log_dir))
@@ -573,9 +543,6 @@ class WebControllerBridge(QObject):
         self._last_failure = (detail or "Speaker state check failed", time.monotonic())
         self.publish_state()
 
-    def _on_speaker_state_changed(self, input_source: object, volume: object, speaker_on: object) -> None:
-        self._on_polled_state(input_source, volume, speaker_on)
-
     def _on_power_action_started(self, action: str, _reason: str) -> None:
         normalized_action = str(action or "").upper()
         self._awaiting_wake_confirmation = normalized_action == "WAKE"
@@ -619,11 +586,12 @@ class WebControllerBridge(QObject):
         )
         self._poll_speaker_state(force=True)
 
-    def _on_log_line(self, line: str) -> None:
-        self.log_line.emit(line)
-
     def _apply_poll_interval(self) -> None:
         self._poll_timer.setInterval(max(1000, int(self._config.home_external_poll_interval * 1000)))
+
+    def _copy_user_editable_fields(self, source: AppConfig) -> None:
+        for field_name in self._config_store.USER_EDITABLE_FIELDS:
+            setattr(self._config, field_name, getattr(source, field_name))
 
     def _recent_failure(self) -> dict[str, object] | None:
         if self._last_failure is None:

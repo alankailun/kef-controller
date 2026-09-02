@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import sys
-from typing import Optional
 
 from .common import (
-    NullLogger,
-    REPAIR_TASK_FLAG,
     REMOVE_TASK_FLAG,
+    REPAIR_TASK_FLAG,
     TASK_NAME_FLAG,
+    NullLogger,
     clear_last_startup_error,
     cli_flag_value,
     format_process_error,
@@ -22,7 +21,7 @@ from .service import set_startup_registered
 from .task_scheduler import read_task_launch_spec, task_exists
 
 
-def maybe_handle_startup_task_repair(log=None) -> Optional[int]:
+def maybe_handle_startup_task_repair(log=None) -> int | None:
     argv = sys.argv[1:]
     logger = log or NullLogger()
     task_name = cli_flag_value(argv, TASK_NAME_FLAG) or "KEF Controller"

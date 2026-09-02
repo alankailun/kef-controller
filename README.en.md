@@ -244,10 +244,10 @@ cd /d "path\to\kef_controller"
 Main output:
 
 ```text
-dist\KEF Controller.exe
+dist\KEF Controller\KEF Controller.exe
 ```
 
-The `.spec` file uses `main_gui.py`, builds a windowed one-file executable,
+The `.spec` file uses `main_gui.py`, builds a windowed onedir application,
 includes the QFluentWidgets and SVG resources the UI needs, keeps the Modern
 Windows Qt style plugin, keeps the software OpenGL fallback, and trims unused
 Qt/PySide6 modules and plugins to keep the bundle smaller.
@@ -263,7 +263,7 @@ C:\Program Files (x86)\Inno Setup 6\ISCC.exe
 Make sure the PyInstaller output already exists:
 
 ```text
-dist\KEF Controller.exe
+dist\KEF Controller\KEF Controller.exe
 ```
 
 Compile the installer:
@@ -317,7 +317,7 @@ installer\KEF_Controller.iss
 1. Update the version in `installer/KEF_Controller.iss` when needed.
 2. Update the matching file under `release_notes/`.
 3. Run the unit tests and `compileall`.
-4. Build `dist\KEF Controller.exe` with `KEF Controller.spec`.
+4. Build `dist\KEF Controller\KEF Controller.exe` with `KEF Controller.spec`.
 5. Test the generated `.exe`.
 6. Compile `installer\KEF_Controller.iss`.
 7. Test the installer, shortcuts, startup method, shutdown/lock/sleep/display

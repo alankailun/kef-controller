@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Literal
 
-from ...devices.transport import FireAndForgetShutdownResult
+from ...devices.transport.standby_request import FireAndForgetShutdownResult
 from .prewarmed_socket import PrewarmedStandbySendResult
-
 
 FastStandbyStatus = Literal["sent", "host_unreachable", "failed"]
 FastStandbySource = Literal["prewarmed", "fire_and_forget"]

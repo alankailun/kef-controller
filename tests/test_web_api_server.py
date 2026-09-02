@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import tempfile
 import threading
 import time
-import tempfile
 import unittest
 from http.client import HTTPConnection
 from pathlib import Path
@@ -10,7 +10,7 @@ from urllib.error import HTTPError
 from urllib.parse import parse_qs, urljoin, urlparse
 from urllib.request import Request, urlopen
 
-from kef_app.ui.web_api_server import WebApiServer, _STATIC_CONTENT_TYPES
+from kef_app.ui.web_api_server import _STATIC_CONTENT_TYPES, WebApiServer
 
 
 class WebApiServerTests(unittest.TestCase):

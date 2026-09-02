@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Mapping, Optional
 
-from ..structured_logging import coerce_log_level, format_structured_message, structured_log_level
+from ..structured_logging import log_structured
 
 _SLEEP_CROSSING_MIN_DURATION_S = 5.0
 _NETWORK_INTERFACE_DEDUP_WINDOW_S = 0.2
@@ -75,35 +75,21 @@ class ControllerLoggingMixin:
     def mono(self) -> float:
         return time.monotonic()
 
-    @staticmethod
-    def _coerce_log_level(level: object) -> Optional[int]:
-        if level is None:
-            return None
-        return coerce_log_level(level)
-
-    def _get_structured_log_level(self, tag: str, fields: dict[str, object]) -> int:
-        return structured_log_level(tag, fields)
-
     def _log_structured(self, tag: str, *, log_level: object = None, mono: object = None, **fields):
-        self._write_structured_log(tag, log_level=log_level, mono=mono, **fields)
+        log_structured(
+            self.log,
+            tag,
+            log_level=log_level,
+            mono=mono,
+            monotonic=self.mono,
+            **fields,
+        )
 
     def _bind_log(self, **fields: object) -> BoundStructuredLogger:
         return BoundStructuredLogger(self, MappingProxyType(dict(fields)))
 
     def _action_log(self, action: str, generation: int | None, reason: str) -> BoundStructuredLogger:
         return self._bind_log(action=action, gen=generation, reason=reason)
-
-    def _write_structured_log(self, tag: str, *, log_level: object = None, mono: object = None, **fields):
-        log_level_value = self._coerce_log_level(log_level) or self._get_structured_log_level(tag, fields)
-        if not self.log.isEnabledFor(log_level_value):
-            return
-
-        if mono is not None:
-            fields["mono"] = mono
-        elif "mono" not in fields:
-            fields["mono"] = f"{self.mono():.3f}"
-
-        self.log.log(log_level_value, format_structured_message(tag, fields))
 
     def _log_action_begin(self, action: str, generation: int | None, reason: str) -> float:
         start_mono = self.mono()
@@ -258,10 +244,6 @@ class ControllerLoggingMixin:
         with self._state_lock:
             self._windows_events.last_event_name = name
             self._windows_events.last_event_mono = event_mono
-            if name == "WTS_SESSION_LOCK":
-                self._power.session_locked = True
-            elif name == "WTS_SESSION_UNLOCK":
-                self._power.session_locked = False
 
     def _log_session_event_line(self, name: str, wparam: int, lparam: int, event_mono: float) -> None:
         self._log_structured(

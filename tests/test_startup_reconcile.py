@@ -4,18 +4,17 @@ import unittest
 from unittest.mock import Mock, patch
 
 from kef_app.config import AppConfig
-from kef_app.ui.settings.settings_service import save_settings_and_sync_startup, startup_mode_for_ui
+from kef_app.platform.windows.startup import launch as startup_launch
+from kef_app.platform.windows.startup import service as startup_service
 from kef_app.platform.windows.startup.common import NullLogger, StartupLaunchSpec
 from kef_app.platform.windows.startup.reconcile import (
     StartupRegistrationState,
     read_startup_registration_state,
 )
-from kef_app.platform.windows.startup.status import StartupRegistrationSnapshot
 from kef_app.platform.windows.startup.registry import RegistryStartupEntry
+from kef_app.platform.windows.startup.status import StartupRegistrationSnapshot
 from kef_app.platform.windows.startup.task_scheduler import ScheduledTaskEntry
-from kef_app.platform.windows.startup import service as startup_service
-from kef_app.platform.windows.startup import launch as startup_launch
-
+from kef_app.ui.settings.settings_service import save_settings_and_sync_startup, startup_mode_for_ui
 
 TASK_NAME = "KEF Controller"
 DESIRED = StartupLaunchSpec(r"C:\Users\alan\AppData\Local\Programs\KEF Controller\KEF Controller.exe")

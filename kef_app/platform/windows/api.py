@@ -5,9 +5,9 @@ import os
 import socket
 import sys
 import uuid
+from collections.abc import Callable
 from ctypes import wintypes
 from dataclasses import dataclass
-from typing import Callable, Optional
 
 from ...structured_logging import log_structured
 
@@ -192,7 +192,7 @@ class IpInterfaceChangeMonitor:
         self.active = False
         self.error = ""
 
-    def start(self) -> "IpInterfaceChangeMonitor":
+    def start(self) -> IpInterfaceChangeMonitor:
         status = NotifyIpInterfaceChange(AF_UNSPEC, self._callback, None, False, ctypes.byref(self.handle))
         if status != ERROR_SUCCESS:
             self.error = f"NotifyIpInterfaceChange failed: {status}"
@@ -269,7 +269,7 @@ class GUID(ctypes.Structure):
     ]
 
     @classmethod
-    def from_string(cls, value: str) -> "GUID":
+    def from_string(cls, value: str) -> GUID:
         parsed = uuid.UUID(value)
         node = parsed.node.to_bytes(6, "big")
         data4 = (ctypes.c_ubyte * 8)(parsed.clock_seq_hi_variant, parsed.clock_seq_low, *node)
@@ -367,7 +367,7 @@ def decode_power_setting_change(lparam: int) -> PowerSettingChange | None:
     )
 
 
-def ensure_single_instance(log, mutex_name: str) -> Optional[int]:
+def ensure_single_instance(log, mutex_name: str) -> int | None:
     kernel32_local = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32_local.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
     kernel32_local.CreateMutexW.restype = wintypes.HANDLE

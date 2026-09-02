@@ -28,7 +28,7 @@ WEBVIEW_HOST_URL_ENV = "KEF_CONTROLLER_WEBVIEW_HOST_URL"
 class WebApiServer:
     """Serve the bundled web UI and a loopback-only bridge for QtWebView."""
 
-    def __init__(self, root: Path, bridge: "WebControllerBridge") -> None:
+    def __init__(self, root: Path, bridge: WebControllerBridge) -> None:
         self._root = root.resolve()
         self._bridge = bridge
         self._server: ThreadingHTTPServer | None = None
@@ -102,7 +102,8 @@ class WebApiServer:
         with self._events_condition:
             return max(0.0, time.monotonic() - self._last_client_activity_mono)
 
-    def _touch_client_activity(self) -> None:
+    def touch_client_activity(self) -> None:
+        """Record activity from the live WebView renderer."""
         with self._events_condition:
             self._last_client_activity_mono = time.monotonic()
 
@@ -182,7 +183,7 @@ class WebApiServer:
                 # Only the long-poll represents a live browser renderer.
                 # Loading logs or opening a folder must not mask a stalled UI
                 # from the host monitor.
-                self._touch_client_activity()
+                self.touch_client_activity()
                 cursor = int(args[0]) if args else 0
                 result = self._updates_since(max(0, cursor))
             else:

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import copy
 import os
-from dataclasses import dataclass, field, fields as dataclass_fields
+from dataclasses import dataclass, field
+from dataclasses import fields as dataclass_fields
 
 from .system_config import SystemConfig
 from .user_settings import USER_SETTINGS_FIELD_NAMES, UserSettings
-
 
 _SYSTEM_CONFIG_FIELD_NAMES = {field.name for field in dataclass_fields(SystemConfig)}
 _USER_SETTINGS_FIELD_NAMES = set(USER_SETTINGS_FIELD_NAMES)
@@ -36,10 +36,10 @@ class AppConfig:
             return
         object.__setattr__(self, name, value)
 
-    def clone(self) -> "AppConfig":
+    def clone(self) -> AppConfig:
         return copy.deepcopy(self)
 
-    def with_updates(self, **changes) -> "AppConfig":
+    def with_updates(self, **changes) -> AppConfig:
         updated = self.clone()
         for key, value in changes.items():
             if key not in _SYSTEM_CONFIG_FIELD_NAMES and key not in _USER_SETTINGS_FIELD_NAMES:

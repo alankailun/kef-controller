@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from .raw_http import FireAndForgetHttpPostResult, build_http_post_request_bytes, fire_and_forget_http_post
-
 
 _STANDBY_PAYLOAD = {
     "path": "settings:/kef/play/physicalSource",

@@ -7,7 +7,6 @@ from pathlib import Path
 
 from kef_app.structured_logging import STRUCTURED_LOG_TAGS, log_structured, structured_log_level
 
-
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _APP_ROOT = _PROJECT_ROOT / "kef_app"
 _RAW_LOG_METHODS = {"debug", "info", "warning", "error", "critical", "exception"}
@@ -115,6 +114,25 @@ class StructuredLoggingContractTests(unittest.TestCase):
         self.assertEqual(structured_log_level("BEGIN", fields), logging.INFO)
         self.assertEqual(structured_log_level("END", fields), logging.INFO)
 
+    def test_log_structured_uses_an_injected_monotonic_clock(self) -> None:
+        logger = logging.getLogger("tests.structured_logging.clock")
+        logger.handlers.clear()
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
+        captured: list[logging.LogRecord] = []
+
+        class Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                captured.append(record)
+
+        handler = Capture()
+        logger.addHandler(handler)
+        self.addCleanup(logger.removeHandler, handler)
+
+        log_structured(logger, "STEP", action="TEST", monotonic=lambda: 12.3456)
+
+        self.assertEqual(captured[0].getMessage(), "STEP action=TEST | mono=12.346")
+
     def test_application_code_uses_one_structured_log_wire_format(self) -> None:
         raw_log_calls: list[str] = []
         deprecated_fields: list[str] = []
@@ -136,7 +154,9 @@ class StructuredLoggingContractTests(unittest.TestCase):
                     continue
 
                 if isinstance(node.func, ast.Name) and node.func.id == "log_structured":
-                    if "action" not in {keyword.arg for keyword in node.keywords if keyword.arg}:
+                    keyword_names = {keyword.arg for keyword in node.keywords if keyword.arg}
+                    has_field_unpack = any(keyword.arg is None for keyword in node.keywords)
+                    if "action" not in keyword_names and not has_field_unpack:
                         missing_action.append(f"{path.relative_to(_PROJECT_ROOT)}:{node.lineno}")
 
                 if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):

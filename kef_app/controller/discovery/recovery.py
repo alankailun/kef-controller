@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
-from ...devices.scan import discover_ip_by_mac, discover_kef_device_blind, discover_kef_devices
+from ...devices.scan.scan import discover_ip_by_mac, discover_kef_device_blind, discover_kef_devices
 from ...devices.speaker_models import SpeakerIdentity
-from ...platform.windows import has_best_route_to_ipv4
+from ...platform.windows.api import has_best_route_to_ipv4
 
 
 class ControllerDiscoveryRecoveryMixin:

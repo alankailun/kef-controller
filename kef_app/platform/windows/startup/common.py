@@ -7,7 +7,6 @@ from dataclasses import dataclass
 
 from ....structured_logging import log_structured
 
-
 STARTUP_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 TASK_XML_NS = {"task": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
 VALID_STARTUP_MODES = {"off", "task", "registry"}

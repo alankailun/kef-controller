@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
-
-from ...devices.scan import is_routable_ipv4
+from ...devices.scan.network import is_routable_ipv4
 from ...devices.speaker_models import SpeakerIdentity, normalize_mac
 
 
@@ -37,78 +35,6 @@ class ControllerIdentityStateMixin:
                 backend=self.config.backend_name,
                 matched_by=self._identity.last_matched_by,
             )
-
-    def select_kef_device(self, identity: SpeakerIdentity, trigger: str) -> bool:
-        ip = str(identity.ip or "").strip()
-        if not is_routable_ipv4(ip):
-            self._log_structured(
-                "WARN",
-                action="SELECT_DEVICE",
-                trigger=trigger,
-                cause="invalid_ip",
-                requested_ip=ip or "<empty>",
-            )
-            return False
-
-        mac_norm = normalize_mac(identity.mac or identity.mac_display or "")
-        speaker_name = identity.speaker_name or ""
-        speaker_model = identity.speaker_model or ""
-        firmware_version = identity.firmware_version or ""
-
-        with self._ip_lock:
-            old_ip = self._identity.current_ip
-            old_mac = self._identity.target_mac
-            old_name = self._identity.speaker_name
-            old_model = self._identity.speaker_model
-            old_firmware = self._identity.speaker_firmware
-            old_matched_by = self._identity.last_matched_by
-
-            self._identity.current_ip = ip
-            self._identity.target_mac = mac_norm
-            self._identity.speaker_name = speaker_name
-            self._identity.speaker_model = speaker_model
-            self._identity.speaker_firmware = firmware_version
-            self._identity.last_matched_by = identity.matched_by or "manual"
-            self._identity.available = True
-            self._identity.probe_failures = 0
-
-            changed = (
-                old_ip != self._identity.current_ip
-                or old_mac != self._identity.target_mac
-                or old_name != self._identity.speaker_name
-                or old_model != self._identity.speaker_model
-                or old_firmware != self._identity.speaker_firmware
-                or old_matched_by != self._identity.last_matched_by
-            )
-
-        if not changed:
-            self._log_structured(
-                "STEP",
-                action="SELECT_DEVICE",
-                trigger=trigger,
-                status="unchanged",
-                actual_ip=ip,
-                actual_mac=mac_norm or "<empty>",
-            )
-            return False
-
-        self._refresh_fast_standby_send_cache()
-        self.reset_speaker()
-        self._persist_runtime_state(trigger=f"select:{trigger}")
-        self._log_structured(
-            "STEP",
-            action="SELECT_DEVICE",
-            trigger=trigger,
-            status="selected",
-            previous_ip=old_ip or "<empty>",
-            actual_ip=ip,
-            previous_mac=old_mac or "<empty>",
-            actual_mac=mac_norm or "<empty>",
-            actual_speaker_name=speaker_name or "<empty>",
-            actual_speaker_model=speaker_model or "<empty>",
-        )
-        self._emit_identity_changed()
-        return True
 
     def _mark_identity_probe_success(self, trigger: str) -> bool:
         with self._ip_lock:
@@ -178,7 +104,7 @@ class ControllerIdentityStateMixin:
         with self._ip_lock:
             return self._identity.target_mac
 
-    def update_identity_from_device_info(self, info: Optional[SpeakerIdentity], trigger: str) -> bool:
+    def update_identity_from_device_info(self, info: SpeakerIdentity | None, trigger: str) -> bool:
         if not info:
             return False
 
@@ -232,7 +158,6 @@ class ControllerIdentityStateMixin:
         availability_changed = self._mark_identity_probe_success(trigger=f"identity:{trigger}")
         if changed:
             self._refresh_fast_standby_send_cache()
-        if changed:
             self._persist_runtime_state(trigger=f"identity:{trigger}")
         if changed or availability_changed:
             self._emit_identity_changed()

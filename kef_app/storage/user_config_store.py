@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import math
 import os
-from dataclasses import fields as dataclass_fields, is_dataclass
-from typing import Any, Callable, ClassVar
+from collections.abc import Callable
+from dataclasses import fields as dataclass_fields
+from dataclasses import is_dataclass
+from typing import Any, ClassVar
 
 from ..config import AppConfig
 from ..config.user_settings import (
@@ -12,10 +14,8 @@ from ..config.user_settings import (
     USER_SETTINGS_FLAT_FIELD_NAMES,
     USER_SETTINGS_SECTION_NAMES,
 )
+from ..devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source, normalize_mac
 from .json_file import write_json_atomic
-from ..devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source
-from ..devices.speaker_models import normalize_mac
-
 
 _USER_SETTINGS_FIELD_NAMES = USER_SETTINGS_FLAT_FIELD_NAMES
 _USER_SETTINGS_SECTION_FIELDS = {
@@ -38,6 +38,20 @@ _DEFAULT_PREWARMED_KEEPALIVE_INTERVAL_S = 5.0
 
 def _coerce_string(value: Any) -> str:
     return str(value or "")
+
+
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+    return bool(value)
 
 
 def _coerce_startup_mode(value: Any) -> str:
@@ -143,18 +157,18 @@ class UserConfigStore:
         "blind_discovery_max_workers": _coerce_positive_int,
         "kef_input": _coerce_input_source,
         "startup_registration_mode": _coerce_startup_mode,
-        "wake_on_startup": lambda value: UserConfigStore._coerce_bool(value),
+        "wake_on_startup": _coerce_bool,
         "startup_delay": _coerce_non_negative_float,
         "resume_wake_delay": _coerce_non_negative_float,
         "socket_timeout": _coerce_positive_float,
-        "wake_on_unlock_only": lambda value: UserConfigStore._coerce_bool(value),
+        "wake_on_unlock_only": _coerce_bool,
         "unlock_wake_delay": _coerce_non_negative_float,
-        "wake_on_display_on": lambda value: UserConfigStore._coerce_bool(value),
+        "wake_on_display_on": _coerce_bool,
         "display_on_wake_delay": _coerce_non_negative_float,
         "reachability_wait_timeout": _coerce_non_negative_float,
         "reachability_poll_interval": _coerce_positive_float,
         "home_external_poll_interval": _coerce_positive_float,
-        "home_event_poll_enabled": lambda value: UserConfigStore._coerce_bool(value),
+        "home_event_poll_enabled": _coerce_bool,
         "home_event_poll_timeout": _coerce_positive_float,
         "speaker_event_recovery_failure_threshold": _coerce_positive_int,
         "tray_identity_poll_interval": _coerce_positive_float,
@@ -163,21 +177,21 @@ class UserConfigStore:
         "suspend_action_lock_timeout": _coerce_non_negative_float,
         "wake_action_lock_timeout": _coerce_non_negative_float,
         "resume_dedup_window": _coerce_non_negative_float,
-        "standby_on_sleep": lambda value: UserConfigStore._coerce_bool(value),
-        "suspend_fast_standby_enabled": lambda value: UserConfigStore._coerce_bool(value),
-        "standby_on_lock": lambda value: UserConfigStore._coerce_bool(value),
-        "standby_on_lid_close": lambda value: UserConfigStore._coerce_bool(value),
-        "standby_on_display_off": lambda value: UserConfigStore._coerce_bool(value),
-        "prewarmed_standby_enabled": lambda value: UserConfigStore._coerce_bool(value),
-        "prewarmed_persist_socket": lambda value: UserConfigStore._coerce_bool(value),
+        "standby_on_sleep": _coerce_bool,
+        "suspend_fast_standby_enabled": _coerce_bool,
+        "standby_on_lock": _coerce_bool,
+        "standby_on_lid_close": _coerce_bool,
+        "standby_on_display_off": _coerce_bool,
+        "prewarmed_standby_enabled": _coerce_bool,
+        "prewarmed_persist_socket": _coerce_bool,
         "prewarmed_keepalive_interval_s": _coerce_positive_float,
         "prewarmed_socket_timeout_s": _coerce_positive_float,
         "prewarmed_send_deadline_s": _coerce_positive_float,
         "prewarmed_frozen_send_multiplier": _coerce_positive_float,
         "log_backup_days": _coerce_log_backup_days,
-        "persist_runtime_state": lambda value: UserConfigStore._coerce_bool(value),
-        "fast_exit_on_endsession": lambda value: UserConfigStore._coerce_bool(value),
-        "endsession_standby_on_shutdown": lambda value: UserConfigStore._coerce_bool(value),
+        "persist_runtime_state": _coerce_bool,
+        "fast_exit_on_endsession": _coerce_bool,
+        "endsession_standby_on_shutdown": _coerce_bool,
     }
 
     def __init__(self, base_config: AppConfig):
@@ -195,7 +209,7 @@ class UserConfigStore:
             return self._base_config.clone()
 
         try:
-            with open(self.path, "r", encoding="utf-8") as f:
+            with open(self.path, encoding="utf-8") as f:
                 data = json.load(f)
             if not isinstance(data, dict):
                 raise ValueError("config.json root must be an object")
@@ -301,7 +315,7 @@ class UserConfigStore:
             return False
 
         try:
-            persist_socket = self._coerce_bool(raw_persist_socket)
+            persist_socket = _coerce_bool(raw_persist_socket)
             keepalive_interval = float(raw_keepalive_interval)
         except Exception:
             return False
@@ -376,17 +390,3 @@ class UserConfigStore:
         if len(text) > limit:
             return text[: limit - 3] + "..."
         return text
-
-    @staticmethod
-    def _coerce_bool(value: Any) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return bool(value)
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if normalized in {"1", "true", "yes", "on"}:
-                return True
-            if normalized in {"0", "false", "no", "off", ""}:
-                return False
-        return bool(value)

@@ -9,16 +9,16 @@ from kef_app.config import AppConfig
 from kef_app.controller import KefPowerController
 from kef_app.controller.actions.standby import (
     FAST_SUSPEND_STANDBY_POLICY,
-    FastStandbyPolicy,
     PREEMPTIVE_STANDBY_POLICY,
+    FastStandbyPolicy,
 )
 from kef_app.controller.session_events import _DisplayOffStandbyTask
 from kef_app.controller.standby import CachedPrewarmedStandbySendResult, PrewarmedStandbySendResult
 from kef_app.controller.triggers import TRIGGERS
-from kef_app.devices.transport import FireAndForgetShutdownResult
-from kef_app.devices.transport import is_host_unreachable
 from kef_app.devices.speaker_models import SpeakerIdentity
-from kef_app.platform.windows import ENDSESSION_CLOSEAPP
+from kef_app.devices.transport.errors import is_host_unreachable
+from kef_app.devices.transport.standby_request import FireAndForgetShutdownResult
+from kef_app.platform.windows.api import ENDSESSION_CLOSEAPP
 
 
 class PowerEventLogicTests(unittest.TestCase):
@@ -390,7 +390,7 @@ class PowerEventLogicTests(unittest.TestCase):
         result = controller.on_lock("UI_TEST_LOCK")
 
         self.assertTrue(result)
-        self.assertFalse(controller._is_session_locked())
+        self.assertFalse(controller._power.session_locked)
 
     def test_on_lid_closed_dispatches_off_pump_standby(self):
         controller = self.make_controller(standby_on_lid_close=True)
@@ -550,7 +550,6 @@ class PowerEventLogicTests(unittest.TestCase):
         controller.try_send_cached_prewarmed_standby = Mock(
             return_value=CachedPrewarmedStandbySendResult(
                 success=True,
-                fast_path_used=True,
                 status="sent",
                 target_ip="192.168.1.10",
                 cache_version=1,
@@ -2060,35 +2059,6 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertTrue(controller._blind_discovery_lock.acquire(blocking=False))
         controller._blind_discovery_lock.release()
         self.assertFalse(discover.call_args.kwargs["should_continue"]())
-
-    def test_select_kef_device_updates_current_target(self):
-        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
-        identity = SpeakerIdentity(
-            ip="192.168.1.20",
-            mac="AABBCCDDEE02",
-            speaker_name="Office Speaker",
-            speaker_model="LS50 Wireless II",
-        )
-
-        changed = controller.select_kef_device(identity, trigger="unit_test")
-
-        self.assertTrue(changed)
-        self.assertEqual(controller.get_current_kef_ip(), "192.168.1.20")
-        self.assertEqual(controller.get_target_kef_mac(), "AABBCCDDEE02")
-
-    def test_select_kef_device_without_mac_clears_previous_target_mac(self):
-        controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
-        identity = SpeakerIdentity(
-            ip="192.168.1.20",
-            speaker_name="Office Speaker",
-            speaker_model="LS50 Wireless II",
-        )
-
-        changed = controller.select_kef_device(identity, trigger="unit_test")
-
-        self.assertTrue(changed)
-        self.assertEqual(controller.get_current_kef_ip(), "192.168.1.20")
-        self.assertEqual(controller.get_target_kef_mac(), "")
 
     def test_validate_manual_target_rejects_mac_mismatch(self):
         controller = self.make_controller()

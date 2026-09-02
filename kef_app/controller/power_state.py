@@ -55,21 +55,25 @@ def power_action_outcome_is_success(outcome: str) -> bool:
 
 
 class ControllerStateMixin:
+    def _advance_generation_locked(self, desired_state: str, reason: str, *, mono: str | None = None) -> int:
+        """Advance the desired power generation while ``_state_lock`` is held."""
+        self._power.generation += 1
+        generation = self._power.generation
+        self._power.desired_state = desired_state
+        self._power.desired_reason = reason
+        self._log_structured(
+            "STATE",
+            action="POWER_GENERATION",
+            desired=desired_state,
+            gen=generation,
+            reason=reason,
+            mono=mono,
+        )
+        return generation
+
     def _new_generation(self, desired_state: str, reason: str, *, mono: str | None = None) -> int:
         with self._state_lock:
-            self._power.generation += 1
-            generation = self._power.generation
-            self._power.desired_state = desired_state
-            self._power.desired_reason = reason
-            self._log_structured(
-                "STATE",
-                action="POWER_GENERATION",
-                desired=desired_state,
-                gen=generation,
-                reason=reason,
-                mono=mono,
-            )
-            return generation
+            return self._advance_generation_locked(desired_state, reason, mono=mono)
 
     def _current_generation(self) -> int:
         with self._state_lock:
@@ -216,18 +220,7 @@ class ControllerStateMixin:
                 )
                 return None, "deduped"
             self._power.last_wake_schedule_mono = now
-            self._power.generation += 1
-            generation = self._power.generation
-            self._power.desired_state = "wake"
-            self._power.desired_reason = reason
-            self._log_structured(
-                "STATE",
-                action="POWER_GENERATION",
-                desired="wake",
-                gen=generation,
-                reason=reason,
-                mono=mono,
-            )
+            generation = self._advance_generation_locked("wake", reason, mono=mono)
             return generation, "claimed"
 
     def _display_off_intent_is_active(self, generation: int) -> bool:
@@ -267,10 +260,6 @@ class ControllerStateMixin:
     def _set_session_locked(self, locked: bool) -> None:
         with self._state_lock:
             self._power.session_locked = locked
-
-    def _is_session_locked(self) -> bool:
-        with self._state_lock:
-            return self._power.session_locked
 
     def _is_controller_power_action_active(self) -> bool:
         with self._state_lock:

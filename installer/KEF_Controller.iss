@@ -1,5 +1,5 @@
 #define AppExeName "KEF Controller.exe"
-#define AppVersion "1.9.6"
+#define AppVersion "1.9.7"
 #define WebView2RuntimeKey "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 #ifndef BuildSource
   #define BuildSource "..\dist\KEF Controller"
@@ -44,6 +44,11 @@ Name: "{autodesktop}\KEF Controller"; Filename: "{app}\{#AppExeName}"; WorkingDi
 [Run]
 Filename: "{tmp}\MicrosoftEdgeWebView2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "Installing Microsoft Edge WebView2 Runtime..."; Flags: waituntilterminated skipifdoesntexist; Check: NeedsWebView2Runtime
 Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Description: "Launch KEF Controller"; Flags: nowait postinstall skipifsilent
+
+[InstallDelete]
+; The runtime directory contains generated bundle files only.  Replacing it
+; prevents removed or renamed dependencies from surviving an in-place upgrade.
+Type: filesandordirs; Name: "{app}\runtime"
 
 [UninstallDelete]
 ; pywebview normally stores its profile in AppData. This only removes a

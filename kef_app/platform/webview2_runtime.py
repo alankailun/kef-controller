@@ -6,10 +6,9 @@ so that fallback produces a blank window rather than a usable application.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import sys
+from dataclasses import dataclass
 from typing import Any
-
 
 WEBVIEW2_RUNTIME_KEY = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 MIN_WEBVIEW2_VERSION = (86, 0, 622, 0)

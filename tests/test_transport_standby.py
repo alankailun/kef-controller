@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from kef_app.devices.transport.raw_http import SendAbortedError, _send_one_http_request
-from kef_app.devices.transport import build_standby_request_bytes, fire_and_forget_standby
+from kef_app.devices.transport.standby_request import build_standby_request_bytes, fire_and_forget_standby
 
 
 class _LoopbackTcpSink:
@@ -47,7 +47,7 @@ class _LoopbackTcpSink:
         while not self._stop.is_set():
             try:
                 conn, _addr = self._server.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 return

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import lru_cache
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 
@@ -95,13 +97,16 @@ def _make_icon(accent: str, body: str = "#151a1f") -> QIcon:
     return icon
 
 
+@lru_cache(maxsize=1)
 def icon_connected() -> QIcon:
     return _make_icon("#22c7b8")  # Teal: connected
 
 
+@lru_cache(maxsize=1)
 def icon_working() -> QIcon:
     return _make_icon("#f2a33a")  # Amber: busy
 
 
+@lru_cache(maxsize=1)
 def icon_disconnected() -> QIcon:
     return _make_icon("#8c949e", "#1a1f25")  # Gray: disconnected

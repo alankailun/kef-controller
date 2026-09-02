@@ -8,7 +8,6 @@ import requests
 import requests.adapters
 import requests.sessions
 
-
 _requests_timeout_patch_lock = threading.Lock()
 _requests_timeout_local = threading.local()
 _REQUESTS_TIMEOUT_UNSET = object()

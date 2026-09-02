@@ -5,9 +5,9 @@ import socket
 import threading
 from dataclasses import dataclass
 
-from ...devices.transport import build_standby_request_bytes, is_host_unreachable
+from ...devices.transport.errors import is_host_unreachable
+from ...devices.transport.standby_request import build_standby_request_bytes
 from .cache import FastStandbyCacheSnapshot
-
 
 _PREWARM_RETRY_DELAY_S = 2.0
 _PREWARM_POWER_ACTION_DELAY_S = 0.5
@@ -38,7 +38,6 @@ class PrewarmedStandbySendResult:
 @dataclass(frozen=True, slots=True)
 class CachedPrewarmedStandbySendResult:
     success: bool
-    fast_path_used: bool
     fast_path_skip_reason: str = ""
     status: str = ""
     duration_ms: int = 0
@@ -69,10 +68,9 @@ class _PrewarmedSocketSendOutcome:
 
 
 class PrewarmedSocketHolder:
-    def __init__(self, sock: socket.socket, ip: str, created_mono: float):
+    def __init__(self, sock: socket.socket, ip: str):
         self.sock = sock
         self.ip = ip
-        self.created_mono = created_mono
 
     def take(self) -> socket.socket | None:
         sock = self.sock
@@ -401,7 +399,7 @@ class PrewarmedStandbySocketMonitorMixin:
                     port=int(self.config.mac_discovery_tcp_port),
                     timeout=float(self.config.prewarmed_socket_timeout_s),
                 )
-                new_holders.append(PrewarmedSocketHolder(sock, target_ip, self.mono()))
+                new_holders.append(PrewarmedSocketHolder(sock, target_ip))
         except OSError:
             for holder in new_holders:
                 holder.close()
@@ -419,7 +417,7 @@ class PrewarmedStandbySocketMonitorMixin:
                 port=int(self.config.mac_discovery_tcp_port),
                 timeout=float(self.config.prewarmed_socket_timeout_s),
             )
-            holder = PrewarmedSocketHolder(sock, target_ip, self.mono())
+            holder = PrewarmedSocketHolder(sock, target_ip)
         sock = holder.sock
         if sock is None:
             raise ConnectionError("prewarmed keepalive selected an empty socket holder")
@@ -764,7 +762,6 @@ class PrewarmedStandbySocketMonitorMixin:
         if not self.config.prewarmed_standby_enabled:
             return CachedPrewarmedStandbySendResult(
                 False,
-                False,
                 fast_path_skip_reason="prewarmed_disabled",
                 status="disabled",
                 started_mono=started,
@@ -772,7 +769,6 @@ class PrewarmedStandbySocketMonitorMixin:
             )
         if not self.config.prewarmed_persist_socket:
             return CachedPrewarmedStandbySendResult(
-                False,
                 False,
                 fast_path_skip_reason="persistent_socket_disabled",
                 status="disabled",
@@ -783,7 +779,6 @@ class PrewarmedStandbySocketMonitorMixin:
         snapshot = self._fast_standby_send_cache.read()
         if snapshot is None:
             return CachedPrewarmedStandbySendResult(
-                False,
                 False,
                 fast_path_skip_reason="no_cache",
                 status="no_cache",
@@ -797,7 +792,6 @@ class PrewarmedStandbySocketMonitorMixin:
         )
         if abort_reason:
             return CachedPrewarmedStandbySendResult(
-                False,
                 False,
                 fast_path_skip_reason=abort_reason,
                 status=f"skipped_{abort_reason}",
@@ -828,7 +822,6 @@ class PrewarmedStandbySocketMonitorMixin:
         if outcome is None:
             return CachedPrewarmedStandbySendResult(
                 False,
-                False,
                 fast_path_skip_reason="no_socket_for_cached_ip",
                 status="no_socket",
                 target_ip=snapshot.target_ip,
@@ -851,7 +844,6 @@ class PrewarmedStandbySocketMonitorMixin:
 
             return CachedPrewarmedStandbySendResult(
                 False,
-                False,
                 fast_path_skip_reason=fast_path_skip_reason,
                 status=outcome.status,
                 duration_ms=outcome.duration_ms,
@@ -869,7 +861,6 @@ class PrewarmedStandbySocketMonitorMixin:
             )
 
         return CachedPrewarmedStandbySendResult(
-            True,
             True,
             status=outcome.status,
             duration_ms=outcome.duration_ms,

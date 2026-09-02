@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional
-
-from ...devices.scan import identify_kef_device, is_routable_ipv4
+from ...devices.scan.identity import identify_kef_device
+from ...devices.scan.network import is_routable_ipv4
 from ...devices.speaker_models import SpeakerIdentity
 from ..network_timeout import temporary_socket_timeout
 from .identity_helpers import (
@@ -14,13 +13,22 @@ from .identity_helpers import (
 
 
 class ControllerIdentityProbeMixin:
+    def _cached_target_probe_context(self) -> tuple[str, str, str, str, str]:
+        target_mac = self.get_effective_target_mac()
+        current_ip = self.get_current_kef_ip()
+        configured_ip = str(self.config.kef_ip or "").strip()
+        with self._ip_lock:
+            cached_mac = self._identity.target_mac
+            cached_model = self._identity.speaker_model
+        return target_mac, current_ip, configured_ip, cached_mac, cached_model
+
     def _log_backend_identity_partial(
         self,
         *,
         reason: str,
         trigger: str,
         ip: str,
-        identity: Optional[SpeakerIdentity],
+        identity: SpeakerIdentity | None,
         error: str = "",
     ) -> None:
         self._log_structured(
@@ -42,7 +50,7 @@ class ControllerIdentityProbeMixin:
         reason: str,
         trigger: str,
         ip: str,
-        identity: Optional[SpeakerIdentity],
+        identity: SpeakerIdentity | None,
     ) -> None:
         self._log_structured(
             "STEP",
@@ -58,13 +66,7 @@ class ControllerIdentityProbeMixin:
         )
 
     def _can_use_cached_current_target(self, identity: SpeakerIdentity, trigger: str) -> bool:
-        target_mac = self.get_effective_target_mac()
-        current_ip = self.get_current_kef_ip()
-        configured_ip = str(self.config.kef_ip or "").strip()
-
-        with self._ip_lock:
-            cached_mac = self._identity.target_mac
-            cached_model = self._identity.speaker_model
+        target_mac, current_ip, configured_ip, cached_mac, cached_model = self._cached_target_probe_context()
 
         return can_use_cached_current_target(
             identity=identity,
@@ -77,13 +79,7 @@ class ControllerIdentityProbeMixin:
         )
 
     def _can_use_cached_target_without_probe(self, trigger: str) -> bool:
-        target_mac = self.get_effective_target_mac()
-        current_ip = self.get_current_kef_ip()
-        configured_ip = str(self.config.kef_ip or "").strip()
-
-        with self._ip_lock:
-            cached_mac = self._identity.target_mac
-            cached_model = self._identity.speaker_model
+        target_mac, current_ip, configured_ip, cached_mac, cached_model = self._cached_target_probe_context()
 
         return can_use_cached_target_without_probe(
             trigger=trigger,
@@ -108,12 +104,12 @@ class ControllerIdentityProbeMixin:
 
         return self.capture_identity_from_current_ip(reason=reason, trigger=trigger)
 
-    def inspect_kef_identity_at_ip(self, ip: str, reason: str, trigger: str) -> Optional[SpeakerIdentity]:
+    def inspect_kef_identity_at_ip(self, ip: str, reason: str, trigger: str) -> SpeakerIdentity | None:
         ip = str(ip or "").strip()
         if not is_routable_ipv4(ip):
             return None
 
-        info: Optional[SpeakerIdentity] = None
+        info: SpeakerIdentity | None = None
         backend_error = ""
         try:
             with temporary_socket_timeout(self.config.socket_timeout):
@@ -166,7 +162,7 @@ class ControllerIdentityProbeMixin:
             )
             return True
 
-        info: Optional[SpeakerIdentity] = None
+        info: SpeakerIdentity | None = None
         backend_error = ""
         try:
             with temporary_socket_timeout(self.config.socket_timeout):

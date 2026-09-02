@@ -2,16 +2,15 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Optional
 
-from PySide6.QtCore import QObject, QTimer, Qt, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from ..config import AppConfig
-from ..storage import UserConfigStore
 from ..controller import KefPowerController
 from ..runtime.headless_service import HeadlessRuntime
+from ..storage import UserConfigStore
 from ..structured_logging import log_structured
 from .background_tasks import start_background_task
 from .controller_events import ControllerEventBridge
@@ -47,7 +46,7 @@ class KefTrayApp:
             Qt.ConnectionType.QueuedConnection,
         )
         self._active_action = ""
-        self._speaker_on_hint: Optional[bool] = None
+        self._speaker_on_hint: bool | None = None
         self._identity_poll_lock = threading.Lock()
         self._controller_bridge = ControllerEventBridge(controller)
         self._controller_bridge.identity_changed.connect(self._on_identity_changed)

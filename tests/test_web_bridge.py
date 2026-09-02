@@ -8,8 +8,8 @@ from unittest.mock import Mock, patch
 from kef_app.config import AppConfig
 from kef_app.config.user_settings import USER_SETTINGS_FIELD_PATHS
 from kef_app.storage import UserConfigStore
-from kef_app.ui.web_bridge import WebControllerBridge, _EVENTS, _wake_is_confirmed
 from kef_app.ui.settings.settings_service import SPEAKER_POWER_OPTIONS
+from kef_app.ui.web_bridge import _EVENTS, WebControllerBridge, _wake_is_confirmed
 
 
 class WebBridgeTests(unittest.TestCase):

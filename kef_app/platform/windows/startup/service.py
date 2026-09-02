@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ....structured_logging import log_structured
 from .common import (
     NullLogger,
     clear_last_startup_error,
@@ -14,7 +15,6 @@ from .reconcile import StartupRegistrationState, read_startup_registration_state
 from .registry import RegistryStartupEntry, delete_registry_commands, write_registry_command
 from .status import get_effective_startup_registration_mode
 from .task_scheduler import ScheduledTaskEntry, create_task, delete_task
-from ....structured_logging import log_structured
 
 
 def _delete_registry_entries(entries: tuple[RegistryStartupEntry, ...], *extra_names: str) -> None:

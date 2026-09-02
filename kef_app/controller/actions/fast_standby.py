@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
-from ..standby import FastStandbySendResult, PrewarmedStandbySendResult, send_fast_standby
+from ...devices.transport.standby_request import FireAndForgetShutdownResult, fire_and_forget_standby
 from ..power_state import power_action_outcome_is_success
-from ...devices.transport import FireAndForgetShutdownResult, fire_and_forget_standby
-
+from ..standby import FastStandbySendResult, PrewarmedStandbySendResult, send_fast_standby
 
 _FAST_STANDBY_FIRE_AND_FORGET_ATTEMPTS = 3
 _FAST_STANDBY_FIRE_AND_FORGET_SOCKET_TIMEOUT = 0.18

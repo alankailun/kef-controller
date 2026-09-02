@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections import deque
 import os
 import re
-from typing import Iterable
+from collections import deque
+from collections.abc import Iterable
+
 
 def list_log_history_files(log_file: str) -> list[str]:
     """Return the current log followed by date-rotated files, newest first."""

@@ -15,7 +15,7 @@ KEF Controller is a Windows tray app for KEF W2 / KEF Connect speakers.
 - Select a speaker from the local network or enter a manual IP/MAC target
 - Recover the selected speaker when its IP changes
 - Run as a Windows tray app with settings, logs, and event tests
-- Build as a one-file PyInstaller executable and optional Inno Setup installer
+- Build as a PyInstaller onedir application and optional Inno Setup installer
 
 ## Build and Release Files
 

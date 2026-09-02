@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from typing import Optional
 
 from .common import StartupLaunchSpec, is_frozen_runtime
 
@@ -16,7 +15,7 @@ def launch_helper_spec(extra_args: list[str]) -> StartupLaunchSpec:
     return StartupLaunchSpec(command=os.path.abspath(sys.executable), arguments=arguments)
 
 
-def runtime_launch_spec(executable_override: Optional[str] = None) -> StartupLaunchSpec:
+def runtime_launch_spec(executable_override: str | None = None) -> StartupLaunchSpec:
     if is_frozen_runtime():
         command = os.path.abspath(executable_override or sys.executable)
         return StartupLaunchSpec(command=command)

@@ -3,7 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ...platform.windows import ENDSESSION_CLOSEAPP, ENDSESSION_CRITICAL, ENDSESSION_LOGOFF, decode_query_end_session_flags
+from ...platform.windows.api import (
+    ENDSESSION_CLOSEAPP,
+    ENDSESSION_CRITICAL,
+    ENDSESSION_LOGOFF,
+    decode_query_end_session_flags,
+)
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Callable, Optional, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 from pykefcontrol.kef_connector import KefConnector
 
-from ..network_timeout import temporary_socket_timeout
-from ...devices.transport import is_host_unreachable
 from ...devices.speaker_models import normalize_input_source
+from ...devices.transport.errors import is_host_unreachable
 from ...structured_logging import is_ui_poll_trigger
-
+from ..network_timeout import temporary_socket_timeout
 
 T = TypeVar("T")
 _EVENT_MONITOR_IDLE_DELAY_S = 0.2
@@ -86,9 +86,9 @@ class ControllerDeviceControlsMixin:
     def _set_speaker_runtime_state(
         self,
         *,
-        input_source: Optional[str] = None,
-        volume: Optional[int] = None,
-        speaker_on: Optional[bool] = None,
+        input_source: str | None = None,
+        volume: int | None = None,
+        speaker_on: bool | None = None,
         trigger: str,
     ) -> bool:
         changed = False
@@ -288,7 +288,7 @@ class ControllerDeviceControlsMixin:
             if restart_reason and self.config.home_event_poll_enabled:
                 self.start_speaker_event_monitor(restart_reason)
 
-    def poll_external_ui_state(self, reason: str, trigger: str) -> tuple[Optional[str], Optional[int], Optional[bool]]:
+    def poll_external_ui_state(self, reason: str, trigger: str) -> tuple[str | None, int | None, bool | None]:
         # The bridge checks this before it starts a worker.  Recheck here so a
         # suspend that arrives between scheduling and execution cannot trigger
         # connector recovery or subnet discovery while Windows is freezing.
@@ -385,7 +385,7 @@ class ControllerDeviceControlsMixin:
         trigger: str,
         *,
         timeout: float,
-    ) -> tuple[Optional[str], Optional[int], Optional[bool]]:
+    ) -> tuple[str | None, int | None, bool | None]:
         if not self.get_current_kef_ip():
             return None, None, None
 
@@ -500,10 +500,10 @@ class ControllerDeviceControlsMixin:
             trigger=trigger,
             status="available" if info else "unavailable",
             current_ip=self.get_current_kef_ip() or "<empty>",
-            signal_level=info.get("signalLevel", "<empty>") if info else "<empty>",
-            ssid=info.get("ssid", "<empty>") if info else "<empty>",
-            frequency=info.get("frequency", "<empty>") if info else "<empty>",
-            bssid=info.get("bssid", "<empty>") if info else "<empty>",
+            signal_level=info.get("signalLevel", "<empty>"),
+            ssid=info.get("ssid", "<empty>"),
+            frequency=info.get("frequency", "<empty>"),
+            bssid=info.get("bssid", "<empty>"),
         )
         return info
 

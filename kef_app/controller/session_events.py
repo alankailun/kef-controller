@@ -7,7 +7,6 @@ from dataclasses import dataclass
 
 from .triggers import get_trigger
 
-
 _EARLY_STANDBY_EVENT_BUDGET_S = 0.30
 _SUSPEND_STANDBY_EVENT_BUDGET_S = 0.30
 _PUMP_CALLBACK_SLOW_THRESHOLD_S = 0.020
