@@ -14,6 +14,7 @@ from PySide6.QtGui import QDesktopServices
 from ..config import AppConfig
 from ..devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source, normalize_mac
 from ..platform.windows.startup.elevation import remove_startup_task_with_uac, repair_task_startup_with_uac
+from ..platform.windows.startup.service import ensure_startup_registration
 from ..platform.windows.startup.status import read_startup_registration_snapshot
 from ..storage import UserConfigStore
 from .background_tasks import start_background_task
@@ -25,7 +26,7 @@ from .logs.log_history import (
     read_log_tail_lines,
     resolve_log_history_file,
 )
-from .settings.settings_service import get_speaker_power_disabled_reason, save_settings_and_sync_startup
+from .settings.settings_service import get_speaker_power_disabled_reason, startup_mode_for_ui, sync_startup_registration
 
 _EVENTS: dict[str, tuple[str, str, Callable[[Any], object]]] = {
     "startup": (
@@ -72,11 +73,21 @@ class WebControllerBridge(QObject):
     """A deliberately small, JSON-only boundary between the web UI and Python."""
 
     state_changed = Signal(str)
+    settings_changed = Signal(str)
     toast = Signal(str)
     log_line = Signal(str)
     _api_requested = Signal(str, object, object)
     _polled_state = Signal(object, object, object)
     _poll_failed = Signal(str)
+    _volume_completed = Signal(object)
+    _input_completed = Signal(object)
+    _target_completed = Signal(object)
+    _startup_completed = Signal(object)
+    _startup_failed = Signal(str)
+    _startup_snapshot_ready = Signal(object)
+    _event_completed = Signal(object)
+    _action_refresh_requested = Signal()
+    _action_failed = Signal(object)
 
     def __init__(
         self,
@@ -96,13 +107,19 @@ class WebControllerBridge(QObject):
         self._speaker_on: bool | None = None
         self._input = normalize_input_source(config.kef_input)
         self._volume: int | None = None
-        startup_snapshot = read_startup_registration_snapshot("KEF Controller", log=controller.log)
-        self._startup_registered = startup_snapshot.registered
-        self._startup_mode = startup_snapshot.effective_mode
+        self._startup_registered = False
+        configured_startup_mode = startup_mode_for_ui(config.startup_registration_mode)
+        self._startup_mode = "none" if configured_startup_mode == "off" else configured_startup_mode
         self._startup_busy = False
+        self._startup_snapshot_pending = True
         self._startup_requested_mode: str | None = None
         self._startup_requested_enabled: bool | None = None
         self._poll_lock = threading.Lock()
+        self._volume_lock = threading.Lock()
+        self._volume_pending: tuple[int, int] | None = None
+        self._volume_worker_running = False
+        self._volume_sequence = 0
+        self._target_sequence = 0
         self._last_action_started = 0.0
         self._last_action: dict[str, object] | None = None
         self._last_failure: tuple[str, float] | None = None
@@ -114,14 +131,39 @@ class WebControllerBridge(QObject):
         self._poll_timer.timeout.connect(self._poll_speaker_state)
         self._polled_state.connect(self._on_polled_state)
         self._poll_failed.connect(self._on_poll_failed)
+        self._volume_completed.connect(self._on_volume_completed)
+        self._input_completed.connect(self._on_input_completed)
+        self._target_completed.connect(self._on_target_completed)
+        self._startup_completed.connect(self._on_startup_completed)
+        self._startup_failed.connect(self._on_startup_failed)
+        self._startup_snapshot_ready.connect(self._on_startup_snapshot_ready)
+        self._event_completed.connect(self._on_event_completed)
+        self._action_refresh_requested.connect(lambda: self._poll_speaker_state(force=True))
+        self._action_failed.connect(self._on_action_failed)
         self._api_requested.connect(self._handle_api_request)
         self._apply_poll_interval()
 
         controller_bridge.identity_changed.connect(lambda _identity: self.publish_state())
-        controller_bridge.speaker_state_changed.connect(self._on_polled_state)
+        controller_bridge.speaker_state_changed.connect(self._on_speaker_state_changed)
         controller_bridge.power_action_started.connect(self._on_power_action_started)
         controller_bridge.power_action_finished.connect(self._on_power_action_finished)
         log_handler.emitter.new_line.connect(self.log_line.emit)
+
+        start_background_task(
+            "WebReadStartupState",
+            self._read_reconciled_startup_snapshot,
+            on_success=self._startup_snapshot_ready.emit,
+            on_error=lambda exc: self._startup_failed.emit(str(exc)),
+            log=controller.log,
+        )
+
+    def _read_reconciled_startup_snapshot(self):
+        ensure_startup_registration(
+            self._config.app_name,
+            self._controller.log,
+            mode=self._config.startup_registration_mode,
+        )
+        return read_startup_registration_snapshot(self._config.app_name, log=self._controller.log)
 
     def _initial_state_payload(self) -> dict[str, Any]:
         self._poll_speaker_state()
@@ -158,46 +200,100 @@ class WebControllerBridge(QObject):
 
     def setVolume(self, level: int) -> None:
         level = max(0, min(100, int(level)))
+        with self._volume_lock:
+            self._volume_sequence += 1
+            self._volume_pending = (self._volume_sequence, level)
+            if self._volume_worker_running:
+                return
+            self._volume_worker_running = True
 
-        def work() -> bool:
-            return bool(self._controller.set_volume(level))
+        def work() -> None:
+            while True:
+                with self._volume_lock:
+                    pending = self._volume_pending
+                    self._volume_pending = None
+                    if pending is None:
+                        self._volume_worker_running = False
+                        return
+                sequence, requested_level = pending
+                try:
+                    ok = bool(self._controller.set_volume(requested_level))
+                    error = ""
+                except Exception as exc:
+                    ok = False
+                    error = str(exc)
+                self._volume_completed.emit((sequence, requested_level, ok, error))
 
-        def done(ok: bool) -> None:
-            if ok:
-                self._volume = level
-            else:
-                self._notify("error", "Volume update failed", "The speaker did not accept the volume change.")
-            self.publish_state()
+        start_background_task("WebSetVolume", work, log=self._controller.log)
 
-        start_background_task("WebSetVolume", work, on_success=done,
-                              on_error=lambda _exc: done(False), log=self._controller.log)
+    @Slot(object)
+    def _on_volume_completed(self, payload: object) -> None:
+        sequence, level, ok, error = payload
+        if int(sequence) != self._volume_sequence:
+            return
+        if bool(ok):
+            self._volume = int(level)
+        else:
+            self._notify(
+                "error",
+                "Volume update failed",
+                str(error) or "The speaker did not accept the volume change.",
+                code="volume_update_failed",
+                params={"error": f" ({error})" if error else ""},
+                channel="volume",
+            )
+        self.publish_state()
 
     def changeInput(self, source: str) -> None:
         source = normalize_input_source(source)
         valid = {value for _label, value in INPUT_SOURCE_OPTIONS}
         if source not in valid:
-            self._notify("error", "Invalid input", "That input source is not supported.")
+            self._notify(
+                "error",
+                "Invalid input",
+                "That input source is not supported.",
+                code="invalid_input",
+                channel="input",
+            )
             return
 
         def work() -> bool:
             return bool(self._controller.change_input_live(source))
 
-        def done(ok: bool) -> None:
-            if ok:
-                self._input = source
-                self._config.kef_input = source
-                saved = self._config_store.save(self._config)
-                self._notify(
-                    "success" if saved else "warning",
-                    "Input changed",
-                    f"Switched to {source}." if saved else f"Switched to {source}, but the default could not be saved.",
-                )
-            else:
-                self._notify("error", "Input change failed", "The speaker did not accept the input change.")
-            self.publish_state()
+        start_background_task(
+            "WebChangeInput",
+            work,
+            on_success=lambda ok: self._input_completed.emit((source, bool(ok), "")),
+            on_error=lambda exc: self._input_completed.emit((source, False, str(exc))),
+            log=self._controller.log,
+        )
 
-        start_background_task("WebChangeInput", work, on_success=done,
-                              on_error=lambda _exc: done(False), log=self._controller.log)
+    @Slot(object)
+    def _on_input_completed(self, payload: object) -> None:
+        source, ok, error = payload
+        if bool(ok):
+            self._input = str(source)
+            self._config.kef_input = str(source)
+            saved = self._config_store.save(self._config)
+            self._notify(
+                "success" if saved else "warning",
+                "Input changed",
+                f"Switched to {source}." if saved else f"Switched to {source}, but the default could not be saved.",
+                code="input_changed" if saved else "input_changed_unsaved",
+                params={"source": str(source)},
+                channel="input",
+            )
+            self.publish_settings()
+        else:
+            self._notify(
+                "error",
+                "Input change failed",
+                str(error) or "The speaker did not accept the input change.",
+                code="input_change_failed",
+                params={"error": f" ({error})" if error else ""},
+                channel="input",
+            )
+        self.publish_state()
 
     def updateSettings(self, payload: str) -> None:
         try:
@@ -211,7 +307,14 @@ class WebControllerBridge(QObject):
                 coerce = self._config_store.FIELD_COERCERS[key]
                 setattr(updated, key, coerce(value))
         except (ValueError, TypeError, KeyError) as exc:
-            self._notify("error", "Settings were not saved", str(exc))
+            self._notify(
+                "error",
+                "Settings were not saved",
+                str(exc),
+                code="settings_invalid",
+                params={"detail": str(exc)},
+                channel="save",
+            )
             return
 
         self._copy_user_editable_fields(updated)
@@ -221,66 +324,120 @@ class WebControllerBridge(QObject):
             "success" if saved else "warning",
             "Settings saved" if saved else "Settings updated for this session",
             "Changes are now active." if saved else "config.json could not be written.",
+            code="settings_saved" if saved else "settings_session_only",
+            channel="save",
         )
+        self.publish_settings()
         self.publish_state()
 
     def applyTarget(self, ip: str, mac: str) -> None:
         """Validate and apply a device target exactly as the former Qt dialog did."""
         requested_ip = str(ip or "").strip()
         requested_mac = normalize_mac(str(mac or ""))
+        self._target_sequence += 1
+        sequence = self._target_sequence
 
         def work():
             return self._controller.validate_manual_target(
                 requested_ip, requested_mac, reason="web_manual_target", trigger="web_settings"
             )
 
-        def done(result: object) -> None:
-            status = str(getattr(result, "status", "failed"))
-            identity = getattr(result, "identity", None)
-            if status in {"invalid_ip", "invalid_mac", "empty", "not_kef", "mac_mismatch", "failed"}:
-                self._notify("error", "Target not saved", self._target_error_message(status, identity))
-                return
-            saved_ip = str(getattr(identity, "ip", "") or requested_ip)
-            saved_mac = normalize_mac(str(getattr(identity, "mac", "") or requested_mac))
-            self._config.kef_ip = saved_ip
-            self._config.kef_mac = saved_mac
-            self._controller.apply_configured_device_target(trigger="web_settings")
-            saved = self._config_store.save(self._config)
-            warning = status in {"mac_unverified", "mac_not_found", "unreachable"}
-            self._notify(
-                "warning" if warning or not saved else "success",
-                "Target saved" if saved else "Target updated for this session",
-                self._target_saved_message(status, saved_ip),
-            )
-            self.publish_state()
+        start_background_task(
+            "WebApplyTarget",
+            work,
+            on_success=lambda result: self._target_completed.emit(
+                (sequence, requested_ip, requested_mac, result, "")
+            ),
+            on_error=lambda exc: self._target_completed.emit(
+                (sequence, requested_ip, requested_mac, None, str(exc))
+            ),
+            log=self._controller.log,
+        )
 
-        start_background_task("WebApplyTarget", work, on_success=done,
-                              on_error=lambda exc: self._notify("error", "Target not saved", str(exc)),
-                              log=self._controller.log)
+    @Slot(object)
+    def _on_target_completed(self, payload: object) -> None:
+        sequence, requested_ip, requested_mac, result, error = payload
+        if int(sequence) != self._target_sequence:
+            return
+        if error:
+            self._notify(
+                "error",
+                "Target not saved",
+                str(error),
+                code="target_not_saved",
+                params={"detail": str(error)},
+                channel="target",
+            )
+            return
+        status = str(getattr(result, "status", "failed"))
+        identity = getattr(result, "identity", None)
+        if status in {"invalid_ip", "invalid_mac", "empty", "not_kef", "mac_mismatch", "failed"}:
+            detail = self._target_error_message(status, identity)
+            self._notify(
+                "error",
+                "Target not saved",
+                detail,
+                code=f"target_{status}",
+                params={
+                    "detail": detail,
+                    "mac": str(getattr(identity, "mac_display", "") or getattr(identity, "mac", "") or "not reported"),
+                },
+                channel="target",
+            )
+            return
+        saved_ip = str(getattr(identity, "ip", "") or requested_ip)
+        saved_mac = normalize_mac(str(getattr(identity, "mac", "") or requested_mac))
+        self._config.kef_ip = saved_ip
+        self._config.kef_mac = saved_mac
+        self._controller.apply_configured_device_target(trigger="web_settings")
+        saved = self._config_store.save(self._config)
+        warning = status in {"mac_unverified", "mac_not_found", "unreachable"}
+        self._notify(
+            "warning" if warning or not saved else "success",
+            "Target saved" if saved else "Target updated for this session",
+            self._target_saved_message(status, saved_ip),
+            code=f"target_{status}" if saved else "target_session_only",
+            params={"ip": saved_ip, "status": status},
+            channel="target",
+        )
+        self.publish_settings()
+        self.publish_state()
 
     def updateStartup(self, mode: str, enabled: bool) -> None:
         """Persist the startup preference and reconcile Windows registration."""
         try:
             normalized_mode = self._config_store.FIELD_COERCERS["startup_registration_mode"](mode)
-            updated = self._config.with_updates(startup_registration_mode=normalized_mode)
         except (TypeError, ValueError) as exc:
-            self._notify("error", "Startup setting was not saved", str(exc))
+            self._notify(
+                "error",
+                "Startup setting was not saved",
+                str(exc),
+                code="startup_invalid",
+                params={"detail": str(exc)},
+                channel="save",
+            )
             return
         if self._startup_busy:
-            self._notify("info", "Startup update in progress", "Wait for the current Windows startup update to finish.")
+            self._notify(
+                "info",
+                "Startup update in progress",
+                "Wait for the current Windows startup update to finish.",
+                code="startup_busy",
+                channel="save",
+            )
             return
 
         desired_startup = bool(enabled)
-        startup_mode_changed = updated.startup_registration_mode != self._config.startup_registration_mode
+        startup_mode_changed = normalized_mode != self._config.startup_registration_mode
         self._startup_busy = True
+        self._startup_snapshot_pending = False
         self._startup_requested_mode = normalized_mode
         self._startup_requested_enabled = desired_startup
         self.publish_state()
 
         def work():
-            return save_settings_and_sync_startup(
-                updated,
-                config_store=self._config_store,
+            return sync_startup_registration(
+                normalized_mode,
                 desired_startup=desired_startup,
                 startup_mode_changed=startup_mode_changed,
                 log=self._controller.log,
@@ -295,36 +452,72 @@ class WebControllerBridge(QObject):
                 )[0],
             )
 
-        def done(result) -> None:
-            self._copy_user_editable_fields(result.updated)
-            self._startup_registered = result.actual_startup_registered
-            self._startup_mode = result.actual_startup_mode
-            if result.config_ok and result.startup_ok:
-                self._notify("success", "Startup settings saved", "Windows startup registration is up to date.")
-            else:
-                self._notify(
-                    "warning",
-                    "Startup settings need attention",
-                    result.startup_detail or "The setting could not be fully applied.",
-                )
-
-        def failed(exc: Exception) -> None:
-            self._notify("error", "Startup setting was not saved", str(exc))
-
-        def finished() -> None:
-            self._startup_busy = False
-            self._startup_requested_mode = None
-            self._startup_requested_enabled = None
-            self.publish_state()
-
         start_background_task(
             "WebUpdateStartup",
             work,
-            on_success=done,
-            on_error=failed,
-            on_finished=finished,
+            on_success=self._startup_completed.emit,
+            on_error=lambda exc: self._startup_failed.emit(str(exc)),
             log=self._controller.log,
         )
+
+    @Slot(object)
+    def _on_startup_completed(self, result: object) -> None:
+        self._config.startup_registration_mode = str(result.configured_mode)
+        config_ok = self._config_store.save(self._config)
+        self._startup_registered = bool(result.actual_startup_registered)
+        self._startup_mode = str(result.actual_startup_mode)
+        self._finish_startup_update()
+        if config_ok and result.startup_ok:
+            self._notify(
+                "success",
+                "Startup settings saved",
+                "Windows startup registration is up to date.",
+                code="startup_saved",
+                channel="save",
+            )
+        else:
+            self._notify(
+                "warning",
+                "Startup settings need attention",
+                result.startup_detail or "The setting could not be fully applied.",
+                code="startup_attention",
+                params={"detail": result.startup_detail or "The setting could not be fully applied."},
+                channel="save",
+            )
+        self.publish_settings()
+        self.publish_state()
+
+    @Slot(str)
+    def _on_startup_failed(self, detail: str) -> None:
+        if self._startup_snapshot_pending:
+            self._startup_snapshot_pending = False
+            self.publish_state()
+            return
+        if self._startup_busy:
+            self._finish_startup_update()
+            self._notify(
+                "error",
+                "Startup setting was not saved",
+                detail,
+                code="startup_failed",
+                params={"detail": detail},
+                channel="save",
+            )
+            self.publish_state()
+
+    @Slot(object)
+    def _on_startup_snapshot_ready(self, snapshot: object) -> None:
+        if not self._startup_snapshot_pending:
+            return
+        self._startup_snapshot_pending = False
+        self._startup_registered = bool(snapshot.registered)
+        self._startup_mode = str(snapshot.effective_mode)
+        self.publish_state()
+
+    def _finish_startup_update(self) -> None:
+        self._startup_busy = False
+        self._startup_requested_mode = None
+        self._startup_requested_enabled = None
 
     def scanSpeakers(self) -> None:
         def candidate(identity: object) -> None:
@@ -358,16 +551,43 @@ class WebControllerBridge(QObject):
     def runEvent(self, event_key: str) -> None:
         event = _EVENTS.get(event_key)
         if event is None:
-            self._notify("error", "Unknown test", event_key)
+            self._notify(
+                "error",
+                "Unknown test",
+                event_key,
+                code="unknown_test",
+                params={"event": event_key},
+                channel="event",
+            )
             return
         label, setting_key, runner = event
         if not bool(getattr(self._config, setting_key)):
-            self._notify("warning", f"{label}: no action", get_speaker_power_disabled_reason(setting_key))
-            self._emit_event_result(event_key, "warning", "No action", get_speaker_power_disabled_reason(setting_key))
+            disabled_detail = get_speaker_power_disabled_reason(setting_key)
+            self._notify(
+                "warning",
+                f"{label}: no action",
+                disabled_detail,
+                code="event_disabled",
+                params={"event": event_key},
+                channel="event",
+            )
+            self._emit_event_result(
+                event_key,
+                "warning",
+                "No action",
+                disabled_detail,
+                code="event_no_action",
+            )
             return
 
         started = time.perf_counter()
-        self._emit_event_result(event_key, "running", "Running", "Waiting for the controller to respond…")
+        self._emit_event_result(
+            event_key,
+            "running",
+            "Running",
+            "Waiting for the controller to respond…",
+            code="event_running",
+        )
 
         def work() -> tuple[bool, str, int, bool | None]:
             scheduled = runner(self._controller)
@@ -376,20 +596,57 @@ class WebControllerBridge(QObject):
                 f"web_test_{event_key}", "web_event_test"
             )
             elapsed_ms = int((time.perf_counter() - started) * 1000)
-            return scheduled is not False, "Action scheduled" if scheduled is not False else "No action was scheduled", elapsed_ms, speaker_on
+            ok = scheduled is not False
+            if event_key == "startup":
+                detail = "Action completed" if ok else "No action was completed"
+            else:
+                detail = "Action scheduled" if ok else "No action was scheduled"
+            return ok, detail, elapsed_ms, speaker_on
 
-        def done(result: tuple[bool, str, int, bool | None]) -> None:
-            ok, detail, elapsed_ms, speaker_on = result
-            if speaker_on is not None:
-                self._speaker_on = speaker_on
-            state = "success" if ok else "warning"
-            status = "Completed" if ok else "No action"
-            self._emit_event_result(event_key, state, status, f"{detail} · {elapsed_ms} ms · Speaker: {self._speaker_label()}")
-            self.publish_state()
+        start_background_task(
+            f"WebTest{label.replace(' ', '')}",
+            work,
+            on_success=lambda result: self._event_completed.emit((event_key, result, "")),
+            on_error=lambda exc: self._event_completed.emit((event_key, None, str(exc))),
+            log=self._controller.log,
+        )
 
-        start_background_task(f"WebTest{label.replace(' ', '')}", work, on_success=done,
-                              on_error=lambda exc: self._emit_event_result(event_key, "error", "Failed", str(exc)),
-                              log=self._controller.log)
+    @Slot(object)
+    def _on_event_completed(self, payload: object) -> None:
+        event_key, result, error = payload
+        if error:
+            self._emit_event_result(
+                str(event_key),
+                "error",
+                "Failed",
+                str(error),
+                code="event_failed",
+                params={"detail": str(error)},
+            )
+            return
+        ok, detail, elapsed_ms, speaker_on = result
+        if speaker_on is not None:
+            self._speaker_on = speaker_on
+        state = "success" if ok else "warning"
+        status = "Completed" if ok else "No action"
+        completed_code = (
+            "event_completed"
+            if str(event_key) == "startup" and ok
+            else "event_not_completed"
+            if str(event_key) == "startup"
+            else "event_scheduled"
+            if ok
+            else "event_not_scheduled"
+        )
+        self._emit_event_result(
+            str(event_key),
+            state,
+            status,
+            f"{detail} · {elapsed_ms} ms · Speaker: {self._speaker_label()}",
+            code=completed_code,
+            params={"elapsed": elapsed_ms, "speaker": self._speaker_label()},
+        )
+        self.publish_state()
 
     def _logs_payload(self, selected_name: str = "") -> list[str]:
         # Poll diagnostics are emitted at DEBUG, so normal INFO logs stay clean
@@ -458,9 +715,21 @@ class WebControllerBridge(QObject):
         return {"ok": True}
 
     def publish_state(self) -> None:
-        self.state_changed.emit(self._encode(self._state()))
+        self.state_changed.emit(self._encode(self._runtime_state()))
+
+    def publish_settings(self) -> None:
+        self.settings_changed.emit(self._encode(self._settings_state()))
 
     def _state(self) -> dict[str, Any]:
+        return {**self._runtime_state(), **self._settings_state()}
+
+    def _settings_state(self) -> dict[str, Any]:
+        return {
+            "inputs": [{"label": label, "value": value} for label, value in INPUT_SOURCE_OPTIONS],
+            "settings": asdict(self._config.user),
+        }
+
+    def _runtime_state(self) -> dict[str, Any]:
         identity = self._controller.get_current_identity()
         speaker_on = self._speaker_on if self._speaker_on is not None else bool(identity.available)
         prewarmed_health = self._controller.get_prewarmed_standby_health()
@@ -477,12 +746,11 @@ class WebControllerBridge(QObject):
                 "input": self._input,
                 "volume": self._volume,
             },
-            "inputs": [{"label": label, "value": value} for label, value in INPUT_SOURCE_OPTIONS],
-            "settings": asdict(self._config.user),
             "startup": {
                 "registered": self._startup_registered,
                 "mode": self._startup_mode,
                 "busy": self._startup_busy,
+                "pending": self._startup_snapshot_pending,
                 "requested_mode": self._startup_requested_mode,
                 "requested_enabled": self._startup_requested_enabled,
             },
@@ -522,6 +790,13 @@ class WebControllerBridge(QObject):
 
     def _on_polled_state(self, input_source: object, volume: object, speaker_on: object) -> None:
         self._last_poll_success_mono = time.monotonic()
+        self._apply_speaker_state(input_source, volume, speaker_on)
+
+    def _on_speaker_state_changed(self, input_source: object, volume: object, speaker_on: object) -> None:
+        """Apply controller-owned state without presenting it as a network poll."""
+        self._apply_speaker_state(input_source, volume, speaker_on)
+
+    def _apply_speaker_state(self, input_source: object, volume: object, speaker_on: object) -> None:
         normalized_input = normalize_input_source(str(input_source)) if input_source else None
         wake_confirmed = _wake_is_confirmed(speaker_on, normalized_input)
         if self._awaiting_wake_confirmation:
@@ -551,6 +826,9 @@ class WebControllerBridge(QObject):
             "info",
             "Speaker action",
             f"{action.replace('_', ' ').title()} is running.",
+            code="speaker_action_running",
+            params={"action": normalized_action},
+            channel="power",
             action=normalized_action,
             phase="started",
         )
@@ -580,6 +858,13 @@ class WebControllerBridge(QObject):
             "success" if success else "error",
             action.replace("_", " ").title(),
             f"{outcome or ('Completed' if success else 'Failed')} · {elapsed} ms",
+            code="speaker_action_finished",
+            params={
+                "action": normalized_action,
+                "outcome": outcome or ("Completed" if success else "Failed"),
+                "elapsed": elapsed,
+            },
+            channel="power",
             action=normalized_action,
             phase="finished",
             success=bool(success),
@@ -605,27 +890,60 @@ class WebControllerBridge(QObject):
     def _start_action(self, name: str, work: Callable[[], object], message: str, *, action: str) -> None:
         normalized_action = str(action or "").upper()
 
-        def failed(exc: Exception) -> None:
-            self._notify(
-                "error",
-                "Speaker action failed",
-                str(exc),
-                action=normalized_action,
-                phase="finished",
-                success=False,
-            )
-
-        self._notify("info", "Speaker action", message)
+        self._notify(
+            "info",
+            "Speaker action",
+            message,
+            code="speaker_action_requested",
+            params={"action": normalized_action},
+            channel="power",
+            action=normalized_action,
+        )
         start_background_task(
             name,
             work,
-            on_success=lambda _result: self._poll_speaker_state(force=True),
-            on_error=failed,
+            on_success=lambda _result: self._action_refresh_requested.emit(),
+            on_error=lambda exc: self._action_failed.emit((normalized_action, str(exc))),
             log=self._controller.log,
         )
 
-    def _emit_event_result(self, key: str, state: str, title: str, detail: str) -> None:
-        self.toast.emit(self._encode({"kind": "event", "key": key, "state": state, "title": title, "detail": detail}))
+    @Slot(object)
+    def _on_action_failed(self, payload: object) -> None:
+        action, detail = payload
+        self._notify(
+            "error",
+            "Speaker action failed",
+            str(detail),
+            code="speaker_action_failed",
+            params={"action": str(action), "detail": str(detail)},
+            channel="power",
+            action=str(action),
+            phase="finished",
+            success=False,
+        )
+
+    def _emit_event_result(
+        self,
+        key: str,
+        state: str,
+        title: str,
+        detail: str,
+        *,
+        code: str = "",
+        params: dict[str, object] | None = None,
+    ) -> None:
+        payload: dict[str, object] = {
+            "kind": "event",
+            "key": key,
+            "state": state,
+            "title": title,
+            "detail": detail,
+        }
+        if code:
+            payload["code"] = code
+        if params:
+            payload["params"] = params
+        self.toast.emit(self._encode(payload))
 
     def _notify(
         self,
@@ -636,8 +954,17 @@ class WebControllerBridge(QObject):
         action: str = "",
         phase: str = "",
         success: bool | None = None,
+        code: str = "",
+        params: dict[str, object] | None = None,
+        channel: str = "",
     ) -> None:
         payload: dict[str, object] = {"kind": "toast", "level": level, "title": title, "detail": detail}
+        if code:
+            payload["code"] = code
+        if params:
+            payload["params"] = params
+        if channel:
+            payload["channel"] = channel
         if action:
             payload["action"] = action
         if phase:

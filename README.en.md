@@ -199,8 +199,7 @@ kef_controller/
       windows/                 Win32 session/power APIs and startup registration
         startup/               Registry Run and Task Scheduler helpers
     runtime/                   startup bootstrap, logging, and headless loop
-    ui/                        PySide6/QFluentWidgets tray app and pages
-      assets/icons/            themed SVG icons used by the settings UI
+    ui/                        PySide6 tray app and local web UI
       logs/                    UI log history and handlers
       settings/                settings cards, save logic, startup sync
   tests/                       unittest coverage for config, UI, startup, events
@@ -248,8 +247,8 @@ dist\KEF Controller\KEF Controller.exe
 ```
 
 The `.spec` file uses `main_gui.py`, builds a windowed onedir application,
-includes the QFluentWidgets and SVG resources the UI needs, keeps the Modern
-Windows Qt style plugin, keeps the software OpenGL fallback, and trims unused
+includes the local HTML/CSS/JavaScript UI and application icon, keeps the
+Modern Windows Qt style plugin and software OpenGL fallback, and trims unused
 Qt/PySide6 modules and plugins to keep the bundle smaller.
 
 ## Create an Installer With Inno Setup

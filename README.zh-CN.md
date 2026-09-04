@@ -188,8 +188,7 @@ kef_controller/
       windows/                 Win32 会话/电源 API 和自启动注册
         startup/               Registry Run 和 Task Scheduler 辅助逻辑
     runtime/                   启动引导、日志、后台消息循环
-    ui/                        PySide6/QFluentWidgets 托盘应用和页面
-      assets/icons/            设置页面使用的浅色/深色 SVG 图标
+    ui/                        PySide6 托盘应用和本地 Web UI
       logs/                    UI 日志历史和 handlers
       settings/                设置卡片、保存逻辑、自启动同步
   tests/                       config、UI、自启动、事件逻辑相关单元测试
@@ -236,8 +235,8 @@ cd /d "path\to\kef_controller"
 dist\KEF Controller\KEF Controller.exe
 ```
 
-`.spec` 文件使用 `main_gui.py`，生成无控制台的 onedir 窗口程序，包含 UI 需要的
-QFluentWidgets 和 SVG 资源，保留 Modern Windows Qt style plugin，保留软件
+`.spec` 文件使用 `main_gui.py`，生成无控制台的 onedir 窗口程序，包含本地
+HTML/CSS/JavaScript UI 和应用图标，保留 Modern Windows Qt style plugin 与软件
 OpenGL fallback，并裁掉未使用的 Qt/PySide6 模块和插件以减小体积。
 
 ## 使用 Inno Setup 生成安装包

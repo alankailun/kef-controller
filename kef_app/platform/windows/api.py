@@ -74,6 +74,9 @@ def destroy_shutdown_block_reason(hwnd: int) -> None:
         raise ctypes.WinError(ctypes.get_last_error())
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+CreateMutexW = kernel32.CreateMutexW
+CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+CreateMutexW.restype = wintypes.HANDLE
 GetCommandLineW = kernel32.GetCommandLineW
 GetCommandLineW.restype = wintypes.LPWSTR
 
@@ -368,11 +371,7 @@ def decode_power_setting_change(lparam: int) -> PowerSettingChange | None:
 
 
 def ensure_single_instance(log, mutex_name: str) -> int | None:
-    kernel32_local = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32_local.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
-    kernel32_local.CreateMutexW.restype = wintypes.HANDLE
-
-    handle = kernel32_local.CreateMutexW(None, True, mutex_name)
+    handle = CreateMutexW(None, True, mutex_name)
     last_error = ctypes.get_last_error()
 
     if not handle:

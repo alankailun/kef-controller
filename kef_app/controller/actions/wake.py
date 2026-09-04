@@ -121,11 +121,14 @@ class ControllerDeviceWakeMixin:
             if not self._ensure_target_identity("WAKE", reason, "wake_before_wait"):
                 outcome = "skipped_target_identity_not_verified"
                 return False
+            verified_ip = self.get_current_kef_ip()
 
             if not self.wait_until_reachable(c.reachability_wait_timeout, generation, reason):
                 outcome = "aborted_before_attempts"
                 return False
-            if not self._ensure_target_identity("WAKE", reason, "wake_before_attempts"):
+            if self.get_current_kef_ip() != verified_ip and not self._ensure_target_identity(
+                "WAKE", reason, "wake_after_ip_change"
+            ):
                 outcome = "skipped_target_identity_not_verified"
                 return False
 
@@ -153,7 +156,6 @@ class ControllerDeviceWakeMixin:
             def execute_attempt(attempt: int) -> None:
                 self._set_speaker_source(target_input, fresh=True)
 
-                self.capture_identity_from_current_ip(reason=reason, trigger=f"wake_success_attempt_{attempt}")
                 self.log_wifi_diagnostics(reason=reason, trigger=f"wake_success_attempt_{attempt}")
                 log.write(
                     "STEP",

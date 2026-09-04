@@ -31,7 +31,6 @@ from .state_models import (
 _UNCONFIRMED_STANDBY_OUTCOMES = {
     "sent_unconfirmed_prewarmed",
     "sent_unconfirmed_fire_and_forget",
-    "sent_unconfirmed_standard",
     "sent_skipped_host_unreachable",
 }
 

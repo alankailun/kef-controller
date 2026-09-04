@@ -195,7 +195,6 @@
       font: 600 11.5px ui-monospace, Consolas, monospace; color: var(--ghost);
     }
     .severity-btn:hover:not(:disabled) { border-color: var(--teal); color: var(--ink); }
-    .severity-btn:disabled { opacity: .38; cursor: default; }
     .severity-btn.active.ERROR { color: #fca5a5; border-color: #7f1d1d; background: #450a0a; }
     .severity-btn.active.WARN  { color: #fcd34d; border-color: #78350f; background: #451a03; }
     .severity-btn.active.EVENT { color: #c4b5fd; border-color: #4c1d95; background: #2e1065; }

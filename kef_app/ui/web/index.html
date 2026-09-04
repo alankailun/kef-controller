@@ -82,7 +82,7 @@
     `<svg class="${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
 
   const INPUT_META = {
-    wifi: ["Wi-Fi", "Wi-Fi"], bluetooth: ["蓝牙", "Bluetooth"], tv: ["TV (HDMI)", "TV (HDMI)"], optical: ["光纤", "Optical"],
+    wifi: ["Wi-Fi", "Wi-Fi"], bluetooth: ["蓝牙", "Bluetooth"], tv: ["TV (eARC)", "TV (eARC)"], optical: ["光纤", "Optical"],
     coaxial: ["同轴", "Coaxial"], analog: ["模拟", "Analog"], usb: ["USB", "USB"],
   };
   const INPUT_ORDER = ["wifi", "bluetooth", "tv", "optical", "coaxial", "analog", "usb"];
@@ -109,6 +109,10 @@
       tests: [{ key: "shutdown", label: ["关机", "Shutdown"], col: "standby" }] },
   ];
   const RULE_KEYS = EVENT_ROWS.flatMap(r => [r.wake, r.standby]).filter(Boolean);
+  const eventLabel = key => {
+    const event = EVENT_ROWS.flatMap(row => row.tests).find(test => test.key === String(key || ""));
+    return event ? localized(event.label) : String(key || "");
+  };
   const PRESETS = {
     recommended: { label: ["推荐", "Recommended"], desc: ["跟随电脑状态自动开关", "Follow PC state automatically"],
       values: Object.fromEntries(RULE_KEYS.map(k => [k, true])) },
@@ -117,14 +121,6 @@
         [k, ["standby_on_sleep", "standby_on_lid_close", "endsession_standby_on_shutdown"].includes(k)])) },
     manual: { label: ["手动", "Manual"], desc: ["全部关闭，只手动控制", "Disable all rules and control manually"],
       values: Object.fromEntries(RULE_KEYS.map(k => [k, false])) },
-  };
-
-  const zhTitle = title => TOAST_ZH[title] || title;
-  const zhDetail = d => {
-    let out = String(d || "");
-    for (const [re, rep] of DETAIL_ZH) if (re.test(out)) { out = out.replace(re, rep); break; }
-    return out.replace(/Speaker: On/, "扬声器：开机").replace(/Speaker: Standby/, "扬声器：待机")
-              .replace(/Speaker: Unknown/, "扬声器：未知").replace(/^Completed/, "已完成").replace(/^Failed/, "失败");
   };
 
   // ═════════════════════════════════════════════════════════
@@ -205,23 +201,32 @@
   // ═════════════════════════════════════════════════════════
   // Toast
   // ═════════════════════════════════════════════════════════
-  const localTitle = title => uiLanguage === "zh" ? zhTitle(title) : String(title || "");
-  const localDetail = detail => {
-    const raw = String(detail || "");
-    const switchedInput = raw.match(/^Switched to (\S+)\.$/);
-    if (switchedInput) return t("input_changed", inputLabel(switchedInput[1]));
-    return uiLanguage === "zh" ? zhDetail(raw) : raw;
+  const localTitle = title => String(title || "");
+  const localDetail = detail => String(detail || "");
+  const actionLabel = action => ({
+    WAKE: t("wake"), STANDBY: t("standby"), EARLY_STANDBY: t("standby"), ENDSESSION_STANDBY: t("standby"),
+  }[String(action || "").toUpperCase()] || String(action || ""));
+  const formatMessage = (template, params) => Object.entries(params || {}).reduce(
+    (text, [key, value]) => text.replaceAll(`{${key}}`, String(value ?? "")), String(template || ""),
+  ).trim();
+  const localizedMessage = msg => {
+    const spec = MESSAGE_TEXT[msg.code];
+    if (!spec) return { title: localTitle(msg.title), detail: localDetail(msg.detail) };
+    const params = { ...(msg.params || {}) };
+    if ("source" in params) params.source = inputLabel(params.source);
+    if ("action" in params) params.action = actionLabel(params.action);
+    if ("event" in params) params.event = eventLabel(params.event);
+    if ("speaker" in params) params.speaker = ({ On: t("power_on"), Standby: t("power_standby"), Unknown: "—" })[params.speaker] || params.speaker;
+    const languageIndex = uiLanguage === "en" ? 1 : 0;
+    return {
+      title: formatMessage(spec.title[languageIndex], params),
+      detail: formatMessage(spec.detail[languageIndex], params),
+    };
   };
-  const toastChannel = title => ({
-    "Volume updated": "volume", "Volume update failed": "volume", "Input changed": "input", "Input change failed": "input",
-    "Settings saved": "save", "Settings updated for this session": "save", "Startup settings saved": "save",
-    "Wake": "power", "Standby": "power", "Early Standby": "power", "Endsession Standby": "power",
-  }[title] || "general");
-  const toastKind = (level, title, detail, channel) => {
-    const value = `${title || ""} ${detail || ""}`;
+  const toastKind = (level, channel) => {
     if (level === "error") return "error";
     if (channel === "volume") return "volume";
-    if (channel === "power") return value.toLowerCase().includes("standby") || value.includes("待机") ? "standby" : "success";
+    if (channel === "power") return "success";
     if (channel === "save" || level === "success") return "success";
     if (level === "warning") return "warning";
     return "info";
@@ -237,7 +242,7 @@
     if (node) node.remove();
     toastNodes.delete(channel);
   }
-  function toast(level, title, detail = "", channel = toastChannel(title), ttl = 3600, visualKind = "") {
+  function toast(level, title, detail = "", channel = "general", ttl = 3600, visualKind = "") {
     let el = toastNodes.get(channel);
     if (!el) {
       const area = $("#toasts");
@@ -253,7 +258,7 @@
       area.append(el);
       toastNodes.set(channel, el);
     }
-    const kind = visualKind || toastKind(level, title, detail, channel);
+    const kind = visualKind || toastKind(level, channel);
     el.className = `toast ${level || "info"} kind-${kind}`;
     if (level === "error") el.setAttribute("role", "alert");
     else el.removeAttribute("role");
@@ -1216,11 +1221,14 @@
     const startupSwitch = $("#set-startup-enabled");
     const startupState = state.startup || {};
     const startupBusy = !!startupState.busy;
-    const startupEnabled = startupBusy && typeof startupState.requested_enabled === "boolean"
+    const startupPending = !!startupState.pending;
+    const startupEnabled = startupPending
+      ? startupState.mode === "task" || startupState.mode === "registry"
+      : startupBusy && typeof startupState.requested_enabled === "boolean"
       ? startupState.requested_enabled
       : !!startupState.registered;
     if (document.activeElement !== startupSwitch) startupSwitch.checked = startupEnabled;
-    startupSwitch.disabled = startupBusy;
+    startupSwitch.disabled = startupBusy || startupPending;
     const selectedStartupMode = startupMode();
     const methodRow = $("#startup-method-row");
     methodRow.classList.toggle("disabled", !startupEnabled);
@@ -1229,14 +1237,16 @@
       const active = button.dataset.startupMode === selectedStartupMode;
       button.classList.toggle("active", active);
       button.setAttribute("aria-pressed", String(active));
-      button.disabled = !startupEnabled || startupBusy;
+      button.disabled = !startupEnabled || startupBusy || startupPending;
     }
     const actualStartupMode = startupState.mode;
     const startupStatus = $("#startup-status");
     const activeStartup = startupEnabled && (actualStartupMode === "task" || actualStartupMode === "registry");
-    startupStatus.classList.toggle("active", activeStartup && !startupBusy);
-    startupStatus.classList.toggle("busy", startupBusy);
-    startupStatus.innerHTML = startupBusy
+    startupStatus.classList.toggle("active", activeStartup && !startupBusy && !startupPending);
+    startupStatus.classList.toggle("busy", startupBusy || startupPending);
+    startupStatus.innerHTML = startupPending
+      ? `${icon("loader", 14, "spin")}<span>${t("startup_checking")}</span>`
+      : startupBusy
       ? `${icon("loader", 14, "spin")}<span>${startupEnabled
         ? t("startup_applying", t(selectedStartupMode === "task" ? "startup_task" : "startup_registry"))
         : t("startup_disabling")}</span>`
@@ -1259,7 +1269,7 @@
     box.innerHTML = `
       ${icon(iconName, 14, msg.state === "running" ? "spin" : "")}
       <div style="min-width:0">
-        <div><strong>${esc(matchedTest ? localized(matchedTest.label) : msg.key)}</strong> · ${esc(localTitle(msg.title))} · ${esc(localDetail(msg.detail || ""))}</div>
+        <div><strong>${esc(matchedTest ? localized(matchedTest.label) : msg.key)}</strong> · ${esc(localizedMessage(msg).title)} · ${esc(localizedMessage(msg).detail)}</div>
       </div>
       <button class="close" title="${t("close")}" aria-label="${t("close")}">${icon("x", 13)}</button>`;
   }
@@ -1331,7 +1341,9 @@
       clearPowerPending();
       syncHome();
     }
-    toast(msg.level, msg.title, msg.detail);
+    const copy = localizedMessage(msg);
+    const visualKind = msg.channel === "power" && powerAction.includes("STANDBY") ? "standby" : "";
+    toast(msg.level, copy.title, copy.detail, msg.channel || "general", 3600, visualKind);
   }
 
   // ═════════════════════════════════════════════════════════
@@ -1367,15 +1379,22 @@
       // A state is a snapshot, so applying every historical one is redundant.
       // Coalesce a batch to its latest state, while preserving all new logs and
       // notifications in order.
-      let latestState = null;
+      let latestState = null, latestSettings = null;
       const messages = [];
       const lines = [];
       for (const item of batch.updates) {
         if (item.channel === "state") latestState = item.payload;
+        else if (item.channel === "settings") latestSettings = item.payload;
         else if (item.channel === "toast") messages.push(item.payload);
         else if (item.channel === "log") lines.push(item.payload);
       }
-      if (latestState) applyState(JSON.parse(latestState));
+      if (latestState || latestSettings) {
+        applyState({
+          ...(state || {}),
+          ...(latestState ? JSON.parse(latestState) : {}),
+          ...(latestSettings ? JSON.parse(latestSettings) : {}),
+        });
+      }
       for (const payload of messages) handleToast(JSON.parse(payload));
       for (const line of lines) appendLogLine(line);
     } catch (error) {

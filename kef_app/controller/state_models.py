@@ -26,6 +26,8 @@ class RuntimeSpeakerState:
     volume: int | None = None
     power_on: bool | None = None
     last_ui_poll_failure_log_mono: float = 0.0
+    last_ui_target_success_mono: float = 0.0
+    last_ui_target_ip: str = ""
     event_poll_failures: int = 0
 
 

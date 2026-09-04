@@ -192,7 +192,11 @@ class HeadlessRuntime:
             else:
                 self.controller.log_power_setting_event(change, wparam, lparam, event_mono=event_mono)
             if change.name == "GUID_LIDSWITCH_STATE_CHANGE" and change.value == LID_CLOSED:
-                self.controller.dispatch_off_pump_standby("lid_closed", "POWER_LID_CLOSED", event_mono, callback_started_mono=event_mono, step="dispatch_bounded_early_standby")
+                self.controller.on_lid_closed(
+                    "POWER_LID_CLOSED",
+                    event_mono,
+                    callback_started_mono=event_mono,
+                )
             elif change.name == "GUID_CONSOLE_DISPLAY_STATE" and change.value == MONITOR_DISPLAY_ON:
                 self.controller.on_display_on(event_mono)
             return True
@@ -200,7 +204,7 @@ class HeadlessRuntime:
             event_mono = self.controller.mono()
             try:
                 self.controller.log_power_event("PBT_APMSUSPEND", wparam, lparam, event_mono=event_mono)
-                self.controller.dispatch_off_pump_standby("suspend", "PBT_APMSUSPEND", event_mono, callback_started_mono=event_mono, step="dispatch_suspend_standby")
+                self.controller.on_suspend("PBT_APMSUSPEND", event_mono, callback_started_mono=event_mono)
             finally:
                 self.controller.stop_speaker_event_monitor()
                 self.controller.stop_prewarmed_standby_socket_monitor()
@@ -220,10 +224,9 @@ class HeadlessRuntime:
         if wparam == WTS_SESSION_LOCK:
             event_mono = self.controller.mono()
             self.controller._record_session_event_state("WTS_SESSION_LOCK", event_mono)
-            state_recorded_mono = self.controller.mono()
             self.controller._log_structured("EVENT", action="WINDOW_SESSION_EVENT", kind="SESSION", name="WTS_SESSION_LOCK_MSG_ENTRY", wparam=f"0x{wparam:04X}", session=lparam, async_worker=True, mono=f"{event_mono:.3f}")
             self.controller._log_session_event_line("WTS_SESSION_LOCK", wparam, lparam, event_mono)
-            self.controller.dispatch_off_pump_standby("lock", "WTS_SESSION_LOCK", event_mono, state_recorded_mono=state_recorded_mono, callback_started_mono=event_mono, step="dispatch_bounded_early_standby")
+            self.controller.on_lock("WTS_SESSION_LOCK", event_mono, callback_started_mono=event_mono)
             return 0
         if wparam == WTS_SESSION_UNLOCK:
             self.controller.log_session_event("WTS_SESSION_UNLOCK", wparam, lparam)

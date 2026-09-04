@@ -51,6 +51,7 @@ class KefMainWindow(QObject):
         self._server = WebApiServer(self._web_root(), self._bridge)
         self._server.start()
         self._bridge.state_changed.connect(lambda payload: self._server.publish("state", payload))
+        self._bridge.settings_changed.connect(lambda payload: self._server.publish("settings", payload))
         self._bridge.toast.connect(lambda payload: self._server.publish("toast", payload))
         self._bridge.log_line.connect(lambda payload: self._server.publish("log", payload))
 

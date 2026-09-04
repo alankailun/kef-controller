@@ -58,6 +58,8 @@ class WebApiServer:
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
             def do_GET(self) -> None:  # noqa: N802
                 owner._serve_static(self)
 
@@ -67,12 +69,8 @@ class WebApiServer:
             def log_message(self, _format: str, *_args: object) -> None:
                 return
 
-        class LoopbackServer(ThreadingHTTPServer):
-            # A pending long-poll must never delay shutdown of the tray app.
-            daemon_threads = True
-
         self._stopping = False
-        self._server = LoopbackServer(("127.0.0.1", 0), Handler)
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True, name="WebApiServer")
         self._thread.start()
 

@@ -370,6 +370,7 @@ class ControllerDeviceControlsMixin:
                 fallback_ip_refresh=ip_refreshed,
                 reachable=reachable,
             )
+        self._record_recent_ui_target(reachable)
         if input_source is not None or volume is not None or speaker_on is not None:
             self._set_speaker_runtime_state(
                 input_source=input_source,
@@ -533,7 +534,8 @@ class ControllerDeviceControlsMixin:
             return False
 
         try:
-            previous_input = self.get_input_source()
+            with self._state_lock:
+                previous_input = self._runtime_speaker.input_source or None
             for attempt in range(1, 3):
                 if attempt > 1:
                     time.sleep(0.6)
@@ -579,8 +581,6 @@ class ControllerDeviceControlsMixin:
             self._action_lock.release()
 
     def set_volume(self, level: int) -> bool:
-        if not self._ensure_target_identity("SET_VOLUME", "ui_live", "set_volume_before_action", force_recovery=False):
-            return False
         requested_level = level
         coerced_level = self._coerce_volume_level(level)
         if coerced_level is None:
@@ -592,6 +592,8 @@ class ControllerDeviceControlsMixin:
             )
             return False
         level = coerced_level
+        if not self._ensure_target_identity("SET_VOLUME", "ui_live", "set_volume_before_action", force_recovery=False):
+            return False
         if not self._action_lock.acquire(timeout=2.0):
             self._log_structured("SKIP", action="SET_VOLUME", cause="action_lock_busy")
             return False
@@ -599,6 +601,7 @@ class ControllerDeviceControlsMixin:
             with temporary_socket_timeout(self.config.socket_timeout):
                 speaker = self.get_speaker(fresh=False)
                 speaker.volume = level
+            self._set_speaker_runtime_state(volume=level, trigger="set_volume")
             self._log_structured(
                 "STEP",
                 action="SET_VOLUME",
@@ -607,6 +610,7 @@ class ControllerDeviceControlsMixin:
             )
             return True
         except Exception as exc:
+            self._record_recent_ui_target(False)
             self.reset_speaker()
             self._log_structured("WARN", action="SET_VOLUME", level=level, error=repr(exc))
             return False

@@ -12,12 +12,12 @@ from __future__ import annotations
 import os
 import sys
 
-from kef_app.platform.webview2_runtime import check_webview2_readiness
+from kef_app.platform.webview2_runtime import WebView2Readiness, check_webview2_readiness
 from kef_app.ui.web_api_server import WEBVIEW_HOST_URL_ENV
 
 
-def _webview2_requirement_message() -> str:
-    readiness = check_webview2_readiness()
+def _webview2_requirement_message(readiness: WebView2Readiness | None = None) -> str:
+    readiness = readiness or check_webview2_readiness()
     details: list[str] = []
     if readiness.missing_runtime:
         details.append("Microsoft Edge WebView2 Runtime")
@@ -32,10 +32,10 @@ def _webview2_requirement_message() -> str:
     )
 
 
-def _show_webview2_requirement_message() -> None:
+def _show_webview2_requirement_message(readiness: WebView2Readiness | None = None) -> None:
     import ctypes
 
-    ctypes.windll.user32.MessageBoxW(None, _webview2_requirement_message(), "KEF Controller", 0x10)
+    ctypes.windll.user32.MessageBoxW(None, _webview2_requirement_message(readiness), "KEF Controller", 0x10)
 
 
 def _webview2_is_ready() -> bool:
@@ -43,8 +43,9 @@ def _webview2_is_ready() -> bool:
 
 
 def _run_webview_host(url: str) -> None:
-    if not _webview2_is_ready():
-        _show_webview2_requirement_message()
+    readiness = check_webview2_readiness()
+    if not readiness.ready:
+        _show_webview2_requirement_message(readiness)
         raise SystemExit(2)
 
     import webview
@@ -106,8 +107,9 @@ def main() -> None:
     from kef_app.runtime.bootstrap import build_runtime_context, exit_if_startup_task_repair_requested
 
     exit_if_startup_task_repair_requested()
-    if not _webview2_is_ready():
-        _show_webview2_requirement_message()
+    readiness = check_webview2_readiness()
+    if not readiness.ready:
+        _show_webview2_requirement_message(readiness)
         raise SystemExit(2)
 
     from PySide6.QtGui import QFont
@@ -127,7 +129,9 @@ def main() -> None:
     apply_application_icon(app)
 
     log_handler = UILogHandler()
-    runtime_context = build_runtime_context(extra_log_handlers=[log_handler])
+    # The Web bridge reconciles and snapshots startup registration on its
+    # worker so Task Scheduler enumeration cannot delay the tray icon.
+    runtime_context = build_runtime_context(extra_log_handlers=[log_handler], reconcile_startup=False)
 
     runtime = HeadlessRuntime(runtime_context.config, runtime_context.controller, runtime_context.log)
     tray = KefTrayApp(

@@ -5,13 +5,24 @@ import threading
 import traceback
 from dataclasses import dataclass
 
-from .triggers import get_trigger
+from ..platform.windows.api import (
+    ENDSESSION_CLOSEAPP,
+    ENDSESSION_CRITICAL,
+    ENDSESSION_LOGOFF,
+    decode_query_end_session_flags,
+)
 
 _EARLY_STANDBY_EVENT_BUDGET_S = 0.30
 _SUSPEND_STANDBY_EVENT_BUDGET_S = 0.30
 _PUMP_CALLBACK_SLOW_THRESHOLD_S = 0.020
 _DISPLAY_OFF_FAST_RETRY_DELAY_S = 0.50
 _DISPLAY_OFF_VERIFIED_RETRY_DELAY_S = 1.50
+
+_EARLY_STANDBY_RULES: dict[str, tuple[str, str]] = {
+    "display_off": ("standby_on_display_off", "display_off_standby_disabled"),
+    "lid_closed": ("standby_on_lid_close", "lid_close_standby_disabled"),
+    "lock": ("standby_on_lock", "lock_standby_disabled"),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,9 +351,8 @@ class ControllerSessionEventsMixin:
             )
             return
 
-        trigger = get_trigger(task.trigger_name)
         self._run_early_standby_trigger(
-            trigger,
+            task.trigger_name,
             task.reason,
             generation=task.generation,
             event_mono=task.event_mono,
@@ -377,7 +387,7 @@ class ControllerSessionEventsMixin:
 
         self._start_controller_thread(worker, f"{thread_name}-{generation}")
 
-    def on_startup(self):
+    def on_startup(self) -> bool:
         if not self.config.wake_on_startup:
             self._log_structured(
                 "SKIP",
@@ -385,7 +395,7 @@ class ControllerSessionEventsMixin:
                 reason="startup",
                 cause="startup_wake_disabled",
             )
-            return
+            return False
 
         generation, _ = self._claim_wake_generation("startup", dedupe=False)
         self._log_structured(
@@ -396,16 +406,44 @@ class ControllerSessionEventsMixin:
             delay_s=f"{self.config.startup_delay:.2f}",
         )
         if not self._interruptible_sleep(self.config.startup_delay, generation, "startup_delay"):
-            return
-        self.wake_kef(generation, "startup")
+            return False
+        return self.wake_kef(generation, "startup")
 
-    def on_suspend(self, reason: str):
-        return get_trigger("suspend").fire(self, reason)
+    def on_suspend(
+        self,
+        reason: str,
+        event_mono: float | None = None,
+        *,
+        callback_started_mono: float | None = None,
+    ) -> bool:
+        event_mono = self.mono() if event_mono is None else event_mono
+        return self.dispatch_off_pump_standby(
+            "suspend",
+            reason,
+            event_mono,
+            callback_started_mono=event_mono if callback_started_mono is None else callback_started_mono,
+            step="dispatch_suspend_standby",
+        )
 
-    def on_lock(self, reason: str):
+    def on_lock(
+        self,
+        reason: str,
+        event_mono: float | None = None,
+        *,
+        callback_started_mono: float | None = None,
+    ) -> bool:
+        event_mono = self.mono() if event_mono is None else event_mono
+        state_recorded_mono: float | None = None
         if reason == "WTS_SESSION_LOCK":
             self._set_session_locked(True)
-        return get_trigger("lock").fire(self, reason)
+            state_recorded_mono = self.mono()
+        return self.dispatch_off_pump_standby(
+            "lock",
+            reason,
+            event_mono,
+            callback_started_mono=event_mono if callback_started_mono is None else callback_started_mono,
+            state_recorded_mono=state_recorded_mono,
+        )
 
     def dispatch_off_pump_standby(
         self,
@@ -499,19 +537,23 @@ class ControllerSessionEventsMixin:
         return True
 
     def schedule_early_standby(self, trigger_name: str, reason: str, event_mono: float) -> bool:
-        trigger = get_trigger(trigger_name)
-        if not bool(getattr(self.config, trigger.enabled_field)):
+        try:
+            enabled_field, disabled_cause = _EARLY_STANDBY_RULES[trigger_name]
+        except KeyError as exc:
+            raise ValueError(f"Unknown early standby trigger: {trigger_name}") from exc
+        action_name = "EARLY_STANDBY"
+        if not bool(getattr(self.config, enabled_field)):
             self._log_structured(
                 "SKIP",
-                action=trigger.action_name,
+                action=action_name,
                 reason=reason,
-                cause=trigger.disabled_cause,
+                cause=disabled_cause,
             )
             return False
         if self._is_session_ending():
             self._log_structured(
                 "SKIP",
-                action=trigger.action_name,
+                action=action_name,
                 reason=reason,
                 cause="session_ending",
             )
@@ -539,7 +581,7 @@ class ControllerSessionEventsMixin:
             )
             self._log_structured(
                 "STEP",
-                action=trigger.action_name,
+                action=action_name,
                 gen=intent.generation,
                 reason=reason,
                 step="schedule_cancellable_dispatcher",
@@ -554,7 +596,7 @@ class ControllerSessionEventsMixin:
         deadline_mono = event_mono + budget_s
         self._log_structured(
             "STEP",
-            action=trigger.action_name,
+            action=action_name,
             gen=generation,
             reason=reason,
             step="schedule_bounded_dispatcher",
@@ -577,18 +619,19 @@ class ControllerSessionEventsMixin:
 
     def _run_early_standby_trigger(
         self,
-        trigger,
+        trigger_name: str,
         reason: str,
         *,
         generation: int,
         event_mono: float,
         deadline_mono: float,
     ) -> bool:
+        enabled_field, disabled_cause = _EARLY_STANDBY_RULES[trigger_name]
         return self._on_early_standby_signal(
             reason,
-            enabled=bool(getattr(self.config, trigger.enabled_field)),
-            disabled_cause=trigger.disabled_cause,
-            action=trigger.action_name,
+            enabled=bool(getattr(self.config, enabled_field)),
+            disabled_cause=disabled_cause,
+            action="EARLY_STANDBY",
             generation=generation,
             event_mono=event_mono,
             deadline_mono=deadline_mono,
@@ -671,8 +714,20 @@ class ControllerSessionEventsMixin:
 
         return self.standby_kef_preemptive(generation, reason, deadline_mono=deadline_mono)
 
-    def on_lid_closed(self, reason: str = "POWER_LID_CLOSED") -> bool:
-        return get_trigger("lid_closed").fire(self, reason)
+    def on_lid_closed(
+        self,
+        reason: str = "POWER_LID_CLOSED",
+        event_mono: float | None = None,
+        *,
+        callback_started_mono: float | None = None,
+    ) -> bool:
+        event_mono = self.mono() if event_mono is None else event_mono
+        return self.dispatch_off_pump_standby(
+            "lid_closed",
+            reason,
+            event_mono,
+            callback_started_mono=event_mono if callback_started_mono is None else callback_started_mono,
+        )
 
     def on_display_off(self, event_mono: float, reason: str = "DISPLAY_OFF") -> bool:
         # Modern Standby (Windows 11 S0 idle): the screen turning off is often the
@@ -884,7 +939,70 @@ class ControllerSessionEventsMixin:
         )
 
     def on_query_end_session(self, wparam: int, lparam: int) -> bool:
-        return get_trigger("query_end_session").fire(self, wparam, lparam)
+        reason = "WM_QUERYENDSESSION"
+        self._set_session_ending(True)
+        self._new_generation("sleep", reason)
+        flags = decode_query_end_session_flags(lparam)
+        self._log_structured(
+            "EVENT",
+            action="WINDOW_SESSION_EVENT",
+            kind="WINDOW",
+            name=reason,
+            wparam=wparam,
+            lparam=f"0x{lparam:08X}",
+            flags=flags,
+        )
+        self._log_structured(
+            "STEP",
+            action="STANDBY",
+            reason=reason,
+            step="generation_refresh",
+            status="wake_threads_interrupted_wait_endsession",
+        )
 
-    def on_end_session(self, ending: bool, lparam: int):
-        return get_trigger("end_session").fire(self, ending, lparam)
+        is_rm_closeapp = bool(lparam & ENDSESSION_CLOSEAPP) and not bool(
+            lparam & (ENDSESSION_LOGOFF | ENDSESSION_CRITICAL)
+        )
+        if self.config.fast_exit_on_endsession and is_rm_closeapp:
+            self._log_structured(
+                "STEP",
+                action="PROCESS_EXIT",
+                reason=reason,
+                step="request_self_close",
+                status="rm_closeapp_fast_exit",
+            )
+            return True
+
+        standby_sent = self.standby_kef_end_session(reason, flags)
+        self._log_structured(
+            "STEP",
+            action="PROCESS_EXIT",
+            reason=reason,
+            step="request_self_close",
+            status="wait_for_wm_endsession_or_system_teardown",
+            endsession_standby_sent=standby_sent,
+        )
+        return False
+
+    def on_end_session(self, ending: bool, lparam: int) -> None:
+        reason = "WM_ENDSESSION"
+        flags = decode_query_end_session_flags(lparam)
+        self._set_session_ending(ending)
+        self._log_structured(
+            "EVENT",
+            action="WINDOW_SESSION_EVENT",
+            kind="WINDOW",
+            name=reason,
+            ending=ending,
+            lparam=f"0x{lparam:08X}",
+            flags=flags,
+        )
+        if ending:
+            self._new_generation("sleep", reason)
+            self._log_structured(
+                "STEP",
+                action="PROCESS_EXIT",
+                reason=reason,
+                step="fast_exit",
+                status=("skip_standby_to_avoid_app_hang" if self.config.fast_exit_on_endsession else "no_fast_exit"),
+            )

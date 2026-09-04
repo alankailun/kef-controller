@@ -172,7 +172,8 @@ class ControllerIdentityProbeMixin:
             backend_error = repr(exc)
             info = None
 
-        if info and self._can_use_cached_current_target(info, trigger):
+        can_use_cached_current_target = bool(info and self._can_use_cached_current_target(info, trigger))
+        if can_use_cached_current_target:
             self._log_backend_identity_partial(
                 reason=reason,
                 trigger=trigger,
@@ -215,7 +216,7 @@ class ControllerIdentityProbeMixin:
             return False
 
         matched, match_reason = self._identity_matches_expectation(info)
-        if not matched and match_reason == "target_mac_unverified" and self._can_use_cached_current_target(info, trigger):
+        if not matched and match_reason == "target_mac_unverified" and can_use_cached_current_target:
             matched = True
             match_reason = "cached_target_mac_current_ip"
         changed = False

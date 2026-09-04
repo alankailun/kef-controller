@@ -79,14 +79,5 @@ def read_startup_registration_snapshot(task_name: str, log=None) -> StartupRegis
     )
 
 
-def is_startup_registered(task_name: str) -> bool:
-    return read_startup_registration_snapshot(task_name).registered
-
-
 def get_effective_startup_registration_mode(task_name: str, log=None) -> str:
     return read_startup_registration_snapshot(task_name, log=log).effective_mode
-
-
-def describe_startup_registration_status(task_name: str, log=None) -> tuple[str, str, bool, bool]:
-    snapshot = read_startup_registration_snapshot(task_name, log=log)
-    return snapshot.label, snapshot.detail, snapshot.cleanup_needed, snapshot.healthy

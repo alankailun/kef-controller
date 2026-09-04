@@ -51,6 +51,7 @@ class WebApiServerTests(unittest.TestCase):
             )
             with urlopen(request) as response:
                 self.assertEqual(response.status, 200)
+                self.assertEqual(response.version, 11)
 
             with self.assertRaises(HTTPError) as denied:
                 urlopen(Request(f"{base}api/refresh", data=b'{}'))

@@ -94,6 +94,8 @@ def set_startup_registered(
     launch_spec=None,
     log=None,
     mode: str = "task",
+    *,
+    preloaded_state: StartupRegistrationState | None = None,
 ) -> bool:
     logger = log or NullLogger()
     normalized_mode = normalize_startup_mode(mode)
@@ -103,7 +105,7 @@ def set_startup_registered(
     # UI changes only need the canonical task plus matching registry entries.
     # Enumerating every scheduled task can take seconds on some machines and is
     # reserved for the startup self-heal/migration path below.
-    state = read_startup_registration_state(task_name, spec, include_related_tasks=False)
+    state = preloaded_state or read_startup_registration_state(task_name, spec, include_related_tasks=False)
 
     if not enable or normalized_mode == "off":
         # Task deletion can require elevation.  Do it first so a cancelled UAC
@@ -159,12 +161,25 @@ def ensure_startup_registration(task_name: str, log, mode: str = "task") -> bool
 
     normalized_mode = normalize_startup_mode(mode)
     desired = ensure_preferred_executable(task_name, log)
-    state = read_startup_registration_state(task_name, desired, include_related_tasks=True)
+    # The common healthy path only needs two targeted queries. A full verbose
+    # Task Scheduler enumeration is reserved for a state that actually needs
+    # repair, keeping it off the pre-tray startup path.
+    state = read_startup_registration_state(task_name, desired, include_related_tasks=False)
+    has_complete_state = False
     if not state.has_registry and not state.task_present and not state.registry_entries and not state.task_entries:
-        return False
+        # The canonical task and Registry value may both be absent while an
+        # older, differently named task still launches this application.
+        # This full scan runs on the Web bridge's startup worker in the GUI.
+        state = read_startup_registration_state(task_name, desired, include_related_tasks=True)
+        has_complete_state = True
+        if not state.has_registry and not state.task_present and not state.registry_entries and not state.task_entries:
+            return False
 
     if not _needs_reconcile(normalized_mode, state):
         return False
+
+    if not has_complete_state:
+        state = read_startup_registration_state(task_name, desired, include_related_tasks=True)
 
     ok = set_startup_registered(
         normalized_mode != "off",
@@ -172,6 +187,7 @@ def ensure_startup_registration(task_name: str, log, mode: str = "task") -> bool
         launch_spec=desired,
         log=log,
         mode=normalized_mode,
+        preloaded_state=state,
     )
     if ok:
         actual_mode = get_effective_startup_registration_mode(task_name, log=log)

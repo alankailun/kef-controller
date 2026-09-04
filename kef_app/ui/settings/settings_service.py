@@ -4,7 +4,6 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ...config import AppConfig
 from ...platform.windows.startup.common import (
     get_last_startup_error,
     normalize_startup_mode,
@@ -12,7 +11,6 @@ from ...platform.windows.startup.common import (
 )
 from ...platform.windows.startup.service import set_startup_registered
 from ...platform.windows.startup.status import read_startup_registration_snapshot
-from ...storage import UserConfigStore
 from ...structured_logging import log_structured
 
 TASK_NAME = "KEF Controller"
@@ -84,9 +82,8 @@ SPEAKER_POWER_OPTIONS_BY_KEY = {option.key: option for option in SPEAKER_POWER_O
 
 
 @dataclass(frozen=True)
-class SettingsSaveResult:
-    updated: AppConfig
-    config_ok: bool
+class StartupSyncResult:
+    configured_mode: str
     startup_ok: bool
     startup_detail: str
     actual_startup_registered: bool
@@ -98,10 +95,9 @@ def get_speaker_power_disabled_reason(key: str) -> str:
     return f"{option.title if option else key} is currently off."
 
 
-def save_settings_and_sync_startup(
-    updated: AppConfig,
+def sync_startup_registration(
+    startup_registration_mode: str,
     *,
-    config_store: UserConfigStore,
     desired_startup: bool,
     startup_mode_changed: bool,
     log: logging.Logger,
@@ -109,13 +105,12 @@ def save_settings_and_sync_startup(
     retry_disable_with_uac: Callable[[], bool] | None = None,
     retry_enable_task_with_uac: Callable[[], bool] | None = None,
     retry_enable_registry_with_uac: Callable[[], bool] | None = None,
-) -> SettingsSaveResult:
-    config_ok = config_store.save(updated)
+) -> StartupSyncResult:
     startup_ok = True
     before = read_startup_registration_snapshot(task_name, log=log)
     actual_startup_registered_before = before.registered
     actual_startup_mode_before = before.effective_mode
-    selected_mode = startup_mode_for_ui(updated.startup_registration_mode)
+    selected_mode = startup_mode_for_ui(startup_registration_mode)
     actual_mode_matches_selection = startup_mode_for_ui(actual_startup_mode_before) == selected_mode
     startup_changed = (
         desired_startup != actual_startup_registered_before
@@ -135,7 +130,7 @@ def save_settings_and_sync_startup(
             desired_startup,
             task_name=task_name,
             log=log,
-            mode=updated.startup_registration_mode,
+            mode=startup_registration_mode,
         )
 
     startup_detail = get_last_startup_error()
@@ -190,31 +185,28 @@ def save_settings_and_sync_startup(
     actual_startup_registered = after.registered
     actual_startup_mode = after.effective_mode
 
+    configured_mode = startup_registration_mode
     if (
         actual_startup_registered
         and actual_startup_mode in {"task", "registry"}
-        and startup_mode_for_ui(updated.startup_registration_mode) != actual_startup_mode
+        and startup_mode_for_ui(startup_registration_mode) != actual_startup_mode
     ):
         # A failed change (including a cancelled UAC prompt) must show the
         # startup method that Windows actually retained, not the requested
         # method.  This also restores the master switch after a failed disable.
-        updated = updated.with_updates(startup_registration_mode=actual_startup_mode)
-        if config_ok:
-            config_ok = config_store.save(updated)
-        if config_ok:
-            log_structured(
-                log,
-                "STEP",
-                action="STARTUP_REGISTRATION",
-                reason="startup_update",
-                step="reconcile",
-                status="retained_existing_registration",
-                actual_mode=actual_startup_mode,
-            )
+        configured_mode = actual_startup_mode
+        log_structured(
+            log,
+            "STEP",
+            action="STARTUP_REGISTRATION",
+            reason="startup_update",
+            step="reconcile",
+            status="retained_existing_registration",
+            actual_mode=actual_startup_mode,
+        )
 
-    return SettingsSaveResult(
-        updated=updated,
-        config_ok=config_ok,
+    return StartupSyncResult(
+        configured_mode=configured_mode,
         startup_ok=startup_ok,
         startup_detail=startup_detail,
         actual_startup_registered=actual_startup_registered,

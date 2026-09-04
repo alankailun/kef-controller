@@ -3,7 +3,6 @@ from __future__ import annotations
 import unittest
 from unittest.mock import Mock, patch
 
-from kef_app.config import AppConfig
 from kef_app.platform.windows.startup import launch as startup_launch
 from kef_app.platform.windows.startup import service as startup_service
 from kef_app.platform.windows.startup.common import NullLogger, StartupLaunchSpec
@@ -14,7 +13,7 @@ from kef_app.platform.windows.startup.reconcile import (
 from kef_app.platform.windows.startup.registry import RegistryStartupEntry
 from kef_app.platform.windows.startup.status import StartupRegistrationSnapshot
 from kef_app.platform.windows.startup.task_scheduler import ScheduledTaskEntry
-from kef_app.ui.settings.settings_service import save_settings_and_sync_startup, startup_mode_for_ui
+from kef_app.ui.settings.settings_service import startup_mode_for_ui, sync_startup_registration
 
 TASK_NAME = "KEF Controller"
 DESIRED = StartupLaunchSpec(r"C:\Users\alan\AppData\Local\Programs\KEF Controller\KEF Controller.exe")
@@ -68,6 +67,88 @@ class StartupReconcileTests(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertFalse(read_state.call_args.kwargs["include_related_tasks"])
+
+    def test_healthy_frozen_startup_uses_only_the_targeted_task_query(self):
+        healthy = make_state(
+            task_present=True,
+            task_spec=DESIRED,
+            task_is_current=True,
+            task_entries=(ScheduledTaskEntry(TASK_NAME, DESIRED),),
+        )
+        with (
+            patch("kef_app.platform.windows.startup.service.is_frozen_runtime", return_value=True),
+            patch("kef_app.platform.windows.startup.service.ensure_preferred_executable", return_value=DESIRED),
+            patch(
+                "kef_app.platform.windows.startup.service.read_startup_registration_state",
+                return_value=healthy,
+            ) as read_state,
+            patch("kef_app.platform.windows.startup.service.set_startup_registered") as set_startup,
+        ):
+            changed = startup_service.ensure_startup_registration(TASK_NAME, Mock(), mode="task")
+
+        self.assertFalse(changed)
+        read_state.assert_called_once_with(TASK_NAME, DESIRED, include_related_tasks=False)
+        set_startup.assert_not_called()
+
+    def test_frozen_startup_enumerates_related_tasks_only_when_repair_is_needed(self):
+        targeted = make_state(
+            task_present=True,
+            task_spec=OLD,
+            task_entries=(ScheduledTaskEntry(TASK_NAME, OLD),),
+        )
+        complete = make_state(
+            task_present=True,
+            task_spec=OLD,
+            task_entries=(ScheduledTaskEntry(TASK_NAME, OLD),),
+            stale_task_entries=(ScheduledTaskEntry("Old KEF Controller", OLD),),
+        )
+        with (
+            patch("kef_app.platform.windows.startup.service.is_frozen_runtime", return_value=True),
+            patch("kef_app.platform.windows.startup.service.ensure_preferred_executable", return_value=DESIRED),
+            patch(
+                "kef_app.platform.windows.startup.service.read_startup_registration_state",
+                side_effect=[targeted, complete],
+            ) as read_state,
+            patch("kef_app.platform.windows.startup.service.set_startup_registered", return_value=True) as set_startup,
+            patch("kef_app.platform.windows.startup.service.get_effective_startup_registration_mode", return_value="task"),
+        ):
+            changed = startup_service.ensure_startup_registration(TASK_NAME, Mock(), mode="task")
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            [call.kwargs["include_related_tasks"] for call in read_state.call_args_list],
+            [False, True],
+        )
+        self.assertIs(set_startup.call_args.kwargs["preloaded_state"], complete)
+
+    def test_frozen_startup_finds_a_differently_named_orphan_task(self):
+        targeted = make_state()
+        orphan = ScheduledTaskEntry("Old KEF Controller", OLD)
+        complete = make_state(
+            task_entries=(orphan,),
+            stale_task_entries=(orphan,),
+        )
+        with (
+            patch("kef_app.platform.windows.startup.service.is_frozen_runtime", return_value=True),
+            patch("kef_app.platform.windows.startup.service.ensure_preferred_executable", return_value=DESIRED),
+            patch(
+                "kef_app.platform.windows.startup.service.read_startup_registration_state",
+                side_effect=[targeted, complete],
+            ) as read_state,
+            patch("kef_app.platform.windows.startup.service.set_startup_registered", return_value=True) as set_startup,
+            patch(
+                "kef_app.platform.windows.startup.service.get_effective_startup_registration_mode",
+                return_value="task",
+            ),
+        ):
+            changed = startup_service.ensure_startup_registration(TASK_NAME, Mock(), mode="task")
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            [call.kwargs["include_related_tasks"] for call in read_state.call_args_list],
+            [False, True],
+        )
+        self.assertIs(set_startup.call_args.kwargs["preloaded_state"], complete)
 
     def test_failed_disable_preserves_task_before_registry_entries(self):
         state = make_state(
@@ -238,10 +319,6 @@ class StartupReconcileTests(unittest.TestCase):
         delete_registry.assert_called_once()
 
     def test_settings_save_reconciles_when_startup_method_changes(self):
-        config = AppConfig().with_updates(startup_registration_mode="task")
-        config_store = Mock()
-        config_store.save.return_value = True
-
         with (
             patch("kef_app.ui.settings.settings_service.set_startup_registered", return_value=True) as set_startup,
             patch(
@@ -249,9 +326,8 @@ class StartupReconcileTests(unittest.TestCase):
                 return_value=self.startup_snapshot(True, "task"),
             ),
         ):
-            result = save_settings_and_sync_startup(
-                config,
-                config_store=config_store,
+            result = sync_startup_registration(
+                "task",
                 desired_startup=True,
                 startup_mode_changed=True,
                 log=Mock(),
@@ -262,10 +338,6 @@ class StartupReconcileTests(unittest.TestCase):
         self.assertEqual(set_startup.call_args.kwargs["mode"], "task")
 
     def test_settings_save_reconciles_when_actual_method_differs_from_selected(self):
-        config = AppConfig().with_updates(startup_registration_mode="task")
-        config_store = Mock()
-        config_store.save.return_value = True
-
         with (
             patch("kef_app.ui.settings.settings_service.set_startup_registered", return_value=True) as set_startup,
             patch(
@@ -273,9 +345,8 @@ class StartupReconcileTests(unittest.TestCase):
                 side_effect=[self.startup_snapshot(True, "registry"), self.startup_snapshot(True, "task")],
             ),
         ):
-            result = save_settings_and_sync_startup(
-                config,
-                config_store=config_store,
+            result = sync_startup_registration(
+                "task",
                 desired_startup=True,
                 startup_mode_changed=False,
                 log=Mock(),
@@ -287,10 +358,6 @@ class StartupReconcileTests(unittest.TestCase):
         self.assertEqual(result.actual_startup_mode, "task")
 
     def test_settings_save_off_removes_startup_entries(self):
-        config = AppConfig().with_updates(startup_registration_mode="off")
-        config_store = Mock()
-        config_store.save.return_value = True
-
         with (
             patch("kef_app.ui.settings.settings_service.set_startup_registered", return_value=True) as set_startup,
             patch(
@@ -298,9 +365,8 @@ class StartupReconcileTests(unittest.TestCase):
                 side_effect=[self.startup_snapshot(True, "registry"), self.startup_snapshot(False, "none", healthy=False)],
             ),
         ):
-            result = save_settings_and_sync_startup(
-                config,
-                config_store=config_store,
+            result = sync_startup_registration(
+                "off",
                 desired_startup=False,
                 startup_mode_changed=True,
                 log=Mock(),
@@ -313,9 +379,6 @@ class StartupReconcileTests(unittest.TestCase):
         self.assertEqual(result.actual_startup_mode, "none")
 
     def test_cancelled_disable_restores_the_actual_task_scheduler_mode(self):
-        config = AppConfig().with_updates(startup_registration_mode="registry")
-        config_store = Mock()
-        config_store.save.return_value = True
         retry_disable = Mock(return_value=False)
 
         with (
@@ -326,9 +389,8 @@ class StartupReconcileTests(unittest.TestCase):
                 return_value=self.startup_snapshot(True, "task"),
             ),
         ):
-            result = save_settings_and_sync_startup(
-                config,
-                config_store=config_store,
+            result = sync_startup_registration(
+                "registry",
                 desired_startup=False,
                 startup_mode_changed=True,
                 log=Mock(),
@@ -338,13 +400,10 @@ class StartupReconcileTests(unittest.TestCase):
         self.assertFalse(result.startup_ok)
         self.assertTrue(result.actual_startup_registered)
         self.assertEqual(result.actual_startup_mode, "task")
-        self.assertEqual(result.updated.startup_registration_mode, "task")
+        self.assertEqual(result.configured_mode, "task")
         retry_disable.assert_called_once()
 
     def test_settings_save_task_mode_retries_with_uac_when_access_denied(self):
-        config = AppConfig().with_updates(startup_registration_mode="task")
-        config_store = Mock()
-        config_store.save.return_value = True
         retry_enable = Mock(return_value=True)
 
         with (
@@ -355,9 +414,8 @@ class StartupReconcileTests(unittest.TestCase):
                 side_effect=[self.startup_snapshot(False, "none", healthy=False), self.startup_snapshot(True, "task")],
             ),
         ):
-            result = save_settings_and_sync_startup(
-                config,
-                config_store=config_store,
+            result = sync_startup_registration(
+                "task",
                 desired_startup=True,
                 startup_mode_changed=True,
                 log=Mock(),
@@ -370,9 +428,6 @@ class StartupReconcileTests(unittest.TestCase):
         self.assertEqual(result.actual_startup_mode, "task")
 
     def test_settings_save_registry_mode_retries_after_elevated_task_cleanup(self):
-        config = AppConfig().with_updates(startup_registration_mode="registry")
-        config_store = Mock()
-        config_store.save.return_value = True
         retry_cleanup = Mock(return_value=True)
 
         with (
@@ -386,9 +441,8 @@ class StartupReconcileTests(unittest.TestCase):
                 side_effect=[self.startup_snapshot(False, "none", healthy=False), self.startup_snapshot(True, "registry")],
             ),
         ):
-            result = save_settings_and_sync_startup(
-                config,
-                config_store=config_store,
+            result = sync_startup_registration(
+                "registry",
                 desired_startup=True,
                 startup_mode_changed=True,
                 log=Mock(),

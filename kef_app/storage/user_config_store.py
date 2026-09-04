@@ -27,6 +27,12 @@ _USER_SETTINGS_SECTION_FIELDS = {
     for section_name in USER_SETTINGS_SECTION_NAMES
 }
 _CONFIGURABLE_INPUT_SOURCES = {value for _, value in INPUT_SOURCE_OPTIONS}
+_LEGACY_DEVICE_TARGET_KEYS = (
+    "expected_speaker_name",
+    "expected_speaker_mac",
+    "auto_discover_kef_ip_by_mac",
+    "auto_discover_kef_ip_blind",
+)
 # Added 2026-05. Safe to remove after 2026-11 once released installs have auto-rewritten config.json.
 _LEGACY_MAC_DISCOVERY_PROBE_TIMEOUT = 0.20
 _DEFAULT_MAC_DISCOVERY_PROBE_TIMEOUT = 0.30
@@ -215,8 +221,7 @@ class UserConfigStore:
                 raise ValueError("config.json root must be an object")
 
             loaded = self._apply_to_config(self._base_config.clone(), data)
-            loaded = self._migrate_legacy_device_target(loaded, data)
-            migrated = False
+            migrated = self._migrate_legacy_device_target(loaded, data)
             if self._migrate_legacy_probe_timeout(loaded, data):
                 migrated = True
             if self._migrate_legacy_prewarmed_standby_tuning(loaded, data):
@@ -276,20 +281,23 @@ class UserConfigStore:
                 )
         return config
 
-    def _migrate_legacy_device_target(self, config: AppConfig, data: dict[str, Any]) -> AppConfig:
+    def _migrate_legacy_device_target(self, config: AppConfig, data: dict[str, Any]) -> bool:
+        migrated = False
         legacy_expected_mac = normalize_mac(_coerce_string(data.get("expected_speaker_mac")))
         if legacy_expected_mac and not normalize_mac(config.kef_mac):
             config.kef_mac = legacy_expected_mac
+            migrated = True
             self._startup_messages.append(
                 "Migrated legacy Expected MAC to Target Speaker MAC"
             )
 
-        if data.get("expected_speaker_name") or data.get("expected_speaker_mac"):
+        if any(key in data for key in _LEGACY_DEVICE_TARGET_KEYS):
+            migrated = True
             self._startup_messages.append(
-                "Cleared legacy Expected Device Name and Expected MAC fields"
+                "Cleared legacy device target fields"
             )
 
-        return config
+        return migrated
 
     def _migrate_legacy_probe_timeout(self, config: AppConfig, data: dict[str, Any]) -> bool:
         raw_value = self._raw_user_value(data, "mac_discovery_probe_timeout")

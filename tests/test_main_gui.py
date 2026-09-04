@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import main_gui
+from kef_app.platform.webview2_runtime import MIN_DOTNET_RELEASE, WebView2Readiness
 from kef_app.ui.web_api_server import WEBVIEW_HOST_URL_ENV
 
 
@@ -31,11 +32,16 @@ class MainGuiWebViewHostTests(unittest.TestCase):
         webview = types.SimpleNamespace(create_window=Mock(return_value=window), start=Mock())
 
         with (
-            patch.object(main_gui, "_webview2_is_ready", return_value=True),
+            patch.object(
+                main_gui,
+                "check_webview2_readiness",
+                return_value=WebView2Readiness("120.0.0.0", MIN_DOTNET_RELEASE),
+            ) as readiness,
             patch.dict(sys.modules, {"webview": webview}),
         ):
             main_gui._run_webview_host("http://127.0.0.1:4096/")
 
+        readiness.assert_called_once_with()
         self.assertTrue(webview.create_window.call_args.kwargs["hidden"])
         self.assertEqual(window.events.closing.handlers[0](), False)
         window.hide.assert_called_once_with()

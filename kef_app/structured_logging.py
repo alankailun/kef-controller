@@ -25,7 +25,6 @@ _TAG_LOG_LEVELS: Final[dict[str, int]] = {
     "WARN": logging.WARNING,
 }
 _UI_POLL_TRIGGER_PREFIXES: Final[tuple[str, ...]] = (
-    "ui_home_poll",
     "ui_tray_poll",
     "web_ui_poll",
 )

@@ -28,7 +28,7 @@ excluded_qt_modules = [
     "PySide6.Qt3DAnimation", "PySide6.Qt3DExtras",
     # Charts / data visualization / graphs
     "PySide6.QtCharts", "PySide6.QtDataVisualization", "PySide6.QtGraphs", "PySide6.QtGraphsWidgets",
-    # Multimedia (qfluentwidgets.multimedia is not used by this app)
+    # Multimedia is not used by this app.
     "PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets", "PySide6.QtSpatialAudio",
     # Networking APIs not used by the controller.
     "PySide6.QtNetwork", "PySide6.QtNetworkAuth", "PySide6.QtHttpServer",

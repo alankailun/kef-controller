@@ -145,7 +145,6 @@ class ControllerLoggingMixin:
         if self._state_store is None:
             return False
         identity = self.get_current_identity()
-        identity.matched_by = self._identity.last_matched_by or identity.matched_by
         return self._state_store.save(identity, trigger=trigger)
 
     def log_banner(self):

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from kef_app.config import AppConfig
 from kef_app.controller import KefPowerController
@@ -12,13 +12,13 @@ from kef_app.controller.actions.standby import (
     PREEMPTIVE_STANDBY_POLICY,
     FastStandbyPolicy,
 )
-from kef_app.controller.session_events import _DisplayOffStandbyTask
+from kef_app.controller.session_events import _EARLY_STANDBY_RULES, _DisplayOffStandbyTask
 from kef_app.controller.standby import CachedPrewarmedStandbySendResult, PrewarmedStandbySendResult
-from kef_app.controller.triggers import TRIGGERS
 from kef_app.devices.speaker_models import SpeakerIdentity
 from kef_app.devices.transport.errors import is_host_unreachable
 from kef_app.devices.transport.standby_request import FireAndForgetShutdownResult
-from kef_app.platform.windows.api import ENDSESSION_CLOSEAPP
+from kef_app.platform.windows.api import ENDSESSION_CLOSEAPP, WTS_SESSION_LOCK
+from kef_app.runtime.headless_service import HeadlessRuntime
 
 
 class PowerEventLogicTests(unittest.TestCase):
@@ -71,16 +71,13 @@ class PowerEventLogicTests(unittest.TestCase):
             controller._update_display_off_standby_intent(intent.generation, status)
         return intent
 
-    def test_trigger_registry_contains_power_standby_triggers(self):
+    def test_early_standby_rules_cover_the_three_bounded_sources(self):
         self.assertEqual(
-            set(TRIGGERS),
+            set(_EARLY_STANDBY_RULES),
             {
                 "lock",
                 "lid_closed",
                 "display_off",
-                "suspend",
-                "query_end_session",
-                "end_session",
             },
         )
 
@@ -381,6 +378,27 @@ class PowerEventLogicTests(unittest.TestCase):
             "WTS_SESSION_LOCK",
             124.0,
             callback_started_mono=124.0,
+            state_recorded_mono=124.0,
+        )
+        self.assertTrue(controller._power.session_locked)
+
+    def test_headless_wts_lock_records_locked_state_before_dispatch(self):
+        controller = self.make_controller(standby_on_lock=True)
+        controller.dispatch_off_pump_standby = Mock(return_value=True)
+        controller.mono = Mock(return_value=126.0)
+        runtime = HeadlessRuntime.__new__(HeadlessRuntime)
+        runtime.controller = controller
+
+        result = runtime._handle_session_change(WTS_SESSION_LOCK, 7)
+
+        self.assertEqual(result, 0)
+        self.assertTrue(controller._power.session_locked)
+        controller.dispatch_off_pump_standby.assert_called_once_with(
+            "lock",
+            "WTS_SESSION_LOCK",
+            126.0,
+            callback_started_mono=126.0,
+            state_recorded_mono=126.0,
         )
 
     def test_ui_test_lock_does_not_leave_session_locked(self):
@@ -2126,18 +2144,50 @@ class PowerEventLogicTests(unittest.TestCase):
     def test_change_input_confirms_selected_input(self):
         controller = self.make_controller(kef_ip="192.168.1.10", kef_mac="AA:BB:CC:DD:EE:01")
         controller._ensure_target_identity = Mock(return_value=True)
-        controller.get_input_source = Mock(side_effect=["wifi", "coaxial"])
+        controller._set_speaker_runtime_state(input_source="wifi", trigger="unit_test")
+        controller.get_input_source = Mock(return_value="coaxial")
         controller._set_speaker_source = Mock()
 
         result = controller.change_input_live("coaxial")
 
         self.assertTrue(result)
         controller._set_speaker_source.assert_called_once_with("coaxial", fresh=True)
+        controller.get_input_source.assert_called_once_with(fresh=True)
 
     def test_set_volume_rejects_non_numeric_level_without_connector_call(self):
         controller = self.make_controller(kef_ip="192.168.1.10")
+        controller._ensure_target_identity = Mock()
 
         self.assertFalse(controller.set_volume("loud"))  # type: ignore[arg-type]
+        controller._ensure_target_identity.assert_not_called()
+
+    def test_live_control_reuses_recent_successful_ui_poll_for_the_same_ip(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", home_external_poll_interval=2.0)
+        controller.mono = Mock(return_value=100.0)
+        controller._record_recent_ui_target(True)
+        controller.resolve_target = Mock(return_value=False)
+
+        self.assertTrue(
+            controller._ensure_target_identity(
+                "SET_VOLUME",
+                "ui_live",
+                "set_volume_before_action",
+                force_recovery=False,
+            )
+        )
+        controller.resolve_target.assert_not_called()
+
+        controller.config.kef_ip = "192.168.1.20"
+        controller.apply_configured_device_target(trigger="unit_test")
+        self.assertFalse(
+            controller._ensure_target_identity(
+                "SET_VOLUME",
+                "ui_live",
+                "set_volume_before_action",
+                force_recovery=False,
+            )
+        )
+        controller.resolve_target.assert_called_once()
 
     def test_set_volume_uses_the_default_visible_step_policy(self):
         controller = self.make_controller(kef_ip="192.168.1.10")
@@ -2448,12 +2498,39 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._ensure_target_identity = Mock(return_value=True)
         controller.wait_until_reachable = Mock(return_value=True)
         controller.get_input_source = Mock(return_value="optical")
+        controller.capture_identity_from_current_ip = Mock()
         controller._run_generation_attempts = Mock(return_value="success_attempt_1")
 
         self.assertTrue(controller.wake_kef(0, "startup"))
 
         controller.get_input_source.assert_not_called()
+        controller.capture_identity_from_current_ip.assert_not_called()
+        controller._ensure_target_identity.assert_called_once_with(
+            "WAKE", "startup", "wake_before_wait"
+        )
         controller._run_generation_attempts.assert_called_once()
+
+    def test_wake_rechecks_identity_only_if_reachability_changes_the_ip(self):
+        controller = self.make_controller(kef_ip="192.168.1.10", kef_input="wifi")
+        controller._ensure_target_identity = Mock(return_value=True)
+
+        def change_ip(*_args) -> bool:
+            controller.config.kef_ip = "192.168.1.20"
+            controller.apply_configured_device_target(trigger="unit_test")
+            return True
+
+        controller.wait_until_reachable = Mock(side_effect=change_ip)
+        controller._run_generation_attempts = Mock(return_value="success_attempt_1")
+
+        self.assertTrue(controller.wake_kef(0, "startup"))
+
+        self.assertEqual(
+            controller._ensure_target_identity.call_args_list,
+            [
+                call("WAKE", "startup", "wake_before_wait"),
+                call("WAKE", "startup", "wake_after_ip_change"),
+            ],
+        )
 
 
 if __name__ == "__main__":

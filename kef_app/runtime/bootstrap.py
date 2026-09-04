@@ -29,7 +29,11 @@ def exit_if_startup_task_repair_requested() -> None:
         raise SystemExit(repair_exit_code)
 
 
-def build_runtime_context(*, extra_log_handlers: Iterable[logging.Handler] = ()) -> RuntimeContext:
+def build_runtime_context(
+    *,
+    extra_log_handlers: Iterable[logging.Handler] = (),
+    reconcile_startup: bool = True,
+) -> RuntimeContext:
     base_config = AppConfig()
     user_config_store = UserConfigStore(base_config)
     config = user_config_store.load_or_create()
@@ -43,7 +47,8 @@ def build_runtime_context(*, extra_log_handlers: Iterable[logging.Handler] = ())
     # A second copy launched from a build folder must not try to replace the
     # executable used by the live instance before it exits.
     single_instance_mutex = ensure_single_instance(log, config.single_instance_mutex_name)
-    ensure_startup_registration(config.app_name, log, mode=config.startup_registration_mode)
+    if reconcile_startup:
+        ensure_startup_registration(config.app_name, log, mode=config.startup_registration_mode)
     state_store = SpeakerStateStore(config, log)
     controller = KefPowerController(config, log, state_store=state_store)
 

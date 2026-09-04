@@ -108,6 +108,16 @@ class ControllerDeviceCommonMixin:
         return source in _CONFIGURABLE_INPUT_SOURCES
 
     def _ensure_target_identity(self, action: str, reason: str, trigger: str, *, force_recovery: bool = True) -> bool:
+        if reason == "ui_live" and self._can_reuse_recent_ui_target():
+            self._log_structured(
+                "STEP",
+                action=action,
+                reason=reason,
+                trigger=trigger,
+                status="recent_ui_target_reused",
+                current_ip=self.get_current_kef_ip(),
+            )
+            return True
         if self.resolve_target(reason=reason, trigger=trigger, force_recovery=force_recovery):
             return True
 
@@ -120,6 +130,22 @@ class ControllerDeviceCommonMixin:
             current_ip=self.get_current_kef_ip() or "<empty>",
         )
         return False
+
+    def _record_recent_ui_target(self, reachable: bool) -> None:
+        current_ip = self.get_current_kef_ip() if reachable else ""
+        with self._state_lock:
+            self._runtime_speaker.last_ui_target_success_mono = self.mono() if current_ip else 0.0
+            self._runtime_speaker.last_ui_target_ip = current_ip
+
+    def _can_reuse_recent_ui_target(self) -> bool:
+        current_ip = self.get_current_kef_ip()
+        if not current_ip:
+            return False
+        with self._state_lock:
+            verified_ip = self._runtime_speaker.last_ui_target_ip
+            verified_mono = self._runtime_speaker.last_ui_target_success_mono
+        ttl = max(2.5, min(10.0, float(self.config.home_external_poll_interval) * 2.5))
+        return verified_ip == current_ip and verified_mono > 0.0 and self.mono() - verified_mono <= ttl
 
     @staticmethod
     def _coerce_volume_level(level: object) -> int | None:

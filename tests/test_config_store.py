@@ -155,12 +155,32 @@ class UserConfigStoreTests(unittest.TestCase):
 
             loaded = UserConfigStore(base_config).load_or_create()
             saved = UserConfigStore(loaded)._to_user_dict(loaded)
+            with open(base_config.config_file, encoding="utf-8") as handle:
+                persisted = json.load(handle)
 
             self.assertEqual(loaded.kef_mac, "AABBCCDDEEFF")
             self.assertNotIn("expected_speaker_mac", saved)
             self.assertNotIn("expected_speaker_name", saved)
             self.assertNotIn("auto_discover_kef_ip_by_mac", saved)
             self.assertNotIn("auto_discover_kef_ip_blind", saved)
+            self.assertNotIn("expected_speaker_mac", persisted)
+            self.assertNotIn("expected_speaker_name", persisted)
+
+    def test_legacy_discovery_flags_are_removed_even_without_old_identity_fields(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_config = self.make_config(temp_dir)
+            data = UserConfigStore(base_config)._to_user_dict(base_config)
+            data["auto_discover_kef_ip_by_mac"] = True
+            data["auto_discover_kef_ip_blind"] = False
+            with open(base_config.config_file, "w", encoding="utf-8") as handle:
+                json.dump(data, handle)
+
+            UserConfigStore(base_config).load_or_create()
+
+            with open(base_config.config_file, encoding="utf-8") as handle:
+                persisted = json.load(handle)
+            self.assertNotIn("auto_discover_kef_ip_by_mac", persisted)
+            self.assertNotIn("auto_discover_kef_ip_blind", persisted)
 
     def test_speaker_state_store_skips_unchanged_identity_write(self):
         with tempfile.TemporaryDirectory() as temp_dir:
