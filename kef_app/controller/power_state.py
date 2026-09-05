@@ -50,6 +50,17 @@ _CANCELLABLE_STANDBY_STATUS_TRANSITIONS = {
 }
 
 
+_UNCONFIRMED_STANDBY_OUTCOMES = frozenset({
+    "sent_unconfirmed_prewarmed",
+    "sent_unconfirmed_fire_and_forget",
+    "sent_skipped_host_unreachable",
+})
+
+
+def standby_outcome_is_confirmed(outcome: str) -> bool:
+    return power_action_outcome_is_success(outcome) and outcome not in _UNCONFIRMED_STANDBY_OUTCOMES
+
+
 def power_action_outcome_is_success(outcome: str) -> bool:
     return outcome.startswith("success") or outcome.startswith("sent_")
 

@@ -154,7 +154,8 @@
     applyTarget: (ip, mac) => api("applyTarget", [ip, mac]),
     updateStartup: (mode, enabled) => api("updateStartup", [mode, enabled]),
     runEvent: key => api("runEvent", [key]),
-    scanSpeakers: () => api("scanSpeakers"),
+    scanSpeakers: id => api("scanSpeakers", [id]),
+    cancelScan: id => api("cancelScan", [id]),
     openLogFolder: () => api("openLogFolder"),
   };
 
@@ -1098,6 +1099,7 @@
   }
 
   function closeSpeakerDialog() {
+    if (dlg?.scanId) bridge.cancelScan(dlg.scanId).catch(() => {});
     dlg = null;
     const el = $("#dlg-backdrop");
     if (el) el.remove();
@@ -1110,13 +1112,15 @@
 
   function startDialogScan() {
     if (!dlg) return;
+    const scanId = crypto.randomUUID();
+    dlg.scanId = scanId;
     dlg.phase = "scanning";
     dlg.found = [];
     dlg.checked = 0;
     dlg.failed = "";
     syncDialog();
-    bridge.scanSpeakers().catch(() => {
-      if (!dlg) return;
+    bridge.scanSpeakers(scanId).catch(() => {
+      if (!dlg || dlg.scanId !== scanId) return;
       dlg.phase = "done";
       dlg.failed = t("scan_failed");
       syncDialog();
@@ -1310,7 +1314,7 @@
   function handleToast(msg) {
     if (msg.kind === "event") { showEventResult(msg); return; }
     if (msg.kind === "scan") {
-      if (!dlg) return; // 弹窗已关，静默丢弃
+      if (!dlg || msg.scan_id !== dlg.scanId) return;
       if (msg.state === "progress") {
         dlg.checked = Math.max(dlg.checked, Number(msg.checked) || 0);
       } else if (msg.state === "candidate" || msg.state === "complete") {

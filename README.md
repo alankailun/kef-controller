@@ -19,6 +19,9 @@ KEF Controller is a Windows tray app for KEF W2 / KEF Connect speakers.
 
 ## Build and Release Files
 
+- Run `./build.ps1` in PowerShell to build the application and installer. It
+  cleans and reuses `build/` and `dist/` and overwrites the fixed installer
+  filename. Do not add version or retry suffixes to generated paths.
 - PyInstaller spec: [KEF Controller.spec](KEF%20Controller.spec)
 - Inno Setup script: [installer/KEF_Controller.iss](installer/KEF_Controller.iss)
 - Versioned release notes: [release_notes/](release_notes/)

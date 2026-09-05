@@ -11,6 +11,7 @@ from ...devices.speaker_models import normalize_input_source
 from ...devices.transport.errors import is_host_unreachable
 from ...structured_logging import is_ui_poll_trigger
 from ..network_timeout import temporary_socket_timeout
+from ..state_models import SpeakerUIPollResult
 
 T = TypeVar("T")
 _EVENT_MONITOR_IDLE_DELAY_S = 0.2
@@ -289,6 +290,9 @@ class ControllerDeviceControlsMixin:
                 self.start_speaker_event_monitor(restart_reason)
 
     def poll_external_ui_state(self, reason: str, trigger: str) -> tuple[str | None, int | None, bool | None]:
+        return self.poll_external_ui_state_result(reason, trigger).values
+
+    def poll_external_ui_state_result(self, reason: str, trigger: str) -> SpeakerUIPollResult:
         # The bridge checks this before it starts a worker.  Recheck here so a
         # suspend that arrives between scheduling and execution cannot trigger
         # connector recovery or subnet discovery while Windows is freezing.
@@ -300,10 +304,10 @@ class ControllerDeviceControlsMixin:
                 trigger=trigger,
                 cause="system_sleep_pending",
             )
-            return None, None, None
+            return SpeakerUIPollResult()
         if not self.get_current_kef_ip():
             if not self.resolve_target(reason=reason, trigger=trigger, force_recovery=False):
-                return None, None, None
+                return SpeakerUIPollResult(status="failed")
 
         speaker_on, power_ok = self._read_ui_value(
             reason,
@@ -378,7 +382,9 @@ class ControllerDeviceControlsMixin:
                 speaker_on=speaker_on,
                 trigger=trigger,
             )
-        return input_source, volume, speaker_on
+        values = (input_source, volume, speaker_on)
+        status = "success" if reachable and any(value is not None for value in values) else "failed"
+        return SpeakerUIPollResult(values, status)
 
     def poll_speaker_event_state(
         self,

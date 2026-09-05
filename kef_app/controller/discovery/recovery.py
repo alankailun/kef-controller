@@ -14,7 +14,15 @@ class ControllerDiscoveryRecoveryMixin:
         should_continue: Callable[[], bool] | None = None,
         on_progress: Callable[[int], None] | None = None,
     ) -> list[SpeakerIdentity]:
-        if not self._blind_discovery_lock.acquire(blocking=False):
+        if should_continue is not None:
+            # A reopened dialog waits for cancelled work to release the lock.
+            # The wait runs in its worker and remains cooperatively cancellable.
+            while should_continue():
+                if self._blind_discovery_lock.acquire(timeout=0.1):
+                    break
+            else:
+                return []
+        elif not self._blind_discovery_lock.acquire(blocking=False):
             self._log_structured(
                 "SKIP",
                 action="MANUAL_SCAN",
@@ -23,6 +31,8 @@ class ControllerDiscoveryRecoveryMixin:
             return []
 
         try:
+            if should_continue is not None and not should_continue():
+                return []
             seed_ip = self.get_current_kef_ip()
             self._log_structured(
                 "BEGIN",

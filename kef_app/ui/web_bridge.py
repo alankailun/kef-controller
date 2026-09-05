@@ -12,6 +12,8 @@ from PySide6.QtCore import QObject, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 
 from ..config import AppConfig
+from ..controller.power_state import standby_outcome_is_confirmed
+from ..controller.state_models import SpeakerUIPollResult
 from ..devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source, normalize_mac
 from ..platform.windows.startup.elevation import remove_startup_task_with_uac, repair_task_startup_with_uac
 from ..platform.windows.startup.service import ensure_startup_registration
@@ -120,6 +122,8 @@ class WebControllerBridge(QObject):
         self._volume_worker_running = False
         self._volume_sequence = 0
         self._target_sequence = 0
+        self._scan_id = ""
+        self._scan_cancel = threading.Event()
         self._last_action_started = 0.0
         self._last_action: dict[str, object] | None = None
         self._last_failure: tuple[str, float] | None = None
@@ -333,7 +337,7 @@ class WebControllerBridge(QObject):
     def applyTarget(self, ip: str, mac: str) -> None:
         """Validate and apply a device target exactly as the former Qt dialog did."""
         requested_ip = str(ip or "").strip()
-        requested_mac = normalize_mac(str(mac or ""))
+        requested_mac = str(mac or "").strip()
         self._target_sequence += 1
         sequence = self._target_sequence
 
@@ -519,9 +523,22 @@ class WebControllerBridge(QObject):
         self._startup_requested_mode = None
         self._startup_requested_enabled = None
 
-    def scanSpeakers(self) -> None:
+    def cancelScan(self, scan_id: str) -> None:
+        if scan_id == self._scan_id:
+            self._scan_cancel.set()
+
+    def scanSpeakers(self, scan_id: str) -> None:
+        self._scan_cancel.set()
+        self._scan_id = scan_id
+        cancelled = threading.Event()
+        self._scan_cancel = cancelled
+
+        def publish(**payload: object) -> None:
+            if not cancelled.is_set():
+                self.toast.emit(self._encode({"kind": "scan", "scan_id": scan_id, **payload}))
+
         def candidate(identity: object) -> None:
-            self.toast.emit(self._encode({"kind": "scan", "state": "candidate", "devices": [self._identity_dict(identity)]}))
+            publish(state="candidate", devices=[self._identity_dict(identity)])
 
         last_progress_emit = [0.0]
 
@@ -531,18 +548,20 @@ class WebControllerBridge(QObject):
             if now - last_progress_emit[0] < 0.15:
                 return
             last_progress_emit[0] = now
-            self.toast.emit(self._encode({"kind": "scan", "state": "progress", "checked": checked}))
+            publish(state="progress", checked=checked)
 
         def done(devices: list[object]) -> None:
             serialized = [self._identity_dict(device) for device in devices]
-            self.toast.emit(self._encode({"kind": "scan", "state": "complete", "devices": serialized}))
+            publish(state="complete", devices=serialized)
 
         def failed(exc: Exception) -> None:
-            self.toast.emit(self._encode({"kind": "scan", "state": "failed", "detail": str(exc)}))
+            publish(state="failed", detail=str(exc))
 
         start_background_task(
             "WebScanSpeakers",
-            lambda: self._controller.scan_kef_devices(on_candidate=candidate, on_progress=progress),
+            lambda: self._controller.scan_kef_devices(
+                on_candidate=candidate, on_progress=progress, should_continue=lambda: not cancelled.is_set(),
+            ),
             on_success=done,
             on_error=failed,
             log=self._controller.log,
@@ -695,7 +714,8 @@ class WebControllerBridge(QObject):
                 "applyTarget": lambda: self._api_action(lambda: self.applyTarget(str(values[0]), str(values[1]))),
                 "updateStartup": lambda: self._api_action(lambda: self.updateStartup(str(values[0]), bool(values[1]))),
                 "runEvent": lambda: self._api_action(lambda: self.runEvent(str(values[0]))),
-                "scanSpeakers": lambda: self._api_action(self.scanSpeakers),
+                "scanSpeakers": lambda: self._api_action(lambda: self.scanSpeakers(str(values[0]))),
+                "cancelScan": lambda: self._api_action(lambda: self.cancelScan(str(values[0]))),
                 "openLogFolder": lambda: self._api_action(self.openLogFolder),
             }
             try:
@@ -777,18 +797,26 @@ class WebControllerBridge(QObject):
             return
 
         def work():
-            return self._controller.poll_external_ui_state("web_ui_poll", "web_ui_poll")
+            return self._controller.poll_external_ui_state_result("web_ui_poll", "web_ui_poll")
+
+        def completed(result: SpeakerUIPollResult) -> None:
+            if result.status == "success":
+                self._polled_state.emit(*result.values)
+            elif result.status == "failed":
+                self._poll_failed.emit("Speaker state check failed: no verified state was received.")
 
         start_background_task(
             "WebPollState",
             work,
-            on_success=lambda result: self._polled_state.emit(*result),
+            on_success=completed,
             on_error=lambda exc: self._poll_failed.emit(str(exc)),
             lock=self._poll_lock,
             log=self._controller.log,
         )
 
     def _on_polled_state(self, input_source: object, volume: object, speaker_on: object) -> None:
+        if all(value is None for value in (input_source, volume, speaker_on)):
+            return
         self._last_poll_success_mono = time.monotonic()
         self._apply_speaker_state(input_source, volume, speaker_on)
 
@@ -847,7 +875,7 @@ class WebControllerBridge(QObject):
         if normalized_action == "WAKE":
             if not success:
                 self._awaiting_wake_confirmation = False
-        elif success and normalized_action.endswith("STANDBY"):
+        elif success and normalized_action.endswith("STANDBY") and standby_outcome_is_confirmed(outcome):
             self._awaiting_wake_confirmation = False
             self._speaker_on = False
             self._input = "standby"

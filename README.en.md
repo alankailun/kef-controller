@@ -43,9 +43,9 @@ display, lid, network-interface, startup, and tray APIs.
 - Cancel an active scan when the selection window is closed.
 - Prefer the last known speaker IP and the default-route LAN to avoid wasting
   time on VPN or virtual-adapter subnets in common home-network setups.
-- Enter a manual IP address, MAC address, or both.
+- Enter a manual IP address with an optional MAC address to verify speaker identity.
 - Verify manual targets when possible.
-- Save a MAC-only target so the app can recover the speaker IP later.
+- The web form requires an IP address; MAC-only target validation remains available in the controller API.
 
 ### Speaker Power Behavior
 
@@ -230,6 +230,18 @@ Headless mode:
 python main_background.py
 ```
 
+## Build Application and Installer (Recommended)
+
+Run `./build.ps1` in PowerShell. The script finds Inno Setup automatically,
+cleans and reuses `build/` and `dist/`, and overwrites
+`installer/output/KEF_Controller_Setup.exe`. Logs stay in `build/pyinstaller.log`
+and `build/installer.log`. Do not add version, final, or rebuild suffixes to
+generated paths; versions belong in executable metadata and release notes.
+
+If needed, specify the compiler with `./build.ps1 -IsccPath 'path\to\ISCC.exe'`.
+See [AGENTS.md](AGENTS.md) for the conventions used by future builds.
+Individual build commands follow below.
+
 ## Build the EXE With PyInstaller
 
 Recommended build:
@@ -313,15 +325,14 @@ installer\KEF_Controller.iss
 
 ## Suggested Release Workflow
 
-1. Update the version in `installer/KEF_Controller.iss` when needed.
+1. Update matching versions in `installer/KEF_Controller.iss` and `installer/version_info.txt`.
 2. Update the matching file under `release_notes/`.
 3. Run the unit tests and `compileall`.
-4. Build `dist\KEF Controller\KEF Controller.exe` with `KEF Controller.spec`.
+4. Run `./build.ps1` to build the application and installer at the fixed paths above.
 5. Test the generated `.exe`.
-6. Compile `installer\KEF_Controller.iss`.
-7. Test the installer, shortcuts, startup method, shutdown/lock/sleep/display
+6. Test the installer, shortcuts, startup method, shutdown/lock/sleep/display
    behavior, and logs on a Windows machine.
-8. Commit, tag, and push the release.
+7. Commit, tag, and push the release.
 
 ## Notes
 

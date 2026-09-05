@@ -13,7 +13,7 @@ from .actions import ControllerDeviceActionsMixin
 from .discovery import ControllerDiscoveryMixin
 from .logging_mixin import ControllerLoggingMixin
 from .network_timeout import temporary_socket_timeout
-from .power_state import ControllerStateMixin, power_action_outcome_is_success
+from .power_state import ControllerStateMixin, power_action_outcome_is_success, standby_outcome_is_confirmed
 from .session_events import ControllerSessionEventsMixin
 from .standby import FastStandbySendCache, PrewarmedStandbySocketMonitorMixin
 from .state_models import (
@@ -27,12 +27,6 @@ from .state_models import (
     SpeakerEventMonitorState,
     WindowsEventState,
 )
-
-_UNCONFIRMED_STANDBY_OUTCOMES = {
-    "sent_unconfirmed_prewarmed",
-    "sent_unconfirmed_fire_and_forget",
-    "sent_skipped_host_unreachable",
-}
 
 
 class KefPowerController(
@@ -160,7 +154,7 @@ class KefPowerController(
         if (
             success
             and action in {"STANDBY", "EARLY_STANDBY", "ENDSESSION_STANDBY"}
-            and outcome not in _UNCONFIRMED_STANDBY_OUTCOMES
+            and standby_outcome_is_confirmed(outcome)
         ):
             self._set_speaker_runtime_state(speaker_on=False, trigger=f"power_action:{action}")
         self._emit_event(

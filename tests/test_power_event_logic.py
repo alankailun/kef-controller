@@ -2076,7 +2076,7 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertEqual(result, [])
         self.assertTrue(controller._blind_discovery_lock.acquire(blocking=False))
         controller._blind_discovery_lock.release()
-        self.assertFalse(discover.call_args.kwargs["should_continue"]())
+        discover.assert_not_called()
 
     def test_validate_manual_target_rejects_mac_mismatch(self):
         controller = self.make_controller()

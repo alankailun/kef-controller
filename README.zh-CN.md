@@ -43,9 +43,9 @@ Connect 的音箱。它主要解决 Windows 电脑上的日常自动化问题：
 - 关闭音箱选择窗口时，会协作式取消当前扫描。
 - 优先探测上次已知 IP 和默认路由所在网段，减少在 VPN、Tailscale、虚拟网卡
   网段上的无用扫描。
-- 支持手动输入 IP、MAC，或同时输入 IP + MAC。
+- 支持手动输入 IP，并可选填 MAC 来验证音箱身份。
 - 能验证手动目标是否是受支持 KEF 音箱。
-- 只输入 MAC 时，也可以保存目标身份，等音箱重新出现在网络上后再恢复 IP。
+- 当前网页表单要求填写 IP；仅 MAC 的目标验证仍保留在控制器接口中。
 
 ### 音箱电源行为
 
@@ -219,6 +219,22 @@ Headless 模式：
 python main_background.py
 ```
 
+## 一键打包（推荐）
+
+在项目目录打开 PowerShell，运行：
+
+```powershell
+./build.ps1
+```
+
+脚本自动查找 Inno Setup，每次清空并复用 `build/`、`dist/`，生成并覆盖
+`installer/output/KEF_Controller_Setup.exe`。不另建带版本号、`final` 或
+`rebuild` 后缀的目录和安装包。版本号保存在程序属性及更新说明中。
+日志固定放在 `build/pyinstaller.log` 和 `build/installer.log`。
+
+若未找到编译器，可运行 `./build.ps1 -IsccPath 'F:\Inno Setup 6\ISCC.exe'`。
+后续打包约定见 [AGENTS.md](AGENTS.md)。下面保留分步打包命令。
+
 ## 使用 PyInstaller 打包 EXE
 
 推荐使用仓库里的 `.spec` 文件打包：
@@ -300,14 +316,13 @@ installer\KEF_Controller.iss
 
 ## 推荐发布流程
 
-1. 需要时更新 `installer/KEF_Controller.iss` 里的版本号。
+1. 同步更新 `installer/KEF_Controller.iss` 和 `installer/version_info.txt` 里的版本号。
 2. 更新 `release_notes/` 下对应版本的 release note。
 3. 运行单元测试和 `compileall`。
-4. 用 `KEF Controller.spec` 生成 `dist\KEF Controller\KEF Controller.exe`。
+4. 运行 `./build.ps1`，在上述固定路径生成程序和安装包。
 5. 手动测试生成的 `.exe`。
-6. 编译 `installer\KEF_Controller.iss`。
-7. 在 Windows 机器上测试安装包、快捷方式、自启动、关机/锁屏/睡眠/屏幕关闭行为和日志。
-8. 提交、打 tag、推送。
+6. 在 Windows 机器上测试安装包、快捷方式、自启动、关机/锁屏/睡眠/屏幕关闭行为和日志。
+7. 提交、打 tag、推送。
 
 ## 补充说明
 

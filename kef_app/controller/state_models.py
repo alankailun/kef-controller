@@ -3,7 +3,13 @@ from __future__ import annotations
 import queue
 import threading
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
+
+
+@dataclass(frozen=True, slots=True)
+class SpeakerUIPollResult:
+    values: tuple[str | None, int | None, bool | None] = (None, None, None)
+    status: Literal["success", "failed", "skipped"] = "skipped"
 
 
 @dataclass(slots=True)
