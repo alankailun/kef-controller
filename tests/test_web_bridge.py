@@ -16,9 +16,18 @@ from kef_app.ui.settings.settings_service import SPEAKER_POWER_OPTIONS
 from kef_app.ui.web_bridge import _EVENTS, WebControllerBridge, _wake_is_confirmed
 
 
+def _web_ui_source() -> str:
+    root = Path(__file__).parents[1] / "kef_app" / "ui" / "web"
+    return (root / "index.html").read_text(encoding="utf-8") + "".join(
+        (root / name).read_text(encoding="utf-8") for name in (
+            "controller_core.js", "controller_logs.js", "controller_settings.js", "controller.js",
+        )
+    )
+
+
 class WebBridgeTests(unittest.TestCase):
     def test_startup_switch_passes_explicit_values_and_defaults_back_to_registry(self) -> None:
-        html = (Path(__file__).parents[1] / "kef_app" / "ui" / "web" / "index.html").read_text(encoding="utf-8")
+        html = _web_ui_source()
 
         self.assertNotIn('addEventListener("change", pushStartup)', html)
         self.assertIn('pushStartup("registry", e.currentTarget.checked)', html)
@@ -27,7 +36,7 @@ class WebBridgeTests(unittest.TestCase):
         self.assertLess(registry_button, task_button)
 
     def test_web_ui_bootstraps_from_current_state_and_coalesces_updates(self) -> None:
-        html = (Path(__file__).parents[1] / "kef_app" / "ui" / "web" / "index.html").read_text(encoding="utf-8")
+        html = _web_ui_source()
 
         self.assertIn('bootstrap: () => api("bootstrap")', html)
         self.assertIn("bridge.bootstrap().then(boot =>", html)
@@ -36,7 +45,7 @@ class WebBridgeTests(unittest.TestCase):
         self.assertIn('else if (page === "settings") syncSettings();', html)
 
     def test_web_ui_keeps_the_renderer_heartbeat_running_while_occluded(self) -> None:
-        html = (Path(__file__).parents[1] / "kef_app" / "ui" / "web" / "index.html").read_text(encoding="utf-8")
+        html = _web_ui_source()
 
         self.assertIn("it is the renderer heartbeat", html)
         self.assertIn("function ensureUpdatePolling()", html)
@@ -45,10 +54,11 @@ class WebBridgeTests(unittest.TestCase):
 
     def test_web_ui_loads_static_styles_and_localization_data_before_app_logic(self) -> None:
         web_root = Path(__file__).parents[1] / "kef_app" / "ui" / "web"
-        html = (web_root / "index.html").read_text(encoding="utf-8")
+        html = _web_ui_source()
 
         self.assertIn('<link rel="stylesheet" href="styles.css">', html)
         self.assertIn('<script src="texts.js"></script>', html)
+        self.assertIn('<script src="controller_settings.js"></script>', html)
         self.assertNotIn("<style>", html)
         texts = (web_root / "texts.js").read_text(encoding="utf-8")
         self.assertIn("const TEXT = {", texts)
@@ -57,7 +67,7 @@ class WebBridgeTests(unittest.TestCase):
         self.assertNotIn("DETAIL_ZH", texts)
 
     def test_web_ui_uses_authoritative_severity_and_lifecycle_token_categories(self) -> None:
-        html = (Path(__file__).parents[1] / "kef_app" / "ui" / "web" / "index.html").read_text(encoding="utf-8")
+        html = _web_ui_source()
         self.assertIn('const structured = raw.match(/^\\[([^\\]]+)\\]\\[([^\\]]+)\\]\\[([A-Z]+)\\]\\s*(.*)$/);', html)
         self.assertIn('const legacy = structured ? null : raw.match(/^\\[([^\\]]+)\\]\\[([^\\]]+)\\]\\s*(.*)$/);', html)
         self.assertIn('const prefixLevel = original.match(/^(ERROR|WARN(?:ING)?|INFO)\\s*[:|-]?\\s*/i);', html)
@@ -81,12 +91,12 @@ class WebBridgeTests(unittest.TestCase):
         self.assertIn('.severity-btn.active.WARN  { color: #fcd34d; border-color: #78350f; background: #451a03; }', css)
 
     def test_web_ui_keeps_empty_severity_filters_selectable(self) -> None:
-        html = (Path(__file__).parents[1] / "kef_app" / "ui" / "web" / "index.html").read_text(encoding="utf-8")
+        html = _web_ui_source()
 
         self.assertIn('button.disabled = false;', html)
 
     def test_power_pending_uses_structured_toast_fields_not_english_copy(self) -> None:
-        html = (Path(__file__).parents[1] / "kef_app" / "ui" / "web" / "index.html").read_text(encoding="utf-8")
+        html = _web_ui_source()
 
         self.assertIn('const powerAction = String(msg.action || "").toUpperCase();', html)
         self.assertIn('const powerPhase = String(msg.phase || "");', html)
@@ -245,7 +255,7 @@ class WebBridgeTests(unittest.TestCase):
     def test_power_event_metadata_stays_consistent_across_config_and_both_uis(self) -> None:
         event_keys = {setting_key for _label, setting_key, _runner in _EVENTS.values()}
         settings_keys = {option.key for option in SPEAKER_POWER_OPTIONS}
-        html = (Path(__file__).parents[1] / "kef_app" / "ui" / "web" / "index.html").read_text(encoding="utf-8")
+        html = _web_ui_source()
         event_rows = html.split("const EVENT_ROWS = [", 1)[1].split("];", 1)[0]
         web_keys = set(re.findall(r'\b(?:wake|standby):\s*"([^"]+)"', event_rows))
 
@@ -280,7 +290,7 @@ class WebBridgeTests(unittest.TestCase):
 
     def test_web_ui_localizes_event_codes_and_waits_for_startup_snapshot(self) -> None:
         web_root = Path(__file__).parents[1] / "kef_app" / "ui" / "web"
-        html = (web_root / "index.html").read_text(encoding="utf-8")
+        html = _web_ui_source()
         texts = (web_root / "texts.js").read_text(encoding="utf-8")
 
         self.assertIn('if ("event" in params) params.event = eventLabel(params.event);', html)

@@ -240,9 +240,8 @@ class KefMainWindow(QObject):
         # short recovery window, and only then rebuild it. If the WinForms
         # message pump itself is hung, that is independent confirmation and we
         # can recover immediately.
-        if not self._host_window_responds():
-            return "native window stopped responding"
-        if not self._heartbeat_suspect_mono:
+        native_hung = not self._host_window_responds()
+        if not native_hung and not self._heartbeat_suspect_mono:
             self._heartbeat_suspect_mono = now
             log_structured(
                 self._log,
@@ -254,7 +253,7 @@ class KefMainWindow(QObject):
                 age_s=f"{activity_age:.1f}",
             )
             return None
-        if now - self._heartbeat_suspect_mono < self._HOST_HEARTBEAT_CONFIRMATION_S:
+        if not native_hung and now - self._heartbeat_suspect_mono < self._HOST_HEARTBEAT_CONFIRMATION_S:
             return None
 
         while self._host_restart_times and now - self._host_restart_times[0] > self._HOST_RESTART_WINDOW_S:
@@ -272,7 +271,7 @@ class KefMainWindow(QObject):
                     restart_window_s=f"{self._HOST_RESTART_WINDOW_S:.0f}",
                 )
             return None
-        return f"stopped sending UI heartbeats for {activity_age:.1f}s"
+        return "native window stopped responding" if native_hung else f"stopped sending UI heartbeats for {activity_age:.1f}s"
 
     def _host_window_responds(self) -> bool:
         """Check the native message pump without waiting indefinitely."""

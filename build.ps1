@@ -1,6 +1,21 @@
 param([string]$IsccPath)
 
 $ErrorActionPreference = 'Stop'
+
+function Invoke-LoggedNative {
+    param([string]$FilePath, [string[]]$Arguments, [string]$LogPath)
+    # Windows PowerShell 5.1 turns each native stderr line into an error
+    # record, which 'Stop' makes fatal; PyInstaller logs INFO to stderr.
+    # The exit code, not stderr, decides success.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $FilePath @Arguments 2>&1 | ForEach-Object { "$_" } | Set-Content -LiteralPath $LogPath -Encoding UTF8
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+}
 $projectRoot = (Resolve-Path -LiteralPath $PSScriptRoot).Path
 $python = Join-Path $projectRoot '.venv\Scripts\python.exe'
 $spec = Join-Path $projectRoot 'KEF Controller.spec'
@@ -67,16 +82,16 @@ try {
     New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
     Write-Host 'Building application into dist\KEF Controller...'
     $pyinstallerLog = Join-Path $buildDir 'pyinstaller.log'
-    & $python -m PyInstaller --clean --noconfirm --distpath $distDir --workpath $buildDir $spec *> $pyinstallerLog
-    if ($LASTEXITCODE -ne 0) {
+    $exitCode = Invoke-LoggedNative $python @('-m', 'PyInstaller', '--clean', '--noconfirm', '--distpath', $distDir, '--workpath', $buildDir, $spec) $pyinstallerLog
+    if ($exitCode -ne 0) {
         Get-Content -LiteralPath $pyinstallerLog -Tail 40
         throw "PyInstaller failed. See $pyinstallerLog"
     }
     Write-Host 'Building installer/output/KEF_Controller_Setup.exe...'
     $installerLog = Join-Path $buildDir 'installer.log'
     $buildSource = Join-Path $distDir 'KEF Controller'
-    & $IsccPath "/DBuildSource=$buildSource" "/O$outputDir" '/FKEF_Controller_Setup' $installerScript *> $installerLog
-    if ($LASTEXITCODE -ne 0) {
+    $exitCode = Invoke-LoggedNative $IsccPath @("/DBuildSource=$buildSource", "/O$outputDir", '/FKEF_Controller_Setup', $installerScript) $installerLog
+    if ($exitCode -ne 0) {
         Get-Content -LiteralPath $installerLog -Tail 40
         throw "Installer build failed. See $installerLog"
     }

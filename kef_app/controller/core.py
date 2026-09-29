@@ -59,6 +59,7 @@ class KefPowerController(
         self._ip_lock = threading.Lock()
         self._discovery_lock = threading.Lock()
         self._blind_discovery_lock = threading.Lock()
+        self._blind_discovery_condition = threading.Condition()
         self._fast_standby_send_cache = FastStandbySendCache()
         # Construction/cleanup placeholder.  start_display_off_standby_dispatcher
         # replaces its queue immediately before starting the resident worker.
@@ -152,8 +153,7 @@ class KefPowerController(
         with self._state_lock:
             self._power.active_actions = max(0, self._power.active_actions - 1)
         if (
-            success
-            and action in {"STANDBY", "EARLY_STANDBY", "ENDSESSION_STANDBY"}
+            action in {"STANDBY", "EARLY_STANDBY", "ENDSESSION_STANDBY"}
             and standby_outcome_is_confirmed(outcome)
         ):
             self._set_speaker_runtime_state(speaker_on=False, trigger=f"power_action:{action}")
@@ -163,6 +163,7 @@ class KefPowerController(
             reason=reason,
             success=success,
             outcome=outcome,
+            confirmed=action in {"STANDBY", "EARLY_STANDBY", "ENDSESSION_STANDBY"} and standby_outcome_is_confirmed(outcome),
         )
 
 

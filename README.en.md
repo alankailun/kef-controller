@@ -136,7 +136,7 @@ test is skipped and the UI explains why.
 - Disable startup registration.
 - Show the effective startup state in Settings.
 - Repair stale startup entries when possible.
-- Use a stable installed launcher path for shortcuts and startup entries.
+- Use the selected installation path for shortcuts and startup entries.
 
 Registry Run is the simple per-user Windows startup method. Task Scheduler is
 usually faster/earlier after sign-in and is the better choice if you want KEF
@@ -161,22 +161,12 @@ are not written next to the `.exe`.
 
 ## Install and Startup Paths
 
-For installed builds, the launcher path is intentionally stable:
+The Inno Setup installer lets the user choose the installation directory.
+Start Menu and optional desktop shortcuts, post-install launch, and Windows
+startup entries point to the executable in that directory. The application
+does not copy the executable into LocalAppData.
 
-```text
-%LocalAppData%\Programs\KEF Controller\KEF Controller.exe
-```
-
-The Inno Setup installer still lets the user choose the main install directory.
-It also writes a synchronized copy to the stable LocalAppData path above. Start
-Menu shortcuts, optional desktop shortcuts, post-install launch, and Windows
-startup entries use that stable path so they do not depend on whether the user
-installed the app on `C:`, `F:`, OneDrive, or another location.
-
-At runtime, a frozen executable also calls the startup launch helper to keep the
-stable copy up to date before registering startup entries. If the stable copy
-cannot be updated, the app logs the failure and falls back to the current
-executable.
+At runtime, startup registration uses the executable's current installed path.
 
 ## Project Structure
 
@@ -215,8 +205,14 @@ Create or update the virtual environment, then install dependencies:
 cd /d "path\to\kef_controller"
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
+
+Use Python 3.14 on Windows. `requirements.txt` contains runtime packages,
+`requirements-build.txt` adds PyInstaller, and `requirements-dev.txt` adds Ruff.
+Install Node.js to run the JavaScript behavior checks. Before packaging, run
+`ruff check .` and `.venv\Scripts\python -m unittest discover -s tests -q`;
+check that no JavaScript test was skipped.
 
 GUI mode:
 
@@ -260,7 +256,7 @@ dist\KEF Controller\KEF Controller.exe
 
 The `.spec` file uses `main_gui.py`, builds a windowed onedir application,
 includes the local HTML/CSS/JavaScript UI and application icon, keeps the
-Modern Windows Qt style plugin and software OpenGL fallback, and trims unused
+Modern Windows Qt style plugin, excludes the software OpenGL fallback, and trims unused
 Qt/PySide6 modules and plugins to keep the bundle smaller.
 
 ## Create an Installer With Inno Setup

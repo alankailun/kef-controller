@@ -186,6 +186,7 @@ class KefTrayApp:
         _input_source: object,
         _volume: object,
         speaker_on: object,
+        _target_generation: object = None,
     ) -> None:
         if speaker_on is not None:
             self._speaker_on_hint = bool(speaker_on)
@@ -195,7 +196,7 @@ class KefTrayApp:
         self._active_action = action
         self._refresh_icon()
 
-    def _on_power_action_finished(self, _action: str, _reason: str, _success: bool, _outcome: str) -> None:
+    def _on_power_action_finished(self, _action: str, _reason: str, _success: bool, _outcome: str, _confirmed: bool = False) -> None:
         if not self._controller.is_power_action_active():
             self._active_action = ""
         self._refresh_icon()

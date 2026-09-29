@@ -15,6 +15,7 @@ import win32gui
 
 from ..config import AppConfig
 from ..controller import KefPowerController
+from ..controller.network_timeout import temporary_socket_timeout
 from ..platform.windows.api import (
     DEVICE_NOTIFY_WINDOW_HANDLE,
     LID_CLOSED,
@@ -130,7 +131,8 @@ class HeadlessRuntime:
         if not self.controller.get_current_kef_ip():
             self.controller.maybe_refresh_kef_ip(reason="startup_missing_ip", trigger="startup_missing_ip", force=True)
         try:
-            self.controller.get_speaker(fresh=True)
+            with temporary_socket_timeout(self.config.socket_timeout):
+                self.controller.get_speaker(fresh=True)
             self.controller.capture_identity_from_current_ip(reason="startup_prebuild", trigger="startup_prebuild_success")
             self.controller.log_current_http_identity_snapshot(reason="startup_prebuild", trigger="startup_http_identity")
             self._log("STEP", reason="startup", trigger="initial_prebuild", step="prebuild_connection", status="ready", current_ip=self.controller.get_current_kef_ip() or "<empty>")
@@ -139,7 +141,8 @@ class HeadlessRuntime:
             self.controller.reset_speaker()
             if self.controller.maybe_refresh_kef_ip(reason="startup_prebuild", trigger="startup_prebuild", force=True):
                 try:
-                    self.controller.get_speaker(fresh=True)
+                    with temporary_socket_timeout(self.config.socket_timeout):
+                        self.controller.get_speaker(fresh=True)
                     self.controller.capture_identity_from_current_ip(reason="startup_prebuild", trigger="startup_prebuild_recover_success")
                     self.controller.log_current_http_identity_snapshot(reason="startup_prebuild", trigger="startup_http_identity_recover_success")
                     self._log("STEP", reason="startup", trigger="initial_prebuild_recovery", step="prebuild_connection", status="recovered", current_ip=self.controller.get_current_kef_ip() or "<empty>")
@@ -147,8 +150,20 @@ class HeadlessRuntime:
                     self._log("WARN", reason="startup", trigger="initial_prebuild_recovery", cause="connection_prebuild_failed_after_recovery", current_ip=self.controller.get_current_kef_ip() or "<empty>", error=repr(recovery_error))
                     self.controller.reset_speaker()
 
-    def _start_controller_services(self) -> None:
-        threading.Thread(target=self.controller.on_startup, daemon=True, name="StartupWake").start()
+    def _run_startup_prebuild(self, ready: threading.Event) -> None:
+        try:
+            self._prepare_startup_connection()
+        except Exception as exc:
+            self._log("WARN", reason="startup", trigger="initial_prebuild", cause="prebuild_thread_failed", error=repr(exc))
+        finally:
+            ready.set()
+
+    def _start_controller_services(self, startup_ready: threading.Event | None = None) -> None:
+        threading.Thread(
+            target=lambda: self.controller.on_startup(ready=startup_ready),
+            daemon=True,
+            name="StartupWake",
+        ).start()
         self.controller.start_speaker_event_monitor("headless_runtime")
         self.controller.start_prewarmed_standby_socket_monitor("headless_runtime")
         self.controller.start_display_off_standby_dispatcher()
@@ -288,9 +303,6 @@ class HeadlessRuntime:
 
         exit_reason = "main_return"
         last_exception_trace = None
-
-        self._prepare_startup_connection()
-        self._start_controller_services()
 
         resource_lock = threading.Lock()
         cleaned_up = False
@@ -475,6 +487,17 @@ class HeadlessRuntime:
         try:
             wc, hwnd, session_notify_registered, power_notify_handles, network_interface_monitor = self._register_message_window(wnd_proc)
             class_registered = True
+            # Notifications are live before any speaker I/O.  The startup wake
+            # claims its generation now, so a lock during prebuild cancels it,
+            # but it only sends after prebuild has finished recovering the IP.
+            startup_ready = threading.Event()
+            self._start_controller_services(startup_ready)
+            threading.Thread(
+                target=self._run_startup_prebuild,
+                args=(startup_ready,),
+                daemon=True,
+                name="StartupPrebuild",
+            ).start()
 
             self._log("STATE", trigger="message_pump", desired="running", hwnd=hwnd)
             win32gui.PumpMessages()

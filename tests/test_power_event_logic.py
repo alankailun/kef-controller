@@ -54,6 +54,20 @@ class PowerEventLogicTests(unittest.TestCase):
         controller.add_event_listener(lambda name, payload: events.append((name, payload)))
         return events
 
+    def test_wake_dedup_resets_after_intervening_standby(self):
+        controller = self.make_controller()
+        clock = [100.0]
+        controller.mono = lambda: clock[0]
+        first, status = controller._claim_wake_generation("first")
+        self.assertEqual(status, "claimed")
+        clock[0] = 100.1
+        self.assertEqual(controller._claim_wake_generation("duplicate"), (None, "deduped"))
+        controller._new_generation("sleep", "lock")
+        clock[0] = 100.2
+        second, status = controller._claim_wake_generation("unlock")
+        self.assertEqual(status, "claimed")
+        self.assertGreater(second, first)
+
     @staticmethod
     def emitted_outcome(events: list[tuple[str, dict[str, object]]], outcome: str) -> bool:
         return any(
@@ -262,6 +276,92 @@ class PowerEventLogicTests(unittest.TestCase):
         controller.wake_kef.assert_called_once_with(1, "startup")
         self.assertEqual(controller._current_generation(), 1)
         self.assertGreater(controller._power.last_wake_schedule_mono, 0)
+
+    def test_on_startup_waits_for_prebuild_before_waking(self):
+        controller = self.make_controller(wake_on_startup=True, startup_delay=0.0)
+        controller.wake_kef = Mock(return_value=True)
+        ready = threading.Event()
+        worker = threading.Thread(target=lambda: controller.on_startup(ready=ready), daemon=True)
+        worker.start()
+        try:
+            worker.join(0.3)
+            self.assertTrue(worker.is_alive())
+            controller.wake_kef.assert_not_called()
+        finally:
+            ready.set()
+            worker.join(2)
+        self.assertFalse(worker.is_alive())
+        controller.wake_kef.assert_called_once_with(1, "startup")
+
+    def test_lock_during_startup_prebuild_cancels_startup_wake(self):
+        controller = self.make_controller(wake_on_startup=True, startup_delay=0.0)
+        controller.wake_kef = Mock(return_value=True)
+        ready = threading.Event()
+        result = []
+        worker = threading.Thread(target=lambda: result.append(controller.on_startup(ready=ready)), daemon=True)
+        worker.start()
+        worker.join(0.2)
+        controller._new_generation("sleep", "WTS_SESSION_LOCK")
+        worker.join(2)
+        ready.set()
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(result, [False])
+        controller.wake_kef.assert_not_called()
+
+    def test_startup_prebuild_signals_ready_even_when_it_fails(self):
+        controller = self.make_controller()
+        runtime = HeadlessRuntime(controller.config, controller, controller.log)
+        runtime._prepare_startup_connection = Mock(side_effect=RuntimeError("boom"))
+        ready = threading.Event()
+
+        runtime._run_startup_prebuild(ready)
+
+        self.assertTrue(ready.is_set())
+
+    def test_startup_wake_uses_ip_recovered_by_concurrent_prebuild(self):
+        # Regression: waking concurrently with prebuild lost the non-blocking
+        # discovery lock race and skipped the wake after the IP had changed.
+        new_ip = "192.168.1.11"
+        controller = self.make_controller(
+            # The real 0.5 s startup delay lets prebuild reach the subnet sweep
+            # first; the wake then finds the blind-discovery lock held.
+            kef_ip="192.168.1.10", kef_mac="AAAAAAAAAAAA", wake_on_startup=True, startup_delay=0.2,
+        )
+
+        def create_connector(ip):
+            if ip != new_ip:
+                raise OSError("old IP unreachable")
+            return Mock()
+
+        def slow_blind(*_args, **_kwargs):
+            threading.Event().wait(0.8)
+            return SpeakerIdentity(ip=new_ip, mac="AAAAAAAAAAAA", speaker_name="A", speaker_model="LS50 Wireless II")
+
+        controller._backend.create_connector = create_connector
+        controller.capture_identity_from_current_ip = lambda reason, trigger: controller.get_current_kef_ip() == new_ip
+        controller.log_current_http_identity_snapshot = Mock()
+        controller.wait_until_reachable = Mock(return_value=True)
+        controller._set_speaker_source = Mock()
+        controller.log_wifi_diagnostics = Mock()
+        runtime = HeadlessRuntime(controller.config, controller, controller.log)
+        ready = threading.Event()
+        results = []
+        with (
+            patch("kef_app.controller.discovery.recovery.discover_ip_by_mac", return_value=None),
+            patch("kef_app.controller.discovery.recovery.discover_kef_device_blind", side_effect=slow_blind),
+            patch("kef_app.controller.discovery.recovery.has_best_route_to_ipv4", return_value=True),
+        ):
+            wake = threading.Thread(target=lambda: results.append(controller.on_startup(ready=ready)), daemon=True)
+            wake.start()
+            prebuild = threading.Thread(target=runtime._run_startup_prebuild, args=(ready,), daemon=True)
+            prebuild.start()
+            prebuild.join(10)
+            wake.join(10)
+
+        self.assertEqual(controller.get_current_kef_ip(), new_ip)
+        self.assertEqual(results, [True])
+        controller._set_speaker_source.assert_called_once()
 
     def test_on_suspend_dispatches_off_pump_standby(self):
         controller = self.make_controller(standby_on_sleep=True)

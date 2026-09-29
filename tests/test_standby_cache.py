@@ -35,12 +35,14 @@ class FastStandbySendCacheTests(unittest.TestCase):
         cache = FastStandbySendCache()
         seen: list[tuple[str, bytes, int]] = []
         stop = threading.Event()
+        observed = threading.Event()
 
         def reader() -> None:
             while not stop.is_set():
                 snapshot = cache.read()
                 if snapshot is not None:
                     seen.append((snapshot.target_ip, snapshot.standby_request_bytes, snapshot.version))
+                    observed.set()
 
         readers = [threading.Thread(target=reader) for _ in range(8)]
         for thread in readers:
@@ -49,6 +51,7 @@ class FastStandbySendCacheTests(unittest.TestCase):
             for index in range(100):
                 ip = f"10.0.0.{index % 250 + 1}"
                 cache.update(target_ip=ip, target_mac=f"{index:012X}", updated_mono=float(index))
+            self.assertTrue(observed.wait(timeout=2.0))
         finally:
             stop.set()
             for thread in readers:

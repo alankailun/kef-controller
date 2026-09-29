@@ -14,6 +14,7 @@ class SpeakerUIPollResult:
 
 @dataclass(slots=True)
 class IdentityState:
+    generation: int = 0
     current_ip: str = ""
     target_mac: str = ""
     speaker_name: str = ""
@@ -24,6 +25,9 @@ class IdentityState:
     probe_failures: int = 0
     last_mac_discovery_mono: float = 0.0
     last_blind_discovery_mono: float = 0.0
+    verified_ip: str = ""
+    verified_generation: int = -1
+    verified_mono: float = 0.0
 
 
 @dataclass(slots=True)
@@ -51,6 +55,7 @@ class PowerActionState:
     active_actions: int = 0
     last_resume_event_mono: float = 0.0
     last_wake_schedule_mono: float = 0.0
+    last_wake_generation: int = 0
     session_ending: bool = False
     session_locked: bool = False
 

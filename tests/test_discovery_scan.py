@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import threading
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from kef_app.config import AppConfig
 from kef_app.devices.scan.network import build_candidate_networks, get_local_ipv4_candidates
@@ -165,7 +166,11 @@ class DiscoveryScanTests(unittest.TestCase):
 
     def test_manual_scan_probes_candidate_networks_in_priority_order(self):
         config = AppConfig()
-        executor = Mock()
+        probes = []
+
+        def probe(ip, *_args):
+            probes.append(ip)
+            return False
 
         with (
             patch(
@@ -175,25 +180,50 @@ class DiscoveryScanTests(unittest.TestCase):
                     ipaddress.IPv4Network("10.0.1.0/30"),
                 ],
             ),
-            patch("kef_app.devices.scan.scan.ThreadPoolExecutor") as executor_cls,
-            patch("kef_app.devices.scan.scan._reachable_hosts", return_value=[]) as reachable,
-            patch("kef_app.devices.scan.scan._identify_hosts") as identify,
+            patch("kef_app.devices.scan.scan.probe_ip_port", side_effect=probe),
+            patch("kef_app.devices.scan.scan.identify_kef_device") as identify,
         ):
-            executor_cls.return_value.__enter__.return_value = executor
             devices = discover_kef_devices(None, config, self.make_logger())
 
         self.assertEqual(devices, [])
-        self.assertEqual(executor_cls.call_count, 2)
-        self.assertEqual([call.kwargs for call in executor_cls.call_args_list], [{"max_workers": 2}, {"max_workers": 2}])
-        self.assertEqual(
-            [call.args[1] for call in reachable.call_args_list],
-            [["10.0.0.1", "10.0.0.2"], ["10.0.1.1", "10.0.1.2"]],
-        )
-        for call in reachable.call_args_list:
-            self.assertIs(call.args[0], executor)
-            self.assertIs(call.args[2], config)
-            self.assertIsNone(call.kwargs.get("should_continue"))
+        self.assertEqual(set(probes[:2]), {"10.0.0.1", "10.0.0.2"})
+        self.assertEqual(set(probes[2:]), {"10.0.1.1", "10.0.1.2"})
         identify.assert_not_called()
+
+    def test_manual_candidate_arrives_before_slow_probe_finishes(self):
+        config = AppConfig()
+        identity = self.make_identity("10.0.0.1")
+        slow_probe_started = threading.Event()
+        release_slow_probe = threading.Event()
+        candidate_seen = threading.Event()
+        result = []
+
+        def probe(ip, *_args):
+            if ip == "10.0.0.2":
+                slow_probe_started.set()
+                release_slow_probe.wait(2.0)
+                return False
+            return True
+
+        def scan():
+            result.extend(discover_kef_devices(
+                None, config, self.make_logger(), on_candidate=lambda _identity: candidate_seen.set(),
+            ))
+
+        with (
+            patch("kef_app.devices.scan.scan.build_candidate_networks", return_value=[ipaddress.IPv4Network("10.0.0.0/30")]),
+            patch("kef_app.devices.scan.scan.probe_ip_port", side_effect=probe),
+            patch("kef_app.devices.scan.scan.identify_kef_device", return_value=identity),
+        ):
+            worker = threading.Thread(target=scan)
+            worker.start()
+            try:
+                self.assertTrue(slow_probe_started.wait(1.0))
+                self.assertTrue(candidate_seen.wait(1.0))
+            finally:
+                release_slow_probe.set()
+                worker.join(2.0)
+        self.assertEqual([item.ip for item in result], [identity.ip])
 
     def test_full_scan_matches_seed_before_broad_scan(self):
         config = AppConfig()
@@ -269,7 +299,11 @@ class DiscoveryScanTests(unittest.TestCase):
     def test_full_scan_probes_candidate_networks_in_priority_order_until_target_matches(self):
         config = AppConfig()
         identity = self.make_identity("10.0.1.2")
-        executor = Mock()
+        probes = []
+
+        def probe(ip, *_args):
+            probes.append(ip)
+            return ip == identity.ip
 
         with (
             patch(
@@ -279,22 +313,16 @@ class DiscoveryScanTests(unittest.TestCase):
                     ipaddress.IPv4Network("10.0.1.0/30"),
                 ],
             ),
-            patch("kef_app.devices.scan.scan.ThreadPoolExecutor") as executor_cls,
-            patch("kef_app.devices.scan.scan._reachable_hosts", side_effect=[[], ["10.0.1.2"]]) as reachable,
-            patch("kef_app.devices.scan.scan._identify_hosts", return_value=[identity]) as identify,
+            patch("kef_app.devices.scan.scan.probe_ip_port", side_effect=probe),
+            patch("kef_app.devices.scan.scan.identify_kef_device", return_value=identity) as identify,
         ):
-            executor_cls.return_value.__enter__.return_value = executor
             found = discover_kef_device_blind(identity.mac, None, config, self.make_logger())
 
         self.assertIsNotNone(found)
         self.assertEqual(found.ip, "10.0.1.2")
-        self.assertEqual(executor_cls.call_count, 2)
-        self.assertEqual([call.kwargs for call in executor_cls.call_args_list], [{"max_workers": 2}, {"max_workers": 2}])
-        self.assertEqual(
-            [call.args[1] for call in reachable.call_args_list],
-            [["10.0.0.1", "10.0.0.2"], ["10.0.1.1", "10.0.1.2"]],
-        )
-        identify.assert_called_once_with(executor, ["10.0.1.2"], config, should_continue=None)
+        self.assertEqual(set(probes[:2]), {"10.0.0.1", "10.0.0.2"})
+        self.assertEqual(set(probes[2:]), {"10.0.1.1", "10.0.1.2"})
+        identify.assert_called_once_with("10.0.1.2", config)
 
 
 if __name__ == "__main__":

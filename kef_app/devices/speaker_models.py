@@ -8,6 +8,10 @@ def normalize_mac(mac: str) -> str:
     return re.sub(r"[^0-9A-Fa-f]", "", mac or "").upper()
 
 
+def is_valid_mac(mac: str) -> bool:
+    return bool(re.fullmatch(r"[0-9A-Fa-f:.\s-]+", mac or "")) and len(normalize_mac(mac)) == 12
+
+
 INPUT_SOURCE_OPTIONS: tuple[tuple[str, str], ...] = (
     ("Optical", "optical"),
     ("Coaxial", "coaxial"),

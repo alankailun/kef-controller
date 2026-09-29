@@ -149,6 +149,15 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
         logger.propagate = False
         return KefPowerController(config, logger)
 
+    def test_failed_keepalive_does_not_start_background_ip_discovery(self):
+        controller = self.make_controller(9, kef_mac="AAAAAAAAAAAA")
+        controller.maybe_refresh_kef_ip = Mock(return_value=False)
+        delay = controller._record_prewarmed_keepalive_failure(
+            "unit_test", "127.0.0.1", TimeoutError("timed out")
+        )
+        self.assertGreater(delay, 0)
+        controller.maybe_refresh_kef_ip.assert_not_called()
+
     def test_keepalive_then_short_connection_send_loopback_benchmark(self):
         samples_ms: list[float] = []
         runs = 20
@@ -467,10 +476,14 @@ class PrewarmedStandbySocketTests(unittest.TestCase):
                 updated_mono=controller.mono(),
             )
 
-            result = controller.try_send_cached_prewarmed_standby()
+            try:
+                result = controller.try_send_cached_prewarmed_standby()
+            finally:
+                # The stale-target guard leaves the pool untouched by design.
+                controller._close_prewarmed_socket_holders()
 
         self.assertFalse(result.success)
-        self.assertEqual(result.fast_path_skip_reason, "no_socket_for_cached_ip")
+        self.assertEqual(result.fast_path_skip_reason, "stale_target")
         self.assertEqual(result.target_ip, "127.0.0.2")
 
     def test_fast_standby_controller_loopback_benchmark(self):

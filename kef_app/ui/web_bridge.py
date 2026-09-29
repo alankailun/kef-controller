@@ -5,15 +5,12 @@ import os
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import asdict
 from typing import Any
 
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 
 from ..config import AppConfig
-from ..controller.power_state import standby_outcome_is_confirmed
-from ..controller.state_models import SpeakerUIPollResult
 from ..devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source, normalize_mac
 from ..platform.windows.startup.elevation import remove_startup_task_with_uac, repair_task_startup_with_uac
 from ..platform.windows.startup.service import ensure_startup_registration
@@ -29,6 +26,9 @@ from .logs.log_history import (
     resolve_log_history_file,
 )
 from .settings.settings_service import get_speaker_power_disabled_reason, startup_mode_for_ui, sync_startup_registration
+from .web_state import WebStateMixin, _wake_is_confirmed
+
+__all__ = ["WebControllerBridge", "_wake_is_confirmed"]
 
 _EVENTS: dict[str, tuple[str, str, Callable[[Any], object]]] = {
     "startup": (
@@ -66,12 +66,7 @@ _EVENTS: dict[str, tuple[str, str, Callable[[Any], object]]] = {
 }
 
 
-def _wake_is_confirmed(speaker_on: object, input_source: str | None) -> bool:
-    """Only enable live controls after the speaker reports a usable source."""
-    return speaker_on is True and bool(input_source) and input_source != "standby"
-
-
-class WebControllerBridge(QObject):
+class WebControllerBridge(WebStateMixin, QObject):
     """A deliberately small, JSON-only boundary between the web UI and Python."""
 
     state_changed = Signal(str)
@@ -79,7 +74,7 @@ class WebControllerBridge(QObject):
     toast = Signal(str)
     log_line = Signal(str)
     _api_requested = Signal(str, object, object)
-    _polled_state = Signal(object, object, object)
+    _polled_state = Signal(object, object, object, object)
     _poll_failed = Signal(str)
     _volume_completed = Signal(object)
     _input_completed = Signal(object)
@@ -127,6 +122,8 @@ class WebControllerBridge(QObject):
         self._last_action_started = 0.0
         self._last_action: dict[str, object] | None = None
         self._last_failure: tuple[str, float] | None = None
+        self._last_action_failure: tuple[str, float] | None = None
+        self._target_signature = self._controller.get_current_kef_target()
         self._last_poll_success_mono = 0.0
         self._awaiting_wake_confirmation = False
         self._ui_visible = False
@@ -147,7 +144,7 @@ class WebControllerBridge(QObject):
         self._api_requested.connect(self._handle_api_request)
         self._apply_poll_interval()
 
-        controller_bridge.identity_changed.connect(lambda _identity: self.publish_state())
+        controller_bridge.identity_changed.connect(self._on_identity_changed)
         controller_bridge.speaker_state_changed.connect(self._on_speaker_state_changed)
         controller_bridge.power_action_started.connect(self._on_power_action_started)
         controller_bridge.power_action_finished.connect(self._on_power_action_finished)
@@ -393,7 +390,9 @@ class WebControllerBridge(QObject):
         saved_mac = normalize_mac(str(getattr(identity, "mac", "") or requested_mac))
         self._config.kef_ip = saved_ip
         self._config.kef_mac = saved_mac
-        self._controller.apply_configured_device_target(trigger="web_settings")
+        self._controller.apply_configured_device_target(
+            trigger="web_settings", info=identity if status in {"verified", "recovered"} else None,
+        )
         saved = self._config_store.save(self._config)
         warning = status in {"mac_unverified", "mac_not_found", "unreachable"}
         self._notify(
@@ -406,6 +405,7 @@ class WebControllerBridge(QObject):
         )
         self.publish_settings()
         self.publish_state()
+        self._poll_speaker_state(force=True)
 
     def updateStartup(self, mode: str, enabled: bool) -> None:
         """Persist the startup preference and reconcile Windows registration."""
@@ -550,7 +550,14 @@ class WebControllerBridge(QObject):
             last_progress_emit[0] = now
             publish(state="progress", checked=checked)
 
+        busy = threading.Event()
+
         def done(devices: list[object]) -> None:
+            if busy.is_set():
+                # The lock wait timed out behind a background recovery sweep;
+                # an empty list here does not mean the network has no speaker.
+                publish(state="failed", code="scan_busy", detail="A background speaker search is still running.")
+                return
             serialized = [self._identity_dict(device) for device in devices]
             publish(state="complete", devices=serialized)
 
@@ -561,6 +568,7 @@ class WebControllerBridge(QObject):
             "WebScanSpeakers",
             lambda: self._controller.scan_kef_devices(
                 on_candidate=candidate, on_progress=progress, should_continue=lambda: not cancelled.is_set(),
+                on_busy=busy.set,
             ),
             on_success=done,
             on_error=failed,
@@ -733,187 +741,6 @@ class WebControllerBridge(QObject):
     def _api_action(callback: Callable[[], None]) -> dict[str, bool]:
         callback()
         return {"ok": True}
-
-    def publish_state(self) -> None:
-        self.state_changed.emit(self._encode(self._runtime_state()))
-
-    def publish_settings(self) -> None:
-        self.settings_changed.emit(self._encode(self._settings_state()))
-
-    def _state(self) -> dict[str, Any]:
-        return {**self._runtime_state(), **self._settings_state()}
-
-    def _settings_state(self) -> dict[str, Any]:
-        return {
-            "inputs": [{"label": label, "value": value} for label, value in INPUT_SOURCE_OPTIONS],
-            "settings": asdict(self._config.user),
-        }
-
-    def _runtime_state(self) -> dict[str, Any]:
-        identity = self._controller.get_current_identity()
-        speaker_on = self._speaker_on if self._speaker_on is not None else bool(identity.available)
-        prewarmed_health = self._controller.get_prewarmed_standby_health()
-        return {
-            "speaker": {
-                "name": identity.speaker_name or "No device found",
-                "model": identity.speaker_model,
-                "ip": identity.ip,
-                "mac": identity.mac_display or identity.mac,
-                "firmware": identity.firmware_version,
-                "available": bool(identity.available),
-                "on": speaker_on,
-                "status": "Connected" if speaker_on else ("Standby" if identity.ip else "Disconnected"),
-                "input": self._input,
-                "volume": self._volume,
-            },
-            "startup": {
-                "registered": self._startup_registered,
-                "mode": self._startup_mode,
-                "busy": self._startup_busy,
-                "pending": self._startup_snapshot_pending,
-                "requested_mode": self._startup_requested_mode,
-                "requested_enabled": self._startup_requested_enabled,
-            },
-            "health": {
-                "last_heartbeat_age_s": prewarmed_health["last_heartbeat_age_s"],
-                "heartbeat_failures": prewarmed_health["failures"],
-                "heartbeat_error": prewarmed_health["last_error"],
-                "last_poll_age_s": (
-                    round(max(0.0, time.monotonic() - self._last_poll_success_mono), 1)
-                    if self._last_poll_success_mono
-                    else None
-                ),
-                "last_action": self._last_action,
-                "last_failure": self._recent_failure(),
-            },
-        }
-
-    def _poll_speaker_state(self, force: bool = False) -> None:
-        if not force and not self._config.home_event_poll_enabled:
-            return
-        if self._controller.is_system_sleep_pending():
-            return
-        if not self._controller.get_current_kef_ip():
-            return
-
-        def work():
-            return self._controller.poll_external_ui_state_result("web_ui_poll", "web_ui_poll")
-
-        def completed(result: SpeakerUIPollResult) -> None:
-            if result.status == "success":
-                self._polled_state.emit(*result.values)
-            elif result.status == "failed":
-                self._poll_failed.emit("Speaker state check failed: no verified state was received.")
-
-        start_background_task(
-            "WebPollState",
-            work,
-            on_success=completed,
-            on_error=lambda exc: self._poll_failed.emit(str(exc)),
-            lock=self._poll_lock,
-            log=self._controller.log,
-        )
-
-    def _on_polled_state(self, input_source: object, volume: object, speaker_on: object) -> None:
-        if all(value is None for value in (input_source, volume, speaker_on)):
-            return
-        self._last_poll_success_mono = time.monotonic()
-        self._apply_speaker_state(input_source, volume, speaker_on)
-
-    def _on_speaker_state_changed(self, input_source: object, volume: object, speaker_on: object) -> None:
-        """Apply controller-owned state without presenting it as a network poll."""
-        self._apply_speaker_state(input_source, volume, speaker_on)
-
-    def _apply_speaker_state(self, input_source: object, volume: object, speaker_on: object) -> None:
-        normalized_input = normalize_input_source(str(input_source)) if input_source else None
-        wake_confirmed = _wake_is_confirmed(speaker_on, normalized_input)
-        if self._awaiting_wake_confirmation:
-            if wake_confirmed:
-                self._awaiting_wake_confirmation = False
-            elif speaker_on is not None:
-                # The wake request was accepted, but the speaker is not ready
-                # for controls until a real poll can read a live input source.
-                speaker_on = False
-        if input_source:
-            self._input = normalized_input or self._input
-        if isinstance(volume, int):
-            self._volume = volume
-        if speaker_on is not None:
-            self._speaker_on = bool(speaker_on)
-        self.publish_state()
-
-    def _on_poll_failed(self, detail: str) -> None:
-        self._last_failure = (detail or "Speaker state check failed", time.monotonic())
-        self.publish_state()
-
-    def _on_power_action_started(self, action: str, _reason: str) -> None:
-        normalized_action = str(action or "").upper()
-        self._awaiting_wake_confirmation = normalized_action == "WAKE"
-        self._last_action_started = time.monotonic()
-        self._notify(
-            "info",
-            "Speaker action",
-            f"{action.replace('_', ' ').title()} is running.",
-            code="speaker_action_running",
-            params={"action": normalized_action},
-            channel="power",
-            action=normalized_action,
-            phase="started",
-        )
-        self.publish_state()
-
-    def _on_power_action_finished(self, action: str, _reason: str, success: bool, outcome: str) -> None:
-        elapsed = int((time.monotonic() - self._last_action_started) * 1000) if self._last_action_started else 0
-        normalized_action = str(action or "").upper()
-        self._last_action = {
-            "name": normalized_action,
-            "elapsed_ms": elapsed,
-            "success": bool(success),
-        }
-        if not success:
-            self._last_failure = (outcome or f"{normalized_action.title()} failed", time.monotonic())
-        if normalized_action == "WAKE":
-            if not success:
-                self._awaiting_wake_confirmation = False
-        elif success and normalized_action.endswith("STANDBY") and standby_outcome_is_confirmed(outcome):
-            self._awaiting_wake_confirmation = False
-            self._speaker_on = False
-            self._input = "standby"
-        # Publish the confirmed action result before the slower live poll. The
-        # poll still reconciles later external changes from the speaker.
-        self.publish_state()
-        self._notify(
-            "success" if success else "error",
-            action.replace("_", " ").title(),
-            f"{outcome or ('Completed' if success else 'Failed')} · {elapsed} ms",
-            code="speaker_action_finished",
-            params={
-                "action": normalized_action,
-                "outcome": outcome or ("Completed" if success else "Failed"),
-                "elapsed": elapsed,
-            },
-            channel="power",
-            action=normalized_action,
-            phase="finished",
-            success=bool(success),
-        )
-        self._poll_speaker_state(force=True)
-
-    def _apply_poll_interval(self) -> None:
-        self._poll_timer.setInterval(max(1000, int(self._config.home_external_poll_interval * 1000)))
-
-    def _copy_user_editable_fields(self, source: AppConfig) -> None:
-        for field_name in self._config_store.USER_EDITABLE_FIELDS:
-            setattr(self._config, field_name, getattr(source, field_name))
-
-    def _recent_failure(self) -> dict[str, object] | None:
-        if self._last_failure is None:
-            return None
-        detail, occurred_mono = self._last_failure
-        age_s = max(0.0, time.monotonic() - occurred_mono)
-        if age_s > 300.0:
-            return None
-        return {"detail": detail, "age_s": round(age_s, 1)}
 
     def _start_action(self, name: str, work: Callable[[], object], message: str, *, action: str) -> None:
         normalized_action = str(action or "").upper()

@@ -113,6 +113,16 @@ class KefMainWindowHostTests(unittest.TestCase):
         window._terminate_host_tree.assert_called_once_with()
         window._launch_host.assert_called_once_with()
 
+    def test_native_hang_obeys_restart_limit(self) -> None:
+        window = self._window()
+        window._host_ready_mono = 1.0
+        window._server.client_activity_age_s = 200.0
+        window._host_window_responds = Mock(return_value=False)
+        window._host_restart_times.extend([900.0, 950.0])
+        with patch("kef_app.ui.main_window.time.monotonic", return_value=1000.0):
+            self.assertIsNone(window._host_restart_reason(True))
+        self.assertTrue(window._restart_limit_reported)
+
     def test_show_refreshes_the_ui_heartbeat_before_restoring_a_hidden_host(self) -> None:
         window = self._window()
         window._host_hwnd = 100

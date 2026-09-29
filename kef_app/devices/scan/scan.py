@@ -54,6 +54,7 @@ def _map_hosts_concurrently(
     *,
     should_continue: Callable[[], bool] | None = None,
     on_progress: Callable[[int], None] | None = None,
+    on_host_result: Callable[[str, _T], None] | None = None,
 ) -> dict[str, _T]:
     futures = {executor.submit(worker, host_ip): host_ip for host_ip in hosts}
     results: dict[str, _T] = {}
@@ -70,7 +71,10 @@ def _map_hosts_concurrently(
             except Exception:
                 pass
         try:
-            results[futures[future]] = future.result()
+            result = future.result()
+            results[futures[future]] = result
+            if on_host_result is not None:
+                on_host_result(futures[future], result)
         except Exception:
             continue
     return results
@@ -83,6 +87,7 @@ def _reachable_hosts(
     *,
     should_continue: Callable[[], bool] | None = None,
     on_progress: Callable[[int], None] | None = None,
+    on_reachable: Callable[[str], None] | None = None,
 ) -> list[str]:
     results = _map_hosts_concurrently(
         executor,
@@ -90,28 +95,13 @@ def _reachable_hosts(
         lambda host_ip: probe_ip_port(host_ip, config.mac_discovery_tcp_port, config.mac_discovery_probe_timeout),
         should_continue=should_continue,
         on_progress=on_progress,
+        on_host_result=(lambda host, reachable: on_reachable(host) if reachable else None) if on_reachable else None,
     )
     return [host_ip for host_ip in hosts if results.get(host_ip)]
 
 
-def _identify_hosts(
-    executor: ThreadPoolExecutor,
-    hosts: list[str],
-    config: AppConfig,
-    *,
-    should_continue: Callable[[], bool] | None = None,
-) -> list[SpeakerIdentity]:
-    results = _map_hosts_concurrently(
-        executor,
-        hosts,
-        lambda host_ip: identify_kef_device(host_ip, config),
-        should_continue=should_continue,
-    )
-    return [results[host_ip] for host_ip in hosts if results.get(host_ip)]
-
-
-def _shared_discovery_workers(host_count: int, config: AppConfig) -> int:
-    return max(1, min(host_count, max(config.mac_discovery_max_workers, config.blind_discovery_max_workers)))
+def _discovery_workers(host_count: int, limit: int) -> int:
+    return max(1, min(host_count, limit))
 
 
 def _candidate_hosts(networks: list[ipaddress.IPv4Network], seed_ip: str | None) -> list[str]:
@@ -137,6 +127,7 @@ def _scan_candidate_hosts(
     *,
     should_continue: Callable[[], bool] | None = None,
     on_progress: Callable[[int], None] | None = None,
+    on_candidate: Callable[[SpeakerIdentity], None] | None = None,
 ) -> tuple[list[str], list[str], list[SpeakerIdentity]]:
     hosts = _candidate_hosts(networks, seed_ip)
     if not hosts:
@@ -144,15 +135,41 @@ def _scan_candidate_hosts(
     if should_continue is not None and not should_continue():
         return hosts, [], []
 
-    with ThreadPoolExecutor(max_workers=_shared_discovery_workers(len(hosts), config)) as executor:
+    identity_futures = {}
+    with (
+        ThreadPoolExecutor(max_workers=_discovery_workers(len(hosts), config.mac_discovery_max_workers)) as probe_executor,
+        ThreadPoolExecutor(max_workers=_discovery_workers(len(hosts), config.blind_discovery_max_workers)) as identity_executor,
+    ):
+        def on_reachable(host_ip: str) -> None:
+            future = identity_executor.submit(identify_kef_device, host_ip, config)
+            identity_futures[future] = host_ip
+            if on_candidate is not None:
+                def report(completed) -> None:
+                    try:
+                        identity = completed.result()
+                        if identity and (should_continue is None or should_continue()):
+                            on_candidate(identity)
+                    except Exception:
+                        pass
+                future.add_done_callback(report)
+
         reachable_hosts = _reachable_hosts(
-            executor, hosts, config, should_continue=should_continue, on_progress=on_progress
+            probe_executor, hosts, config, should_continue=should_continue,
+            on_progress=on_progress, on_reachable=on_reachable,
         )
-        identities = (
-            _identify_hosts(executor, reachable_hosts, config, should_continue=should_continue)
-            if reachable_hosts and (should_continue is None or should_continue())
-            else []
-        )
+        identities_by_ip = {}
+        for future in as_completed(identity_futures):
+            if should_continue is not None and not should_continue():
+                for pending in identity_futures:
+                    pending.cancel()
+                break
+            try:
+                identity = future.result()
+                if identity:
+                    identities_by_ip[identity_futures[future]] = identity
+            except Exception:
+                continue
+    identities = [identities_by_ip[ip] for ip in reachable_hosts if ip in identities_by_ip]
     return hosts, reachable_hosts, identities
 
 
@@ -304,6 +321,13 @@ def discover_kef_devices(
         candidates_by_ip[seed_identity.ip] = seed_identity
         _notify_candidate(on_candidate, seed_identity, log, action=action, reason=reason)
 
+    reported_ips = set(candidates_by_ip)
+
+    def report_candidate(identity: SpeakerIdentity) -> None:
+        if identity.ip not in reported_ips:
+            reported_ips.add(identity.ip)
+            _notify_candidate(on_candidate, identity, log, action=action, reason=reason)
+
     probe_started = time.monotonic()
     total_hosts = 0
     for index, network in enumerate(networks, start=1):
@@ -316,6 +340,7 @@ def discover_kef_devices(
             seed_ip,
             config,
             should_continue=should_continue,
+            on_candidate=report_candidate,
             on_progress=(
                 (lambda done: on_progress(checked_before_network + done))
                 if on_progress is not None
@@ -327,7 +352,6 @@ def discover_kef_devices(
         total_identified_kef += len(identities)
         for identity in identities:
             candidates_by_ip[identity.ip] = identity
-            _notify_candidate(on_candidate, identity, log, action=action, reason=reason)
         _log_network_scan_finished(
             log,
             scan_kind="Manual",

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import logging
 
+from pykefcontrol import kef_connector
 from pykefcontrol.kef_connector import KefConnector
 
+from .speaker_http import speaker_requests
 from .speaker_models import SpeakerIdentity, normalize_mac, normalize_model_label
 
 
@@ -14,6 +16,7 @@ class W2Backend:
         self.log = log
 
     def create_connector(self, ip: str) -> KefConnector:
+        kef_connector.requests = speaker_requests
         return KefConnector(ip)
 
     def capture_identity(self, connector: KefConnector, ip: str) -> SpeakerIdentity:

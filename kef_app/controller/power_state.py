@@ -220,6 +220,7 @@ class ControllerStateMixin:
             if dedupe and (
                 self._power.last_wake_schedule_mono > 0
                 and (now - self._power.last_wake_schedule_mono) < self.config.resume_dedup_window
+                and self._power.generation == self._power.last_wake_generation
             ):
                 self._log_structured(
                     "SKIP",
@@ -232,6 +233,7 @@ class ControllerStateMixin:
                 return None, "deduped"
             self._power.last_wake_schedule_mono = now
             generation = self._advance_generation_locked("wake", reason, mono=mono)
+            self._power.last_wake_generation = generation
             return generation, "claimed"
 
     def _display_off_intent_is_active(self, generation: int) -> bool:

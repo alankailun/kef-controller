@@ -42,16 +42,21 @@ class ControllerFastStandbyMixin:
         fire_and_forget_attempts: int = _FAST_STANDBY_FIRE_AND_FORGET_ATTEMPTS,
         skip_prewarmed: bool = False,
     ) -> FastStandbySendResult:
+        target_generation = self.get_target_generation()
         # Do not query the Windows route table from the transport's should_send
         # callback.  The callback is evaluated several times and the networking
         # stack can stall while Windows is suspending or ending the session;
         # the bounded socket attempt itself is the authoritative reachability
         # check on this time-critical path.
         def should_send() -> bool:
-            return not self._bounded_standby_abort_reason(
+            return (
+                target_generation == self.get_target_generation()
+                and current_ip == self.get_current_kef_ip()
+                and not self._bounded_standby_abort_reason(
                 deadline_mono=deadline_mono,
                 generation=generation,
                 check_deadline=False,
+                )
             )
 
         # Display-off work is cancellable for the life of the display state,

@@ -7,9 +7,9 @@ from ..controller import KefPowerController
 
 class ControllerEventBridge(QObject):
     identity_changed = Signal(object)
-    speaker_state_changed = Signal(object, object, object)
+    speaker_state_changed = Signal(object, object, object, object)
     power_action_started = Signal(str, str)
-    power_action_finished = Signal(str, str, bool, str)
+    power_action_finished = Signal(str, str, bool, str, bool)
 
     def __init__(self, controller: KefPowerController) -> None:
         super().__init__()
@@ -33,6 +33,7 @@ class ControllerEventBridge(QObject):
                 payload.get("input_source"),
                 payload.get("volume"),
                 payload.get("speaker_on"),
+                payload.get("target_generation"),
             )
             return
 
@@ -49,4 +50,5 @@ class ControllerEventBridge(QObject):
                 str(payload.get("reason", "")),
                 bool(payload.get("success", False)),
                 str(payload.get("outcome", "")),
+                bool(payload.get("confirmed", False)),
             )

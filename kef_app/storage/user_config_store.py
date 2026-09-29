@@ -14,10 +14,17 @@ from ..config.user_settings import (
     USER_SETTINGS_FLAT_FIELD_NAMES,
     USER_SETTINGS_SECTION_NAMES,
 )
-from ..devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source, normalize_mac
+from ..devices.speaker_models import INPUT_SOURCE_OPTIONS, is_valid_mac, normalize_input_source, normalize_mac
 from .json_file import write_json_atomic
 
 _USER_SETTINGS_FIELD_NAMES = USER_SETTINGS_FLAT_FIELD_NAMES
+
+
+def _coerce_mac(value: object) -> str:
+    raw = _coerce_string(value)
+    if raw and not is_valid_mac(raw):
+        raise ValueError("invalid MAC address")
+    return normalize_mac(raw)
 _USER_SETTINGS_SECTION_FIELDS = {
     section_name: tuple(
         field_name
@@ -149,7 +156,7 @@ class UserConfigStore:
         "ui_language": _coerce_ui_language,
         "backend_name": _coerce_string,
         "kef_ip": _coerce_string,
-        "kef_mac": lambda value: normalize_mac(_coerce_string(value)),
+        "kef_mac": _coerce_mac,
         "supported_w2_models": _coerce_model_list,
         "mac_discovery_subnet_prefix": _coerce_ipv4_prefix,
         "mac_discovery_extra_cidrs": _coerce_string_list,
@@ -283,7 +290,8 @@ class UserConfigStore:
 
     def _migrate_legacy_device_target(self, config: AppConfig, data: dict[str, Any]) -> bool:
         migrated = False
-        legacy_expected_mac = normalize_mac(_coerce_string(data.get("expected_speaker_mac")))
+        legacy_raw_mac = _coerce_string(data.get("expected_speaker_mac"))
+        legacy_expected_mac = normalize_mac(legacy_raw_mac) if is_valid_mac(legacy_raw_mac) else ""
         if legacy_expected_mac and not normalize_mac(config.kef_mac):
             config.kef_mac = legacy_expected_mac
             migrated = True

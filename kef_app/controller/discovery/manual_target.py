@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import re
-
 from ...devices.scan.network import is_routable_ipv4, probe_ip_port
 from ...devices.scan.scan import discover_ip_by_mac, discover_kef_device_blind
-from ...devices.speaker_models import SpeakerIdentity, normalize_mac
+from ...devices.speaker_models import SpeakerIdentity, is_valid_mac, normalize_mac
 from .identity_helpers import TargetValidationResult
 
 
@@ -15,7 +13,7 @@ class ControllerManualTargetMixin:
 
         if requested_ip and not is_routable_ipv4(requested_ip):
             return TargetValidationResult("invalid_ip", requested_ip=requested_ip, requested_mac=requested_mac)
-        if target_mac and (len(requested_mac) != 12 or not re.fullmatch(r"[0-9A-Fa-f:.\s-]+", target_mac)):
+        if target_mac and not is_valid_mac(target_mac):
             return TargetValidationResult("invalid_mac", requested_ip=requested_ip, requested_mac=requested_mac)
         if not requested_ip and not requested_mac:
             return TargetValidationResult("empty", requested_ip="", requested_mac="")

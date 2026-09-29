@@ -87,7 +87,7 @@ class WebBridgeRegressionTests(unittest.TestCase):
                 bridge._poll_speaker_state = Mock()
                 bridge._controller._set_speaker_runtime_state = Mock()
                 bridge._controller._emit_power_action_finished("EARLY_STANDBY", "test", outcome)
-                bridge._on_power_action_finished("EARLY_STANDBY", "test", True, outcome)
+                bridge._on_power_action_finished("EARLY_STANDBY", "test", True, outcome, confirmed)
                 self.assertEqual(bridge._speaker_on, not confirmed)
                 self.assertEqual(bridge._controller._set_speaker_runtime_state.called, confirmed)
                 bridge._poll_speaker_state.assert_called_once_with(force=True)
@@ -101,7 +101,7 @@ class WebBridgeRegressionTests(unittest.TestCase):
             with self.subTest(status=result.status):
                 bridge = self.bridge()
                 bridge._controller.poll_external_ui_state_result = Mock(return_value=result)
-                with patch("kef_app.ui.web_bridge.start_background_task") as task:
+                with patch("kef_app.ui.web_state.start_background_task") as task:
                     bridge._poll_speaker_state(force=True)
                 task.call_args.kwargs["on_success"](task.call_args.args[1]())
                 self.assertEqual(bridge._polled_state.emit.called, result.status == "success")
@@ -194,6 +194,37 @@ class WebBridgeRegressionTests(unittest.TestCase):
                     self.assertFalse(worker.is_alive())
                     self.assertEqual(result, [[]] if cancel else [["found"]])
                     self.assertEqual(scan.called, not cancel)
+
+    def test_scan_lock_timeout_reports_busy_instead_of_an_empty_result(self):
+        for cancel in (False, True):
+            with self.subTest(cancel=cancel):
+                controller = self.controller()
+                controller._blind_discovery_lock.acquire()
+                busy = Mock()
+                try:
+                    with (
+                        patch("kef_app.controller.discovery.recovery._MANUAL_SCAN_LOCK_WAIT_S", 0.05),
+                        patch("kef_app.controller.discovery.recovery.discover_kef_devices") as scan,
+                    ):
+                        result = controller.scan_kef_devices(should_continue=lambda: not cancel, on_busy=busy)
+                finally:
+                    controller._blind_discovery_lock.release()
+                self.assertEqual(result, [])
+                scan.assert_not_called()
+                self.assertEqual(busy.called, not cancel)
+
+    def test_bridge_publishes_scan_busy_state(self):
+        bridge = self.bridge()
+        bridge._controller.scan_kef_devices = Mock(return_value=[])
+        with patch("kef_app.ui.web_bridge.start_background_task") as task:
+            bridge.scanSpeakers("scan")
+        bridge._controller.scan_kef_devices.assert_not_called()
+        task.call_args.args[1]()
+        bridge._controller.scan_kef_devices.call_args.kwargs["on_busy"]()
+        task.call_args.kwargs["on_success"]([])
+
+        payload = bridge.toast.emit.call_args.args[0]
+        self.assertEqual((payload["state"], payload["code"]), ("failed", "scan_busy"))
 
     def test_removed_alias_keys_keep_all_supported_spellings(self):
         for raw, expected in (("wi-fi", "wifi"), ("e-arc", "tv"), ("poweron_", "powerOn"), ("poweron.", "powerOn")):

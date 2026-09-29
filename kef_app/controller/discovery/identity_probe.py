@@ -146,6 +146,7 @@ class ControllerIdentityProbeMixin:
 
     def capture_identity_from_current_ip(self, reason: str, trigger: str) -> bool:
         current_ip = self.get_current_kef_ip()
+        target_generation = self.get_target_generation()
         if not current_ip:
             return False
 
@@ -215,13 +216,17 @@ class ControllerIdentityProbeMixin:
             )
             return False
 
+        if target_generation != self.get_target_generation() or current_ip != self.get_current_kef_ip():
+            return False
         matched, match_reason = self._identity_matches_expectation(info)
         if not matched and match_reason == "target_mac_unverified" and can_use_cached_current_target:
             matched = True
             match_reason = "cached_target_mac_current_ip"
         changed = False
         if matched:
-            changed = self.update_identity_from_device_info(info, trigger=trigger)
+            changed = self.update_identity_from_device_info(
+                info, trigger=trigger, expected_generation=target_generation, expected_ip=current_ip,
+            )
         self._log_structured(
             "STEP",
             action="DISCOVER_IP",
@@ -249,6 +254,11 @@ class ControllerIdentityProbeMixin:
             )
             self.reset_speaker()
             return False
+        with self._ip_lock:
+            if self._identity.generation == target_generation and self._identity.current_ip == current_ip:
+                self._identity.verified_ip = current_ip
+                self._identity.verified_generation = target_generation
+                self._identity.verified_mono = self.mono()
         return True
 
     def log_current_http_identity_snapshot(self, reason: str, trigger: str) -> bool:
@@ -294,11 +304,30 @@ class ControllerIdentityProbeMixin:
         )
         return bool(info and matched)
 
-    def probe_external_identity(self, reason: str, trigger: str) -> tuple[bool, bool]:
+    def probe_external_identity(
+        self, reason: str, trigger: str, *, allow_recent_verification: bool = True,
+    ) -> tuple[bool, bool]:
+        # A recent verification only proves who answers at this IP; it is not
+        # evidence that the speaker is still reachable after live reads failed.
+        target_generation = self.get_target_generation()
+        with self._ip_lock:
+            cached = (
+                allow_recent_verification
+                and self._identity.verified_ip == self._identity.current_ip
+                and self._identity.verified_generation == self._identity.generation
+                and self._identity.verified_mono > 0
+                and self.mono() - self._identity.verified_mono < 8.0
+            )
+        if cached:
+            return True, False
         identity_seen = self.capture_identity_from_current_ip(reason=reason, trigger=f"{trigger}_identity")
+        if target_generation != self.get_target_generation():
+            return False, False
         ip_refreshed = False
         if not identity_seen:
             ip_refreshed = self.maybe_refresh_kef_ip(reason=reason, trigger=f"{trigger}_refresh")
+        if target_generation != self.get_target_generation():
+            return False, False
         reachable = identity_seen or ip_refreshed
         if not reachable:
             self.record_identity_probe_failure(reason=reason, trigger=trigger, cause="identity_refresh_failed")

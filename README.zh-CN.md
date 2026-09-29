@@ -129,7 +129,7 @@ Event Tests 页面可以模拟这些事件：
 - 支持关闭自启动。
 - 设置页面显示当前实际生效的自启动状态。
 - 可以在可行时修复过期自启动项。
-- 快捷方式和自启动项使用稳定的安装启动路径。
+- 快捷方式和自启动项使用当前安装目录中的程序路径。
 
 Registry Run 是更简单的当前用户自启动方式。Task Scheduler 通常在登录后启动得
 更快、更早；如果你希望 KEF Controller 尽快启动并尽快接管音箱的唤醒/待机
@@ -152,20 +152,9 @@ Registry Run 是更简单的当前用户自启动方式。Task Scheduler 通常�
 
 ## 安装和启动路径
 
-安装版使用一个稳定的启动路径：
-
-```text
-%LocalAppData%\Programs\KEF Controller\KEF Controller.exe
-```
-
-Inno Setup 安装器仍然允许用户选择主安装目录。同时，安装器会把同一个 `.exe`
-同步一份到上面的 LocalAppData 稳定路径。开始菜单快捷方式、可选桌面快捷方式、
-安装完成后的启动，以及 Windows 自启动项，都会指向这个稳定路径。这样无论用户
-把主安装目录放在 `C:`、`F:`、OneDrive 或其他位置，快捷方式和自启动都不依赖
-那个可变路径。
-
-程序运行时，如果检测到自己是打包后的 `.exe`，也会在注册自启动前尝试把当前
-`.exe` 同步到稳定路径。如果同步失败，会写日志并退回使用当前 `.exe`。
+Inno Setup 安装器允许选择安装目录。开始菜单与可选桌面快捷方式、安装完成后的
+启动以及 Windows 自启动项，都指向该目录中的程序。程序不会向 LocalAppData
+另复制一份 `.exe`。
 
 ## 项目结构
 
@@ -204,8 +193,13 @@ kef_controller/
 cd /d "path\to\kef_controller"
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
+
+开发环境使用 Windows 上的 Python 3.14。`requirements.txt` 为运行依赖，
+`requirements-build.txt` 增加 PyInstaller，`requirements-dev.txt` 增加 Ruff。
+安装 Node.js 后才能运行 JavaScript 行为测试。打包前运行 `ruff check .` 和
+`.venv\Scripts\python -m unittest discover -s tests -q`，并确认 JavaScript 测试未跳过。
 
 GUI 模式：
 
@@ -252,8 +246,8 @@ dist\KEF Controller\KEF Controller.exe
 ```
 
 `.spec` 文件使用 `main_gui.py`，生成无控制台的 onedir 窗口程序，包含本地
-HTML/CSS/JavaScript UI 和应用图标，保留 Modern Windows Qt style plugin 与软件
-OpenGL fallback，并裁掉未使用的 Qt/PySide6 模块和插件以减小体积。
+HTML/CSS/JavaScript UI 和应用图标，保留 Modern Windows Qt style plugin，
+排除软件 OpenGL fallback，并裁掉未使用的 Qt/PySide6 模块和插件以减小体积。
 
 ## 使用 Inno Setup 生成安装包
 

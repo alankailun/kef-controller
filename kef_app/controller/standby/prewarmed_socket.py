@@ -472,7 +472,6 @@ class PrewarmedStandbySocketMonitorMixin:
             self._prewarmed.last_error = repr(exc)
             self._prewarmed.ready_logged = False
         next_delay_s = self._prewarmed_keepalive_failure_delay(failures)
-
         log_level = (
             "info"
             if failures in {1, _PREWARM_FAILURE_LOG_THRESHOLD} or failures % _PREWARM_FAILURE_LOG_THRESHOLD == 0
@@ -784,6 +783,13 @@ class PrewarmedStandbySocketMonitorMixin:
                 status="no_cache",
                 started_mono=started,
                 finished_mono=started,
+            )
+        current_ip, current_mac = self.get_current_kef_target()
+        if snapshot.target_ip != current_ip or snapshot.target_mac != current_mac:
+            return CachedPrewarmedStandbySendResult(
+                False, fast_path_skip_reason="stale_target", status="stale_target",
+                target_ip=snapshot.target_ip, target_mac=snapshot.target_mac,
+                started_mono=started, finished_mono=started,
             )
 
         abort_reason = self._bounded_standby_abort_reason(

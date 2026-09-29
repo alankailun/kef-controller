@@ -91,22 +91,27 @@ class ControllerDeviceControlsMixin:
         volume: int | None = None,
         speaker_on: bool | None = None,
         trigger: str,
+        target_generation: int | None = None,
     ) -> bool:
         changed = False
-        with self._state_lock:
-            if input_source is not None and input_source != self._runtime_speaker.input_source:
-                self._runtime_speaker.input_source = input_source
-                changed = True
-            if volume is not None and volume != self._runtime_speaker.volume:
-                self._runtime_speaker.volume = volume
-                changed = True
-            if speaker_on is not None and speaker_on != self._runtime_speaker.power_on:
-                self._runtime_speaker.power_on = speaker_on
-                changed = True
+        with self._ip_lock:
+            if target_generation is not None and target_generation != self._identity.generation:
+                return False
+            state_generation = self._identity.generation
+            with self._state_lock:
+                if input_source is not None and input_source != self._runtime_speaker.input_source:
+                    self._runtime_speaker.input_source = input_source
+                    changed = True
+                if volume is not None and volume != self._runtime_speaker.volume:
+                    self._runtime_speaker.volume = volume
+                    changed = True
+                if speaker_on is not None and speaker_on != self._runtime_speaker.power_on:
+                    self._runtime_speaker.power_on = speaker_on
+                    changed = True
 
-            current_input = self._runtime_speaker.input_source or None
-            current_volume = self._runtime_speaker.volume
-            current_power = self._runtime_speaker.power_on
+                current_input = self._runtime_speaker.input_source or None
+                current_volume = self._runtime_speaker.volume
+                current_power = self._runtime_speaker.power_on
 
         if changed:
             self._emit_event(
@@ -115,6 +120,7 @@ class ControllerDeviceControlsMixin:
                 volume=current_volume,
                 speaker_on=current_power,
                 trigger=trigger,
+                target_generation=state_generation,
             )
         return changed
 
@@ -308,6 +314,8 @@ class ControllerDeviceControlsMixin:
         if not self.get_current_kef_ip():
             if not self.resolve_target(reason=reason, trigger=trigger, force_recovery=False):
                 return SpeakerUIPollResult(status="failed")
+        target_generation = self.get_target_generation()
+        target_ip = self.get_current_kef_ip()
 
         speaker_on, power_ok = self._read_ui_value(
             reason,
@@ -356,7 +364,9 @@ class ControllerDeviceControlsMixin:
             if availability_changed:
                 self._emit_identity_changed()
         else:
-            identity_seen, ip_refreshed = self.probe_external_identity(reason=reason, trigger=trigger)
+            identity_seen, ip_refreshed = self.probe_external_identity(
+                reason=reason, trigger=trigger, allow_recent_verification=False,
+            )
             reachable = identity_seen or ip_refreshed
 
         should_log_poll = not (reachable and power_ok and input_ok and volume_ok and not identity_seen and not ip_refreshed)
@@ -374,16 +384,20 @@ class ControllerDeviceControlsMixin:
                 fallback_ip_refresh=ip_refreshed,
                 reachable=reachable,
             )
+        if target_generation != self.get_target_generation() or target_ip != self.get_current_kef_ip():
+            return SpeakerUIPollResult()
         self._record_recent_ui_target(reachable)
-        if input_source is not None or volume is not None or speaker_on is not None:
+        valid_input = bool(input_source)
+        if reachable and (valid_input or volume is not None or speaker_on is not None):
             self._set_speaker_runtime_state(
                 input_source=input_source,
                 volume=volume,
                 speaker_on=speaker_on,
                 trigger=trigger,
+                target_generation=target_generation,
             )
         values = (input_source, volume, speaker_on)
-        status = "success" if reachable and any(value is not None for value in values) else "failed"
+        status = "success" if reachable and (valid_input or volume is not None or speaker_on is not None) else "failed"
         return SpeakerUIPollResult(values, status)
 
     def poll_speaker_event_state(
@@ -395,6 +409,8 @@ class ControllerDeviceControlsMixin:
     ) -> tuple[str | None, int | None, bool | None]:
         if not self.get_current_kef_ip():
             return None, None, None
+        target_generation = self.get_target_generation()
+        target_ip = self.get_current_kef_ip()
 
         speaker = None
         try:
@@ -449,6 +465,8 @@ class ControllerDeviceControlsMixin:
             self._clear_speaker_event_poll_failures()
             return None, None, None
 
+        if target_generation != self.get_target_generation() or target_ip != self.get_current_kef_ip():
+            return None, None, None
         self._clear_speaker_event_poll_failures()
         availability_changed = self._mark_identity_probe_success(trigger=trigger)
         if availability_changed:
@@ -458,6 +476,7 @@ class ControllerDeviceControlsMixin:
             volume=volume,
             speaker_on=speaker_on,
             trigger=trigger,
+            target_generation=target_generation,
         )
 
         self._log_structured(

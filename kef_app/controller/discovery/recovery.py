@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 
 from ...devices.scan.scan import discover_ip_by_mac, discover_kef_device_blind, discover_kef_devices
-from ...devices.speaker_models import SpeakerIdentity
+from ...devices.speaker_models import SpeakerIdentity, normalize_mac
 from ...platform.windows.api import has_best_route_to_ipv4
+
+_MANUAL_SCAN_LOCK_WAIT_S = 10.0
 
 
 class ControllerDiscoveryRecoveryMixin:
@@ -13,14 +16,30 @@ class ControllerDiscoveryRecoveryMixin:
         on_candidate: Callable[[SpeakerIdentity], None] | None = None,
         should_continue: Callable[[], bool] | None = None,
         on_progress: Callable[[int], None] | None = None,
+        on_busy: Callable[[], None] | None = None,
     ) -> list[SpeakerIdentity]:
         if should_continue is not None:
-            # A reopened dialog waits for cancelled work to release the lock.
-            # The wait runs in its worker and remains cooperatively cancellable.
-            while should_continue():
-                if self._blind_discovery_lock.acquire(timeout=0.1):
-                    break
-            else:
+            deadline = time.monotonic() + _MANUAL_SCAN_LOCK_WAIT_S
+            acquired = False
+            with self._blind_discovery_condition:
+                while should_continue():
+                    acquired = self._blind_discovery_lock.acquire(blocking=False)
+                    if acquired:
+                        break
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    self._blind_discovery_condition.wait(timeout=min(remaining, 0.5))
+            if not acquired:
+                cancelled = not should_continue()
+                self._log_structured(
+                    "SKIP",
+                    action="MANUAL_SCAN",
+                    cause="scan_cancelled_while_waiting" if cancelled else "blind_discovery_lock_wait_timeout",
+                    wait_s=f"{_MANUAL_SCAN_LOCK_WAIT_S:.0f}",
+                )
+                if not cancelled and on_busy is not None:
+                    on_busy()
                 return []
         elif not self._blind_discovery_lock.acquire(blocking=False):
             self._log_structured(
@@ -56,6 +75,8 @@ class ControllerDiscoveryRecoveryMixin:
             return devices
         finally:
             self._blind_discovery_lock.release()
+            with self._blind_discovery_condition:
+                self._blind_discovery_condition.notify_all()
 
     def recover_target_ip(self, reason: str, trigger: str, force: bool = False) -> bool:
         recovered = self.maybe_refresh_kef_ip(reason=reason, trigger=trigger, force=force)
@@ -84,7 +105,9 @@ class ControllerDiscoveryRecoveryMixin:
 
     def maybe_refresh_kef_ip_by_mac(self, reason: str, trigger: str, force: bool = False) -> bool:
         c = self.config
-        effective_mac = self.get_effective_target_mac()
+        with self._ip_lock:
+            generation = self._identity.generation
+            effective_mac = normalize_mac(self.config.kef_mac) or self._identity.target_mac
         if not effective_mac:
             self._log_structured(
                 "SKIP",
@@ -149,7 +172,9 @@ class ControllerDiscoveryRecoveryMixin:
                 )
                 return False
 
-            changed = self.update_kef_ip(discovered_ip, trigger=trigger)
+            if not self.apply_recovered_target(discovered_ip, generation=generation, target_mac=target_mac, trigger=trigger):
+                return False
+            changed = discovered_ip != seed_ip
             end_mono = self.mono()
             self._log_action_sleep_crossing("DISCOVER_IP", None, reason, now, end_mono)
             self._log_structured(
@@ -181,7 +206,9 @@ class ControllerDiscoveryRecoveryMixin:
         try:
             now = self.mono()
             seed_ip = self.get_current_kef_ip()
-            known_mac = self.get_effective_target_mac()
+            with self._ip_lock:
+                generation = self._identity.generation
+                known_mac = normalize_mac(self.config.kef_mac) or self._identity.target_mac
             if not known_mac:
                 self._log_structured(
                     "SKIP",
@@ -228,7 +255,11 @@ class ControllerDiscoveryRecoveryMixin:
                 # Recovery sweeps are pointless once the session is tearing
                 # down or Windows is entering sleep; let them unwind instead
                 # of finishing the whole subnet.
-                should_continue=lambda: not self._is_session_ending() and not self.is_system_sleep_pending(),
+                should_continue=lambda: (
+                    not self._is_session_ending()
+                    and not self.is_system_sleep_pending()
+                    and self.get_target_generation() == generation
+                ),
             )
             if not device_info:
                 end_mono = self.mono()
@@ -244,8 +275,9 @@ class ControllerDiscoveryRecoveryMixin:
                 )
                 return False
 
-            ip_changed = self.update_kef_ip(device_info.ip, trigger=trigger)
-            self.update_identity_from_device_info(device_info, trigger=trigger)
+            if not self.apply_recovered_target(device_info.ip, generation=generation, target_mac=known_mac, trigger=trigger, info=device_info):
+                return False
+            ip_changed = device_info.ip != seed_ip
             end_mono = self.mono()
             self._log_action_sleep_crossing("BLIND_DISCOVER_IP", None, reason, now, end_mono)
             self._log_structured(
@@ -264,6 +296,8 @@ class ControllerDiscoveryRecoveryMixin:
             return True
         finally:
             self._blind_discovery_lock.release()
+            with self._blind_discovery_condition:
+                self._blind_discovery_condition.notify_all()
 
     def maybe_refresh_kef_ip(self, reason: str, trigger: str, force: bool = False) -> bool:
         current_ip = self.get_current_kef_ip()
