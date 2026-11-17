@@ -1553,7 +1553,7 @@ class PowerEventLogicTests(unittest.TestCase):
 
         result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK", deadline_mono=controller.mono() + 1.0)
 
-        self.assertTrue(result)
+        self.assertFalse(result)
         controller.try_send_prewarmed_standby.assert_called_once()
         controller._send_fire_and_forget_shutdown.assert_not_called()
         controller._request_shutdown.assert_not_called()
@@ -1567,7 +1567,7 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertTrue(
             any(
                 name == "power_action_finished"
-                and payload.get("success") is True
+                and payload.get("success") is False
                 and payload.get("outcome") == "sent_skipped_host_unreachable"
                 for name, payload in events
             )
@@ -1648,7 +1648,7 @@ class PowerEventLogicTests(unittest.TestCase):
 
         result = controller.standby_kef_preemptive(generation, "WTS_SESSION_LOCK", deadline_mono=controller.mono() + 1.0)
 
-        self.assertTrue(result)
+        self.assertFalse(result)
         controller._send_fire_and_forget_shutdown.assert_called_once()
         controller._request_shutdown.assert_not_called()
         controller.log_wifi_diagnostics.assert_called_once_with(
@@ -1661,14 +1661,14 @@ class PowerEventLogicTests(unittest.TestCase):
         self.assertTrue(
             any(
                 name == "power_action_finished"
-                and payload.get("success") is True
+                and payload.get("success") is False
                 and payload.get("outcome") == "sent_skipped_host_unreachable"
                 for name, payload in events
             )
         )
         self.assertTrue(
             any(
-                call.args[:1] == ("STEP",)
+                call.args[:1] == ("WARN",)
                 and call.kwargs.get("action") == "EARLY_STANDBY"
                 and call.kwargs.get("status") == "local_network_unavailable_before_suspend"
                 and call.kwargs.get("all_host_unreachable") is True
@@ -1790,7 +1790,7 @@ class PowerEventLogicTests(unittest.TestCase):
         controller._send_fire_and_forget_shutdown = Mock()
         controller._request_shutdown = Mock()
 
-        self.assertTrue(
+        self.assertFalse(
             controller.standby_kef_preemptive(
                 early_generation,
                 "WTS_SESSION_LOCK",
@@ -1834,10 +1834,10 @@ class PowerEventLogicTests(unittest.TestCase):
             deadline_mono=controller.mono() + 1.0,
         )
 
-        self.assertTrue(result)
+        self.assertFalse(result)
         controller._send_fire_and_forget_shutdown.assert_called_once()
         controller._request_shutdown.assert_not_called()
-        self.assertTrue(self.emitted_outcome(events, "sent_skipped_host_unreachable"))
+        self.assertFalse(self.emitted_outcome(events, "sent_skipped_host_unreachable"))
 
     def test_fast_suspend_standby_skips_without_current_ip(self):
         controller = self.make_controller(kef_ip="")
@@ -2251,7 +2251,7 @@ class PowerEventLogicTests(unittest.TestCase):
         result = controller.change_input_live("coaxial")
 
         self.assertTrue(result)
-        controller._set_speaker_source.assert_called_once_with("coaxial", fresh=True)
+        controller._set_speaker_source.assert_called_once_with("coaxial", fresh=True, target_generation=controller.get_target_generation())
         controller.get_input_source.assert_called_once_with(fresh=True)
 
     def test_set_volume_rejects_non_numeric_level_without_connector_call(self):
@@ -2503,9 +2503,7 @@ class PowerEventLogicTests(unittest.TestCase):
         result = controller.poll_speaker_event_state("unit_test", "unit_test", timeout=7.5)
 
         self.assertEqual(result, (None, None, None))
-        self.assertIsNone(speaker.polling_queue)
-        self.assertIsNone(speaker.last_polled)
-        self.assertFalse(speaker._previous_poll_song_status)
+        speaker.reset_event_subscription.assert_called_once_with()
         controller.reset_speaker.assert_not_called()
 
     def test_speaker_event_poll_single_failure_logs_as_transient_step(self):

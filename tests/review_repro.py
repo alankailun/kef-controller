@@ -12,7 +12,6 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import requests
 from PySide6.QtCore import QObject
 
 from kef_app.config import AppConfig
@@ -32,22 +31,16 @@ def controller():
         AppConfig().with_updates(kef_ip="192.168.1.10", kef_mac="AAAAAAAAAAAA"), log
     )
 
-# 1. Trace the actual dependency's startup HTTP call at its final send boundary.
+# 1. Startup uses a bounded client at the dependency boundary.
 c = controller()
 c.capture_identity_from_current_ip = Mock()
 c.log_current_http_identity_snapshot = Mock()
 runtime = HeadlessRuntime(c.config, c, log)
-timeouts = []
-def fake_send(session, request, **kwargs):
-    timeouts.append(kwargs.get("timeout"))
-    response = requests.Response()
-    response.status_code = 200
-    response._content = b'[{"i32_":20}]'
-    return response
-with patch("requests.sessions.Session.send", new=fake_send):
+with patch("kef_app.devices.speaker_backend.KefClient") as client:
     runtime._prepare_startup_connection()
-assert timeouts == [c.config.socket_timeout], timeouts
-results["startup_request_timeout"] = timeouts
+    client.assert_called_once_with("192.168.1.10", timeout=c.config.socket_timeout)
+    client.return_value.connect.assert_called_once_with()
+results["startup_request_timeout"] = c.config.socket_timeout
 
 # 2. A stale recovery result must leave a newly selected target intact.
 c = controller()

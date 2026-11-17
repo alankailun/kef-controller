@@ -108,7 +108,6 @@ class WebStateMixin:
             return
         self._last_poll_success_mono = time.monotonic()
         self._last_failure = None
-        self._apply_speaker_state(input_source, volume, speaker_on)
 
     def _on_speaker_state_changed(
         self, input_source: object, volume: object, speaker_on: object,

@@ -342,3 +342,9 @@ installer\KEF_Controller.iss
   internal testing.
 - Some settings-page icons are SVGs adapted from Microsoft Fluent UI System
   Icons, which are distributed under the MIT license.
+
+## pykefcontrol 1.0.1 migration
+
+The speaker adapter now uses `KefClient`, typed device identity and event queues. Firmware is read from `DeviceInfo.firmware`. Ordinary controls use the library's automatic HTTPS/HTTP selection; the old requests patch has been removed.
+
+The library allows 3 seconds for HTTPS probing and at least 15 seconds for signed writes. The application's `socket_timeout` is not a total operation deadline. Fast standby now uses prepared TLS connections and fresh HMAC signatures on HTTPS speakers, with a bounded TLS fallback. HTTP speakers retain the original transport. Certificate loading and user registration run during ordinary client preparation. Real speaker and Windows power-event verification remains necessary. See [the audit](AUDIT.zh-CN.md).

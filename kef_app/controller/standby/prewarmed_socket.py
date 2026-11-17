@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import select
 import socket
+import ssl
 import threading
 from dataclasses import dataclass
 
 from ...devices.transport.errors import is_host_unreachable
+from ...devices.transport.secure import secure_context
 from ...devices.transport.standby_request import build_standby_request_bytes
 from .cache import FastStandbyCacheSnapshot
 
@@ -187,7 +189,10 @@ def _open_tcp_socket(ip: str, *, port: int, timeout: float) -> socket.socket:
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except OSError:
             pass
-        sock.connect((ip, port))
+        context = secure_context(ip)
+        sock.connect((ip, 4430 if context is not None else port))
+        if context is not None:
+            sock = context.wrap_socket(sock, server_hostname=ip)
         return sock
     except Exception:
         try:
@@ -265,7 +270,7 @@ class PrewarmedStandbySocketMonitorMixin:
         with self._prewarmed.lock:
             remaining = []
             for holder in self._prewarmed.holders:
-                if holder.ip != target_ip:
+                if holder.ip != target_ip or (secure_context(target_ip) is not None and not isinstance(holder.sock, ssl.SSLSocket)):
                     stale.append(holder)
                 elif selected is None:
                     selected = holder
@@ -540,7 +545,7 @@ class PrewarmedStandbySocketMonitorMixin:
                     abort_reason=abort_reason,
                 )
 
-            if reject_readable_before_send:
+            if reject_readable_before_send and not isinstance(sock, ssl.SSLSocket):
                 # Keepalive drains its complete response before returning a
                 # holder to the pool.  A readable persistent socket therefore
                 # signals peer FIN/RST (or otherwise unexpected bytes), not a
@@ -558,6 +563,16 @@ class PrewarmedStandbySocketMonitorMixin:
                     )
 
             sock.sendall(request)
+            if isinstance(sock, ssl.SSLSocket):
+                remaining = deadline_s - (self.mono() - started_mono)
+                if deadline_mono is not None:
+                    remaining = min(remaining, deadline_mono - self.mono())
+                if remaining > 0:
+                    try:
+                        sock.settimeout(remaining)
+                        sock.recv(1)
+                    except OSError:
+                        pass
             so_error = int(sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR))
             if so_error != 0:
                 raise OSError(so_error, "socket SO_ERROR was non-zero after standby send")
@@ -819,7 +834,7 @@ class PrewarmedStandbySocketMonitorMixin:
         )
         outcome = self._send_standby_over_prewarmed_pool(
             snapshot.target_ip,
-            snapshot.standby_request_bytes,
+            build_standby_request_bytes(snapshot.target_ip) if secure_context(snapshot.target_ip) is not None else snapshot.standby_request_bytes,
             deadline_s=deadline_s,
             frozen_limit_s=frozen_limit_s,
             deadline_mono=deadline_mono,

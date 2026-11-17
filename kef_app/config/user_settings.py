@@ -12,7 +12,6 @@ class GeneralSettings:
 
 @dataclass(slots=True)
 class DeviceSettings:
-    backend_name: str = "w2"
     kef_ip: str = ""
     kef_mac: str = ""
     supported_w2_models: tuple[str, ...] = ("LS50 Wireless II", "LSX II", "LS60 Wireless")

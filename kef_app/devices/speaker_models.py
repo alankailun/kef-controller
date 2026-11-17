@@ -57,6 +57,7 @@ _MODEL_ALIASES = {
     "LS50WIRELESSII": "LS50 Wireless II",
     "LSXII": "LSX II",
     "LS60": "LS60 Wireless",
+    "LS60W": "LS60 Wireless",
     "LS60WIRELESS": "LS60 Wireless",
 }
 

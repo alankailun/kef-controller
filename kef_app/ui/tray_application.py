@@ -47,6 +47,7 @@ class KefTrayApp:
         )
         self._active_action = ""
         self._speaker_on_hint: bool | None = None
+        self._target_generation = controller.get_target_generation()
         self._identity_poll_lock = threading.Lock()
         self._controller_bridge = ControllerEventBridge(controller)
         self._controller_bridge.identity_changed.connect(self._on_identity_changed)
@@ -179,6 +180,10 @@ class KefTrayApp:
         }.get(action, action or "Working")
 
     def _on_identity_changed(self, _identity: object) -> None:
+        generation = self._controller.get_target_generation()
+        if generation != self._target_generation:
+            self._target_generation = generation
+            self._speaker_on_hint = None
         self._refresh_icon()
 
     def _on_speaker_state_changed(
@@ -188,6 +193,8 @@ class KefTrayApp:
         speaker_on: object,
         _target_generation: object = None,
     ) -> None:
+        if _target_generation is not None and _target_generation != self._controller.get_target_generation():
+            return
         if speaker_on is not None:
             self._speaker_on_hint = bool(speaker_on)
         self._refresh_icon()

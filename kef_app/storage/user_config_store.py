@@ -154,7 +154,6 @@ class UserConfigStore:
     USER_EDITABLE_FIELDS = _USER_SETTINGS_FIELD_NAMES
     FIELD_COERCERS: ClassVar[dict[str, Callable[[Any], Any]]] = {
         "ui_language": _coerce_ui_language,
-        "backend_name": _coerce_string,
         "kef_ip": _coerce_string,
         "kef_mac": _coerce_mac,
         "supported_w2_models": _coerce_model_list,

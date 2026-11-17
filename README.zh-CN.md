@@ -328,3 +328,9 @@ installer\KEF_Controller.iss
 - 新生成的未签名程序如果被 SmartScreen 或杀毒软件提示，测试阶段比较常见。
 - 设置页面部分图标来自 Microsoft Fluent UI System Icons 的 SVG，原图标以 MIT
   license 分发。
+
+## pykefcontrol 1.0.1 升级说明
+
+运行依赖已升级至 pykefcontrol 1.0.1，音箱适配层使用 `KefClient`、新版设备身份和事件队列；固件版本优先读取 `DeviceInfo.firmware`。普通控制由库自动选择 HTTPS 或 HTTP。旧 requests 替换已移除。
+
+库的 HTTPS 自动探测超时为 3 秒，签名写请求最少为 15 秒；应用的 `socket_timeout` 不是整个操作的总时限。快速待机已支持后台准备的 TLS 连接、每次发送的新 HMAC 签名和有界 TLS 回退，HTTP 音箱保留原路径。证书加载和用户注册在常规客户端准备阶段执行；仍需真实音箱和 Windows 电源事件验证。详见 [本次审查](AUDIT.zh-CN.md)。

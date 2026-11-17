@@ -83,7 +83,7 @@ class TransportStandbyTests(unittest.TestCase):
         self.assertIn(f"Content-Length: {len(body)}", headers)
         self.assertIn("Connection: close", headers)
         self.assertEqual(payload["path"], "settings:/kef/play/physicalSource")
-        self.assertEqual(payload["roles"], "value")
+        self.assertEqual(payload["role"], "value")
         self.assertEqual(payload["value"]["kefPhysicalSource"], "standby")
 
     def test_fire_and_forget_loopback_benchmark(self):

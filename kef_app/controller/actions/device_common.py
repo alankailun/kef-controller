@@ -4,8 +4,8 @@ import re
 import time
 from collections.abc import Callable
 
-from pykefcontrol.kef_connector import KefConnector
-
+from ...devices.speaker_backend import SpeakerConnector
+from ...devices.speaker_http import current_socket_timeout
 from ...devices.speaker_models import INPUT_SOURCE_OPTIONS, normalize_input_source
 from ..network_timeout import temporary_socket_timeout
 
@@ -155,9 +155,11 @@ class ControllerDeviceCommonMixin:
             return None
         return max(0, min(100, value))
 
-    def _set_speaker_source(self, source: str, *, fresh: bool) -> None:
+    def _set_speaker_source(self, source: str, *, fresh: bool, target_generation: int | None = None) -> None:
         with temporary_socket_timeout(self.config.socket_timeout):
             speaker = self.get_speaker(fresh=fresh)
+            if target_generation is not None and target_generation != self.get_target_generation():
+                raise RuntimeError("speaker target changed")
             speaker.source = source
 
     def _request_shutdown(self, *, fresh: bool, timeout: float) -> None:
@@ -238,7 +240,7 @@ class ControllerDeviceCommonMixin:
                 consecutive_failures += 1
                 last_error = error
                 if consecutive_failures >= _STANDBY_VERIFY_OFFLINE_FAILURES:
-                    return True, {
+                    return False, {
                         "verified_by": "device_unreachable",
                         "consecutive_failures": consecutive_failures,
                         "last_error": last_error,
@@ -394,8 +396,11 @@ class ControllerDeviceCommonMixin:
         with self._speaker_connection.lock:
             self._speaker_connection.connector = None
 
-    def get_speaker(self, fresh: bool = False) -> KefConnector:
+    def get_speaker(self, fresh: bool = False) -> SpeakerConnector:
         with self._speaker_connection.lock:
-            if fresh or self._speaker_connection.connector is None:
-                self._speaker_connection.connector = self._backend.create_connector(self.get_current_kef_ip())
+            timeout = current_socket_timeout(self.config.socket_timeout)
+            if (fresh or self._speaker_connection.connector is None
+                    or self._speaker_connection.connector.request_timeout != timeout):
+                with temporary_socket_timeout(timeout):
+                    self._speaker_connection.connector = self._backend.create_connector(self.get_current_kef_ip())
             return self._speaker_connection.connector

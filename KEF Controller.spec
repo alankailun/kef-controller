@@ -1,6 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-datas = []
+from PyInstaller.utils.hooks import copy_metadata
+
+datas = copy_metadata("pykefcontrol")
 binaries = []
 hiddenimports = []
 

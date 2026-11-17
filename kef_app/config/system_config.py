@@ -15,6 +15,7 @@ def default_local_appdata_dir(app_name: str) -> str:
 
 @dataclass(slots=True)
 class SystemConfig:
+    backend_name: str = "w2"
     app_name: str = DEFAULT_APP_NAME
     speaker_model_label: str = "KEF Wireless Speaker"
     app_data_dir: str = field(default_factory=lambda: default_local_appdata_dir(DEFAULT_APP_NAME))

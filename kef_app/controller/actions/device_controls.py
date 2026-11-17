@@ -5,8 +5,7 @@ import time
 from collections.abc import Callable
 from typing import TypeVar
 
-from pykefcontrol.kef_connector import KefConnector
-
+from ...devices.speaker_backend import SpeakerConnector
 from ...devices.speaker_models import normalize_input_source
 from ...devices.transport.errors import is_host_unreachable
 from ...structured_logging import is_ui_poll_trigger
@@ -52,7 +51,7 @@ class ControllerDeviceControlsMixin:
         *,
         fresh: bool,
         step: str,
-        reader: Callable[[KefConnector], T],
+        reader: Callable[[SpeakerConnector], T],
     ) -> tuple[T | None, bool]:
         def read_value(use_fresh_connector: bool) -> T:
             with temporary_socket_timeout(self.config.socket_timeout):
@@ -128,14 +127,12 @@ class ControllerDeviceControlsMixin:
         with self._state_lock:
             self._runtime_speaker.event_poll_failures = 0
 
-    def _reset_speaker_event_subscription(self, speaker: KefConnector | None) -> bool:
+    def _reset_speaker_event_subscription(self, speaker: SpeakerConnector | None) -> bool:
         if speaker is None:
             return False
         with self._speaker_connection.lock:
             try:
-                speaker.polling_queue = None
-                speaker.last_polled = None
-                speaker._previous_poll_song_status = False
+                speaker.reset_event_subscription()
             except Exception:
                 return False
         return True
@@ -146,7 +143,7 @@ class ControllerDeviceControlsMixin:
         reason: str,
         trigger: str,
         cause: str,
-        speaker: KefConnector | None,
+        speaker: SpeakerConnector | None,
     ) -> tuple[int, int, bool]:
         threshold = max(1, int(self.config.speaker_event_recovery_failure_threshold))
         with self._state_lock:
@@ -155,10 +152,7 @@ class ControllerDeviceControlsMixin:
 
         recovered = False
         if failures == 1:
-            # First failure is most often a stale pollQueue subscription (KEF
-            # GCs the queue or pykefcontrol's 50s rebuild window misfires).
-            # Clearing only the queue avoids KefConnector.__init__'s volume
-            # read on the next pass while still forcing a fresh subscription.
+            # A lost queue needs a fresh subscription, not a new connection.
             subscription_reset = self._reset_speaker_event_subscription(speaker)
             if not subscription_reset:
                 self.reset_speaker()
@@ -534,6 +528,7 @@ class ControllerDeviceControlsMixin:
         return info
 
     def change_input_live(self, new_input: str) -> bool:
+        target_generation = self.get_target_generation()
         requested_input = new_input
         new_input = normalize_input_source(new_input)
         if not new_input or not self._is_configurable_input_source(new_input):
@@ -559,14 +554,22 @@ class ControllerDeviceControlsMixin:
             return False
 
         try:
+            if target_generation != self.get_target_generation():
+                return False
             with self._state_lock:
                 previous_input = self._runtime_speaker.input_source or None
             for attempt in range(1, 3):
                 if attempt > 1:
                     time.sleep(0.6)
                 try:
-                    self._set_speaker_source(new_input, fresh=True)
+                    if target_generation != self.get_target_generation():
+                        return False
+                    self._set_speaker_source(new_input, fresh=True, target_generation=target_generation)
+                    if target_generation != self.get_target_generation():
+                        return False
                     actual_input = self._wait_for_input_source(new_input)
+                    if target_generation != self.get_target_generation():
+                        return False
                     if actual_input != new_input:
                         self._log_structured(
                             "WARN",
@@ -606,6 +609,7 @@ class ControllerDeviceControlsMixin:
             self._action_lock.release()
 
     def set_volume(self, level: int) -> bool:
+        target_generation = self.get_target_generation()
         requested_level = level
         coerced_level = self._coerce_volume_level(level)
         if coerced_level is None:
@@ -623,10 +627,16 @@ class ControllerDeviceControlsMixin:
             self._log_structured("SKIP", action="SET_VOLUME", cause="action_lock_busy")
             return False
         try:
+            if target_generation != self.get_target_generation():
+                return False
             with temporary_socket_timeout(self.config.socket_timeout):
                 speaker = self.get_speaker(fresh=False)
+                if target_generation != self.get_target_generation():
+                    return False
                 speaker.volume = level
-            self._set_speaker_runtime_state(volume=level, trigger="set_volume")
+            if target_generation != self.get_target_generation():
+                return False
+            self._set_speaker_runtime_state(volume=level, trigger="set_volume", target_generation=target_generation)
             self._log_structured(
                 "STEP",
                 action="SET_VOLUME",

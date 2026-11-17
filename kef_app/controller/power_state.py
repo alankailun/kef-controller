@@ -62,7 +62,7 @@ def standby_outcome_is_confirmed(outcome: str) -> bool:
 
 
 def power_action_outcome_is_success(outcome: str) -> bool:
-    return outcome.startswith("success") or outcome.startswith("sent_")
+    return outcome != "sent_skipped_host_unreachable" and (outcome.startswith("success") or outcome.startswith("sent_"))
 
 
 class ControllerStateMixin:

@@ -4,6 +4,7 @@ import errno
 import json
 import select
 import socket
+import ssl
 import threading
 import time
 from collections.abc import Callable
@@ -131,6 +132,7 @@ def _send_one_http_request(
     request: bytes,
     *,
     port: int,
+    ssl_context: ssl.SSLContext | None = None,
     timeout: float,
     deadline_mono: float | None = None,
     should_send: Callable[[], bool] | None = None,
@@ -146,6 +148,17 @@ def _send_one_http_request(
         )
         sock.settimeout(_bounded_socket_timeout(timeout, deadline_mono, should_send))
         _ensure_send_allowed(deadline_mono, should_send)
+        if ssl_context is not None:
+            with ssl_context.wrap_socket(sock, server_hostname=ip) as secure_sock:
+                secure_sock.settimeout(_bounded_socket_timeout(timeout, deadline_mono, should_send))
+                _ensure_send_allowed(deadline_mono, should_send)
+                secure_sock.sendall(request)
+                try:
+                    secure_sock.settimeout(_bounded_socket_timeout(timeout, deadline_mono, should_send))
+                    secure_sock.recv(1)
+                except OSError:
+                    pass
+            return
         sock.sendall(request)
         try:
             sock.shutdown(socket.SHUT_WR)
@@ -158,6 +171,7 @@ def fire_and_forget_http_post(
     *,
     request: bytes,
     port: int = 80,
+    ssl_context: ssl.SSLContext | None = None,
     attempts: int = 3,
     socket_timeout: float = 0.18,
     join_timeout: float = 0.25,
@@ -226,6 +240,7 @@ def fire_and_forget_http_post(
                 ip,
                 request,
                 port=port,
+                **({"ssl_context": ssl_context} if ssl_context is not None else {}),
                 timeout=socket_timeout,
                 deadline_mono=deadline_mono,
                 should_send=should_send,
@@ -256,6 +271,7 @@ def fire_and_forget_http_post(
                 ip,
                 request,
                 port=port,
+                **({"ssl_context": ssl_context} if ssl_context is not None else {}),
                 timeout=socket_timeout,
                 deadline_mono=deadline_mono,
                 should_send=should_send,
